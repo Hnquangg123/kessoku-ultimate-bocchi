@@ -1,0 +1,108 @@
+{
+  "name": "kessoku-ultimate-bocchi",
+  "version": "0.3.0",
+  "description": "Kessoku Ultimate Bocchi Theme: a Bocchi the Rock!-inspired charcoal-and-pink skin for all of Claude Code (an engine theme plus every render site), a live Kessoku Band agent panel with the band as animated pixel-art sprites, and themed Cache Tax, Blast Radius, Filetree, Reflect and Replay Theater gags.",
+  "author": {
+    "name": "Dylan"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "applyTheme": {
+      "type": "boolean",
+      "title": "Kessoku engine theme",
+      "description": "Offer to switch Claude Code's theme to the Kessoku Bocchi theme (prompt border, diffs, status colors, everything the engine draws); /bocchi theme on|off changes it later",
+      "default": true
+    },
+    "transcriptSkin": {
+      "type": "string",
+      "title": "Transcript skin",
+      "description": "How much of the transcript the band restyles: full (messages, tool groups, turn footer, hint line, question dialog), light (only the small lines: footer, hint, notices), or none",
+      "options": [
+        "full",
+        "light",
+        "none"
+      ],
+      "default": "full"
+    },
+    "characterArt": {
+      "type": "string",
+      "title": "Character art",
+      "description": "How the band is drawn: sprites (animated pixel art, rendered with Remotion: an SVG in the desktop app, half-block pixels in a terminal) or kaomoji (the text faces). Text-only spots (status line, toasts) keep the kaomoji either way",
+      "options": [
+        "sprites",
+        "kaomoji"
+      ],
+      "default": "sprites"
+    },
+    "restyleOthers": {
+      "type": "boolean",
+      "title": "Restyle other mods",
+      "description": "Give other mods' panels pink borders and theme text where they left colors unset (a ui.resolve hook; off leaves their looks alone)",
+      "default": false
+    },
+    "toasts": {
+      "type": "string",
+      "title": "Toasts",
+      "description": "Which band toasts to show: all (every subagent on and off stage), important (the guard, commits, the theme, a cold cache), or none",
+      "options": [
+        "all",
+        "important",
+        "none"
+      ],
+      "default": "all"
+    },
+    "accent": {
+      "type": "string",
+      "title": "Accent color",
+      "description": "Accent for borders and highlights: a theme key such as claude (follows the active theme), a hex color, or a terminal color name",
+      "default": "claude"
+    },
+    "paintBackgrounds": {
+      "type": "boolean",
+      "title": "Charcoal backgrounds",
+      "description": "Paint dark charcoal backgrounds behind the theme's own panels and cards (skipped automatically on a light theme)",
+      "default": true
+    },
+    "toolCards": {
+      "type": "string",
+      "title": "Tool row cards",
+      "description": "Which tool rows get a stylized pink border: every tool call, only file edits, or none",
+      "options": [
+        "all",
+        "edits",
+        "none"
+      ],
+      "default": "all"
+    },
+    "spinnerWords": {
+      "type": "boolean",
+      "title": "Band spinner words",
+      "description": "Swap the spinner's verb for band-themed ones that follow what the turn is doing (terminal only)",
+      "default": true
+    },
+    "cacheTtlMinutes": {
+      "type": "number",
+      "title": "Cache TTL (minutes)",
+      "description": "Prompt-cache lifetime Cache Tax assumes when the engine has not said: 60 for a subscription session, 5 for a plain API key",
+      "default": 60
+    },
+    "keepWarmMinutes": {
+      "type": "number",
+      "title": "Keepwarm default (minutes)",
+      "description": "How long /keepwarm keeps the cache warm when given no duration",
+      "default": 360
+    },
+    "reflect": {
+      "type": "boolean",
+      "title": "Reflect memos",
+      "description": "Let Nijika turn your corrections into CLAUDE.md rules (one tiny Haiku call per correction)",
+      "default": true
+    },
+    "openPanelOnStart": {
+      "type": "boolean",
+      "title": "Panel on start",
+      "description": "Open the Kessoku Band panel when the session starts, where the terminal is wide enough for a sidebar",
+      "default": true
+    }
+  }
+}

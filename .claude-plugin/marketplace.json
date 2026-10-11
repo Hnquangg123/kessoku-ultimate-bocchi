@@ -1,0 +1,6 @@
+{
+  "name": "kessoku-mods",
+  "description": "Bocchi the Rock!-themed mods for Claude Code: the Kessoku Ultimate Bocchi Theme.",
+  "owner": { "name": "Dylan" },
+  "plugins": [{ "name": "kessoku-ultimate-bocchi", "source": "./" }]
+}
