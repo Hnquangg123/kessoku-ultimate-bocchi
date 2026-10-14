@@ -7,12 +7,14 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
+import type { KessokuMood } from '../types'
 import { memberFor, memberForTool, parseDuration, fmtTokens, fmtUsd, priceInfo, cacheWriteUsd, describeCall } from '../hooks/lib/band'
 import { classify, classifyPowerShell, isGitCommit } from '../hooks/lib/blast'
 import { cutHunks, patchToUnified, unifiedDiff } from '../hooks/lib/diff'
 import { FACE_WIDTH, MEMBERS, SPINNER_WORDS_BY_MODE, THEME_OVERRIDES, TURN_WORDS, padFace, textWidth } from '../hooks/lib/palette'
 import { appendRule, cleanRule, looksLikeCorrection } from '../hooks/lib/reflect'
-import { CRASH, SVG_LIMIT, animOf, base64, cellsFor, decodeRle, encodeCells, frameAt, spriteId, spritesSvg } from '../hooks/lib/sprite'
+import { CRASH, CRASH_MINI, SVG_LIMIT, animOf, base64, cellsFor, colorOf, composite, decodeCodes, decodeFrames, drawSvg, encodeCells, frameAt, framePixels, layerFrames, mergeTimeline, pixelsOf, spriteId, spritesSvg, viewSize } from '../hooks/lib/sprite'
+import type { SpriteAnim, SpriteTable } from '../hooks/lib/sprite'
 import { SPRITES, SPRITE_COLORS } from '../hooks/lib/sprites.gen'
 import { isInside, relPath, treeRows } from '../hooks/lib/tree'
 
@@ -884,44 +886,237 @@ test('/bocchi previews put every piece on screen', async ($, on) => {
 const SPRITE_MOODS = ['anxious', 'focused', 'happy', 'panic', 'melting', 'hiding'] as const
 const SPRITE_MEMBERS = ['bocchi', 'nijika', 'ryo', 'kita'] as const
 const BOCCHI_ANXIOUS = '(;´Д`)'
+const PALETTE_CHARS = Object.keys(SPRITE_COLORS)
 
 /** A Raster's cells as their u32 words. */
 function words(cells: string): DataView {
   return new DataView(Uint8Array.from(atob(cells), c => c.charCodeAt(0)).buffer)
 }
 
-test('sprites: every member has every mood, whole and as a portrait, and the crash is there', async () => {
-  for (const member of SPRITE_MEMBERS) {
-    for (const mood of SPRITE_MOODS) {
-      const full = animOf(spriteId(member, mood, 'full'))
-      const portrait = animOf(spriteId(member, mood, 'portrait'))
-      expect(full).toBeDefined()
-      expect(portrait).toBeDefined()
-      expect(full?.w).toBe(32)
-      expect(full?.h).toBe(32)
-      expect(portrait?.w).toBe(16)
-      expect(portrait?.h).toBe(16)
+/** The quadrant blocks by which quarters they fill: upper-left 1, upper-right 2, lower-left 4, lower-right 8. */
+const QUADRANT_MASKS = new Map([[0x20, 0], [0x2598, 1], [0x259d, 2], [0x2580, 3], [0x2596, 4], [0x258c, 5], [0x259e, 6], [0x259b, 7], [0x2597, 8], [0x259a, 9], [0x2590, 10], [0x259c, 11], [0x2584, 12], [0x2599, 13], [0x259f, 14], [0x2588, 15]])
+
+/**
+ * What a terminal shows in each cell of a Raster's `columns` x `rows` block at
+ * (`col`, `row`), as its top half's color over its bottom half's ("top/bottom",
+ * color words in hex); a cell whose halves are not each one color throws.
+ */
+function halvesOf(cells: string, rasterColumns: number, col: number, row: number, columns: number, rows: number): string[] {
+  const view = words(cells)
+  const out: string[] = []
+  for (let r = row; r < row + rows; r += 1) {
+    for (let c = col; c < col + columns; c += 1) {
+      const o = (r * rasterColumns + c) * 12
+      const mask = QUADRANT_MASKS.get(view.getUint32(o, true))
+      if (mask === undefined) throw new Error(`cell ${c},${r} is not a block element`)
+      const fg = view.getUint32(o + 4, true).toString(16)
+      const bg = view.getUint32(o + 8, true).toString(16)
+      const quarter = (bit: number) => (mask & bit ? fg : bg)
+      if (quarter(1) !== quarter(2) || quarter(4) !== quarter(8)) throw new Error(`cell ${c},${r} does not split into a top and a bottom half`)
+      out.push(`${quarter(1)}/${quarter(4)}`)
     }
   }
-  expect(animOf(CRASH)?.w).toBe(48)
-  // Every frame decodes to its full size from known colors, and holds a whole number of 100 ms beats.
-  for (const [id, anim] of Object.entries(SPRITES)) {
-    expect(anim.frames.length).toBeGreaterThan(0)
-    for (const [ms, rle] of anim.frames) {
-      expect(ms % 100).toBe(0)
-      for (const ch of rle.replace(/[0-9]/g, '')) expect(ch === '.' || ch in SPRITE_COLORS).toBe(true)
-      expect(decodeRle(rle, anim.w * anim.h)).toHaveLength(anim.w * anim.h)
+  return out
+}
+
+/** A frame's runs spelled out pixel by pixel (`=` taken from the frame before), the plain way: a check on the decoder. */
+function spellOut(rle: string, size: number, prev: string): string {
+  let s = ''
+  for (const [, ch, digits] of rle.matchAll(/([^0-9])([0-9]*)/g)) {
+    const n = digits === '' ? 1 : Number(digits)
+    s += ch === '=' ? prev.slice(s.length, s.length + n) : (ch as string).repeat(n)
+  }
+  return s.slice(0, size).padEnd(size, '.')
+}
+
+/**
+ * What an SVG the mod wrote shows at `t` ms into its animation (or, with t
+ * null, where animation does not run): each group's visibility read off its
+ * own `<animate>` (discrete, at the last key time not after t), translations
+ * and whole-number scales applied, the paths' runs painted in document order.
+ * Null where nothing is painted. Throws on markup it does not know, so the
+ * format is checked too.
+ */
+function paintSvg(svg: string, w: number, h: number, t: number | null): (string | null)[] {
+  const out: (string | null)[] = Array.from({ length: w * h }, () => null)
+  const head = /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 (\d+) (\d+)" width="\d+" height="\d+" shape-rendering="crispEdges" fill="none" stroke-width="1">/.exec(svg)
+  if (head === null || Number(head[1]) !== w || Number(head[2]) !== h || !svg.endsWith('</svg>')) throw new Error('not the svg head the mod writes')
+  const body = svg.slice(head[0].length, -'</svg>'.length)
+  const token = /<g transform="translate\((-?\d+) (-?\d+)\)(?: scale\((\d+)\))?">|<g visibility="(visible|hidden)"><animate attributeName="visibility" dur="(\d+)ms" repeatCount="indefinite" calcMode="discrete" keyTimes="([^"]*)" values="([^"]*)"\/>|<\/g>|<path stroke="(#[0-9a-f]{6})" d="([^"]*)"\/>/y
+  const stack: { isVisible: boolean; dx: number; dy: number; z: number }[] = []
+  let at = 0
+  while (at < body.length) {
+    token.lastIndex = at
+    const m = token.exec(body)
+    if (m === null) throw new Error(`unknown markup at ${at}: ${body.slice(at, at + 40)}`)
+    at = token.lastIndex
+    if (m[1] !== undefined) {
+      stack.push({ isVisible: true, dx: Number(m[1]), dy: Number(m[2]), z: m[3] === undefined ? 1 : Number(m[3]) })
+    } else if (m[4] !== undefined) {
+      const dur = Number(m[5])
+      const times = (m[6] as string).split(';').map(Number)
+      const values = (m[7] as string).split(';')
+      if (times.length !== values.length || times[0] !== 0 || values[0] !== m[4]) throw new Error('an animation that does not start as its group does')
+      let value = m[4]
+      if (t !== null) {
+        const f = (t % dur) / dur
+        times.forEach((k, i) => {
+          if (k <= f) value = values[i] as string
+        })
+      }
+      stack.push({ isVisible: value === 'visible', dx: 0, dy: 0, z: 1 })
+    } else if (m[0] === '</g>') {
+      if (stack.pop() === undefined) throw new Error('a group closed twice')
+    } else {
+      if (!stack.every(g => g.isVisible)) continue
+      // A pixel of the path's own space to the canvas: each group's transform, the innermost first.
+      const place = (px: number, py: number): [number, number] => stack.reduceRight<[number, number]>(([x, y], g) => [g.dx + g.z * x, g.dy + g.z * y], [px, py])
+      const z = stack.reduce((n, g) => n * g.z, 1)
+      const color = m[8] as string
+      let x = 0
+      let y = 0
+      for (const [, cmd, a, b] of (m[9] as string).matchAll(/([Mmhv])(-?[\d.]+)(?: ?(-?[\d.]+))?/g)) {
+        const n = Number(a)
+        if (cmd === 'M' || cmd === 'm') {
+          x = (cmd === 'M' ? 0 : x) + n
+          y = (cmd === 'M' ? 0 : y) + Number(b)
+          continue
+        }
+        for (let k = 0; k < n; k += 1) {
+          const [px0, py0] = place(Math.floor(x + (cmd === 'h' ? k : 0)), Math.floor(y + (cmd === 'v' ? k : 0)))
+          for (let sy = 0; sy < z; sy += 1) {
+            for (let sx = 0; sx < z; sx += 1) {
+              const px = px0 + sx
+              const py = py0 + sy
+              if (px < 0 || px >= w || py < 0 || py >= h) throw new Error('a run off the canvas')
+              out[py * w + px] = color
+            }
+          }
+        }
+        if (cmd === 'h') x += n
+        else y += n
+      }
     }
-    expect(id).toMatch(/^(bocchi|nijika|ryo|kita)-(anxious|focused|happy|panic|melting|hiding)(-portrait)?$|^fx-crash$/)
+  }
+  if (stack.length !== 0) throw new Error('a group left open')
+  return out
+}
+
+/** How many pixels two pictures disagree on. */
+function differing(a: readonly (string | null)[], b: readonly (string | null)[]): number {
+  let n = Math.abs(a.length - b.length)
+  for (let i = 0; i < Math.min(a.length, b.length); i += 1) if (a[i] !== b[i]) n += 1
+  return n
+}
+
+/** The start of each frame of a loop, in ms, and the loop's length. */
+function frameStarts(anim: SpriteAnim): { starts: number[]; total: number } {
+  const starts: number[] = []
+  let t = 0
+  for (const [ms] of anim.frames) {
+    starts.push(t)
+    t += ms
+  }
+  return { starts, total: t }
+}
+
+/** A sprite of random pixels (a fixed seed): every frame different, nothing to share, so its markup is as large as it gets. */
+function noise(w: number, h: number, frames: number, colors: number, seed: number): SpriteAnim {
+  const chars = PALETTE_CHARS.slice(0, colors)
+  let s = seed
+  const next = () => {
+    s = (s * 1103515245 + 12345) & 0x7fffffff
+    return s / 0x80000000
+  }
+  const out: [number, string][] = []
+  for (let f = 0; f < frames; f += 1) {
+    let rle = ''
+    for (let i = 0; i < w * h; i += 1) rle += chars[Math.floor(next() * chars.length)]
+    out.push([100, rle])
+  }
+  return { w, h, frames: out }
+}
+
+/** The moods a remote drawing's alt names, by member: "Kessoku Band: Bocchi, anxious; Nijika, happy". */
+function moodsIn(alt: string): Record<string, KessokuMood> {
+  const out: Record<string, KessokuMood> = {}
+  for (const [, name, mood] of alt.matchAll(/(Bocchi|Nijika|Ryo|Kita), (\w+)/g)) out[(name as string).toLowerCase()] = mood as KessokuMood
+  return out
+}
+
+test('sprites: every member has every mood whole, as a portrait and as a mini, and both crashes are there', async () => {
+  for (const member of SPRITE_MEMBERS) {
+    for (const mood of SPRITE_MOODS) {
+      expect(animOf(spriteId(member, mood, 'full'))).toMatchObject({ w: 96, h: 96 })
+      expect(animOf(spriteId(member, mood, 'portrait'))).toMatchObject({ w: 32, h: 32 })
+      expect(animOf(spriteId(member, mood, 'mini'))).toMatchObject({ w: 16, h: 16 })
+    }
+  }
+  expect(spriteId('kita', 'happy')).toBe('kita-happy')
+  expect(spriteId('kita', 'happy', 'mini')).toBe('kita-happy-mini')
+  expect(animOf(CRASH)).toMatchObject({ w: 96, h: 32 })
+  expect(animOf(CRASH_MINI)).toMatchObject({ w: 48, h: 16 })
+  expect(viewSize('full')).toEqual({ w: 96, h: 96 })
+  expect(viewSize('portrait')).toEqual({ w: 32, h: 32 })
+  expect(viewSize('mini')).toEqual({ w: 16, h: 16 })
+  expect(Object.keys(SPRITES)).toHaveLength(SPRITE_MEMBERS.length * SPRITE_MOODS.length * 3 + 2)
+  for (const [id, anim] of Object.entries(SPRITES)) {
+    expect(id).toMatch(/^(bocchi|nijika|ryo|kita)-(anxious|focused|happy|panic|melting|hiding)(-portrait|-mini)?$|^fx-crash(-mini)?$/)
+    expect(anim.frames.length).toBeGreaterThan(0)
+    // Every frame holds a whole number of 100 ms beats and is spelled in the palette's characters, `.`, `=` and counts;
+    // the first never leans on a frame before it.
+    anim.frames.forEach(([ms, rle], i) => {
+      expect(ms % 100).toBe(0)
+      const strange = [...new Set(rle.replace(/[0-9]/g, ''))].filter(ch => ch !== '.' && ch !== '=' && !(ch in SPRITE_COLORS))
+      expect(strange).toEqual([])
+      if (i === 0) expect(rle.includes('=')).toBe(false)
+    })
   }
 })
 
-test('sprites: run lengths, the loop clock, cells and base64', async () => {
-  const [a, b] = Object.keys(SPRITE_COLORS) as [string, string]
-  const ca = SPRITE_COLORS[a] as string
-  const cb = SPRITE_COLORS[b] as string
-  expect(decodeRle(`${a}3${b}.2`, 6)).toEqual([ca, ca, ca, cb, null, null])
-  expect(decodeRle(`${a}`, 3)).toEqual([ca, null, null])
+test('sprites: = runs copy the frame before, so the frames decode in order', { timeoutMs: 30_000 }, async () => {
+  const [a, b, c] = PALETTE_CHARS as [string, string, string]
+  const [ca, cb, cc] = [SPRITE_COLORS[a], SPRITE_COLORS[b], SPRITE_COLORS[c]] as [string, string, string]
+  // `A3B.2`, then `=2C=3` (two kept, one new, three kept), then `=B2=2.` (one kept, two new, two kept, one cleared).
+  const anim: SpriteAnim = { w: 3, h: 2, frames: [[100, `${a}3${b}.2`], [100, `=2${c}=3`], [100, `=${b}2=2.`]] }
+  const frames = decodeFrames(anim).map(pixelsOf)
+  expect(frames[0]).toEqual([ca, ca, ca, cb, null, null])
+  expect(frames[1]).toEqual([ca, ca, cc, cb, null, null])
+  expect(frames[2]).toEqual([ca, cb, cb, cb, null, null])
+  // Short runs pad with transparency, long ones stop at the frame's end, `=` with no frame before keeps nothing,
+  // and a character the palette lacks draws nothing.
+  expect(pixelsOf(decodeCodes(`${a}`, 3))).toEqual([ca, null, null])
+  expect(pixelsOf(decodeCodes(`${a}9`, 3))).toEqual([ca, ca, ca])
+  expect(pixelsOf(decodeCodes(`=2${b}`, 3))).toEqual([null, null, cb])
+  expect(pixelsOf(decodeCodes(`${a}☃${a}`, 3))).toEqual([ca, null, ca])
+  expect(colorOf(0)).toBeNull()
+  expect(colorOf(a.charCodeAt(0))).toBe(ca)
+  // Every exported frame decodes as spelling it out pixel by pixel does, `=` from the frame before.
+  let leaning = 0
+  for (const [id, anim2] of Object.entries(SPRITES)) {
+    const size = anim2.w * anim2.h
+    let prev = ''
+    const decoded = decodeFrames(anim2)
+    anim2.frames.forEach(([, rle], i) => {
+      if (rle.includes('=')) leaning += 1
+      const plain = spellOut(rle, size, prev)
+      prev = plain
+      const want = [...plain].map(ch => (ch === '.' ? null : (SPRITE_COLORS[ch] ?? null)))
+      const got = pixelsOf(decoded[i] as Uint16Array)
+      expect(got.length).toBe(size)
+      if (differing(got, want) !== 0) throw new Error(`${id} frame ${i} decodes wrong`)
+    })
+    // The terminal's own copy (decoded once, in order) agrees, frame by frame, whichever is asked first.
+    const last = anim2.frames.length - 1
+    expect(differing(framePixels(id, last), pixelsOf(decoded[last] as Uint16Array))).toBe(0)
+    expect(differing(framePixels(id, 0), pixelsOf(decoded[0] as Uint16Array))).toBe(0)
+  }
+  // The export leans on `=` for most frames after the first.
+  expect(leaning).toBeGreaterThan(Object.keys(SPRITES).length)
+})
+
+test('sprites: the loop clock, cells and base64', async () => {
+  const [a, b] = PALETTE_CHARS as [string, string]
   const anim = { w: 1, h: 1, frames: [[100, a], [300, b]] as const }
   expect(frameAt(anim, 0)).toBe(0)
   expect(frameAt(anim, 99)).toBe(0)
@@ -929,8 +1124,12 @@ test('sprites: run lengths, the loop clock, cells and base64', async () => {
   expect(frameAt(anim, 399)).toBe(1)
   expect(frameAt(anim, 400)).toBe(0)
   expect(frameAt(anim, 1_000_250)).toBe(1)
-  expect(cellsFor(32, 32, 'half')).toEqual({ columns: 32, rows: 16 })
+  // The footprints: the mini in half blocks takes 16 x 8 cells (what the portrait took in quadrants), in quadrants 8 x 4.
+  expect(cellsFor(16, 16, 'half')).toEqual({ columns: 16, rows: 8 })
+  expect(cellsFor(32, 32, 'quad')).toEqual({ columns: 16, rows: 8 })
   expect(cellsFor(16, 16, 'quad')).toEqual({ columns: 8, rows: 4 })
+  expect(cellsFor(96, 96, 'quad')).toEqual({ columns: 48, rows: 24 })
+  expect(cellsFor(48, 16, 'quad')).toEqual({ columns: 24, rows: 4 })
   expect(base64(new Uint8Array([77, 97, 110]))).toBe('TWFu')
   expect(base64(new Uint8Array([77, 97]))).toBe('TWE=')
   // A transparent top over a red bottom: the lower half block in red on the terminal's own background.
@@ -946,28 +1145,158 @@ test('sprites: run lengths, the loop clock, cells and base64', async () => {
   // Quadrants: a dark left column over a light right one is the left half block.
   const w3 = words(encodeCells(['#000000', '#ffffff', '#000000', '#ffffff', '#000000', '#ffffff', '#000000', '#ffffff'], 2, 4, 'quad').cells)
   expect([w3.getUint32(0, true), w3.getUint32(4, true), w3.getUint32(8, true)]).toEqual([0x258c, 0x000000, 0xffffff])
-  // A whole portrait in quadrants: 8 x 4 cells, 12 bytes each.
-  const portrait = animOf(spriteId('bocchi', 'anxious', 'portrait'))
-  expect(portrait).toBeDefined()
-  if (portrait !== undefined) {
-    const q = encodeCells(decodeRle((portrait.frames[0] as readonly [number, string])[1], 256), 16, 16, 'quad')
-    expect(atob(q.cells).length).toBe(8 * 4 * 12)
+  // The mini in half blocks and in quadrants: 16 x 8 and 8 x 4 cells, 12 bytes each.
+  expect(atob(encodeCells(framePixels(spriteId('bocchi', 'anxious', 'mini'), 0), 16, 16, 'half').cells).length).toBe(16 * 8 * 12)
+  expect(atob(encodeCells(framePixels(spriteId('bocchi', 'anxious', 'mini'), 0), 16, 16, 'quad').cells).length).toBe(8 * 4 * 12)
+})
+
+test('sprites: a part at zoom 2 is drawn two by two, and a mini so drawn in quadrants is the mini in half blocks', async () => {
+  for (const member of SPRITE_MEMBERS) {
+    for (const mood of SPRITE_MOODS) {
+      const id = spriteId(member, mood, 'mini')
+      const anim = animOf(id) as SpriteAnim
+      const { starts } = frameStarts(anim)
+      for (const t of [starts[0] as number, starts[Math.floor(starts.length / 2)] as number]) {
+        const one = composite([{ id, x: 0, y: 0 }], 16, 16, t)
+        const two = composite([{ id, x: 0, y: 0, zoom: 2 }], 32, 32, t)
+        for (let y = 0; y < 32; y += 1) for (let x = 0; x < 32; x += 1) if (two[y * 32 + x] !== one[(y >> 1) * 16 + (x >> 1)]) throw new Error(`${id}: pixel ${x},${y} at zoom 2 is not its own`)
+        // Each cell of the zoomed mini in quadrants shows what the mini in half blocks shows there: a pixel over the one below.
+        const quads = encodeCells(two, 32, 32, 'quad', '#26262c').cells
+        const halves = encodeCells(one, 16, 16, 'half', '#26262c').cells
+        expect(halvesOf(quads, 16, 0, 0, 16, 8)).toEqual(halvesOf(halves, 16, 0, 0, 16, 8))
+      }
+    }
+  }
+  // Placed off the origin, beside another part, and drawn as an SVG: the same pixels, two by two.
+  const mini = spriteId('kita', 'happy', 'mini')
+  const placed = composite([{ id: CRASH_MINI, x: 0, y: 0 }, { id: mini, x: 50, y: 0, zoom: 2 }], 82, 32, 0)
+  const still = framePixels(mini, 0)
+  for (let y = 0; y < 32; y += 1) for (let x = 0; x < 32; x += 1) if (still[(y >> 1) * 16 + (x >> 1)] !== null) expect(placed[y * 82 + 50 + x]).toBe(still[(y >> 1) * 16 + (x >> 1)])
+  const anim = animOf(mini) as SpriteAnim
+  const { svg, levels } = drawSvg([{ id: mini, x: 4, y: 2, zoom: 2 }], 36, 34, 1)
+  expect(levels).toEqual([0])
+  expect(svg).toContain('scale(2)')
+  const frames = decodeFrames(anim).map(pixelsOf)
+  const { starts } = frameStarts(anim)
+  anim.frames.forEach(([ms], k) => {
+    const want: (string | null)[] = Array.from({ length: 36 * 34 }, () => null)
+    const f = frames[k] as (string | null)[]
+    for (let y = 0; y < 32; y += 1) for (let x = 0; x < 32; x += 1) want[(2 + y) * 36 + 4 + x] = f[(y >> 1) * 16 + (x >> 1)] ?? null
+    if (differing(paintSvg(svg, 36, 34, (starts[k] as number) + ms / 2), want) !== 0) throw new Error(`${mini} at zoom 2: frame ${k} is not drawn exactly`)
+  })
+})
+
+test('sprites: the layered SVG draws exactly each frame over its span, and the first where nothing animates', { timeoutMs: 60_000 }, async () => {
+  let checked = 0
+  for (const [id, anim] of Object.entries(SPRITES)) {
+    const { svg, levels } = drawSvg([{ id, x: 0, y: 0 }], anim.w, anim.h, 1)
+    // Whole: no frame merged away to fit.
+    expect(levels).toEqual([0])
+    const frames = decodeFrames(anim).map(pixelsOf)
+    const { starts } = frameStarts(anim)
+    anim.frames.forEach(([ms], k) => {
+      const want = frames[k] as (string | null)[]
+      // Just after the frame comes in, halfway through it, and just before it goes (10 ms in from either end).
+      for (const t of [starts[k] as number, (starts[k] as number) + ms / 2, (starts[k] as number) + ms]) {
+        const at = Math.min(Math.max(t, (starts[k] as number) + 10), (starts[k] as number) + ms - 10)
+        if (differing(paintSvg(svg, anim.w, anim.h, at), want) !== 0) throw new Error(`${id}: frame ${k} is not drawn exactly at ${at} ms`)
+      }
+      checked += 1
+    })
+    // A surface that does not animate shows the first frame.
+    if (differing(paintSvg(svg, anim.w, anim.h, null), frames[0] as (string | null)[]) !== 0) throw new Error(`${id}: the still is not the first frame`)
+    expect(svg.includes('<animate')).toBe(new Set(frames.map(f => f.join())).size > 1)
+    expect(svg).not.toMatch(/<script|\son[a-z]+=|href/i)
+  }
+  expect(checked).toBe(Object.values(SPRITES).reduce((n, a) => n + a.frames.length, 0))
+})
+
+test('sprites: the layers only add, each one inside every frame that shows it', { timeoutMs: 30_000 }, async () => {
+  for (const id of ['bocchi-melting', 'bocchi-happy', 'nijika-focused', 'ryo-panic', 'kita-hiding-portrait', 'bocchi-anxious-mini', CRASH]) {
+    const anim = animOf(id) as SpriteAnim
+    const frames = decodeFrames(anim)
+    const durations = anim.frames.map(([ms]) => ms)
+    const { total, layers } = layerFrames(frames, durations, anim.w, anim.h)
+    expect(layers.length).toBeGreaterThan(0)
+    const { starts } = frameStarts(anim)
+    frames.forEach((f, k) => {
+      const t = (starts[k] as number) + (durations[k] as number) / 2
+      const shown = layers.filter(l => l.spans === null || l.spans.some(([a, b]) => a <= t && t < b))
+      // What the visible layers cover is exactly what the frame draws, and painting them in order gives its colors.
+      const painted = new Uint16Array(f.length)
+      for (const l of shown) {
+        for (let i = 0; i < f.length; i += 1) {
+          if (l.px[i] === 0) continue
+          if (f[i] === 0) throw new Error(`${id}: a layer shown in frame ${k} draws where it is transparent`)
+          painted[i] = l.px[i] as number
+        }
+      }
+      for (let i = 0; i < f.length; i += 1) if (painted[i] !== f[i]) throw new Error(`${id}: frame ${k} pixel ${i} is not its own`)
+    })
+    expect(total).toBe(durations.reduce((n, ms) => n + ms, 0))
   }
 })
 
-test('sprites: every animation fits the Svg element and animates where it has frames to show', async () => {
+test('sprites: every drawing fits the Svg element whole: each sprite, the strip at its heaviest, the guard screen', { timeoutMs: 30_000 }, async () => {
   for (const [id, anim] of Object.entries(SPRITES)) {
-    const svg = spritesSvg([{ id, x: 0, y: 0 }], anim.w, anim.h, 2)
-    expect(svg.startsWith('<svg')).toBe(true)
-    expect(svg.length).toBeLessThan(SVG_LIMIT)
-    expect(svg.includes('<animate')).toBe(new Set(anim.frames.map(f => f[1])).size > 1)
-    expect(svg).not.toMatch(/<script|\son[a-z]+=/i)
+    const { svg, levels } = drawSvg([{ id, x: 0, y: 0 }], anim.w, anim.h, 1)
+    expect(svg.length).toBeLessThanOrEqual(SVG_LIMIT)
+    expect(levels).toEqual([0])
   }
-  // The heaviest drawings: the strip's four heads, the guard screen's figure and crash.
-  const strip = spritesSvg(SPRITE_MEMBERS.map((m, i) => ({ id: spriteId(m, 'anxious', 'portrait'), x: i * 18, y: 0 })), 70, 16, 2)
-  expect(strip.length).toBeLessThan(SVG_LIMIT)
-  const blastSvg = spritesSvg([{ id: spriteId('bocchi', 'panic', 'full'), x: 0, y: 0 }, { id: CRASH, x: 34, y: 16 }], 82, 32, 3)
-  expect(blastSvg.length).toBeLessThan(SVG_LIMIT)
+  // The strip on a remote surface: four portraits 34 apart, each member in her heaviest mood, and in every mood at once.
+  const size = (id: string) => spritesSvg([{ id, x: 0, y: 0 }], 32, 32, 1).length
+  const heaviest = SPRITE_MEMBERS.map(m => SPRITE_MOODS.map(mood => spriteId(m, mood, 'portrait')).sort((p, q) => size(q) - size(p))[0] as string)
+  for (const ids of [heaviest, ...SPRITE_MOODS.map(mood => SPRITE_MEMBERS.map(m => spriteId(m, mood, 'portrait')))]) {
+    const strip = drawSvg(ids.map((id, i) => ({ id, x: i * 34, y: 0 })), 134, 32, 1)
+    expect(strip.svg.length).toBeLessThanOrEqual(SVG_LIMIT)
+    expect(strip.levels).toEqual([0, 0, 0, 0])
+  }
+  // The guard screen on a remote surface: her whole figure, the crash tucked in at her feet.
+  const blastDrawing = drawSvg([{ id: spriteId('bocchi', 'panic', 'full'), x: 0, y: 0 }, { id: CRASH, x: 84, y: 64 }], 180, 96, 1)
+  expect(blastDrawing.svg.length).toBeLessThanOrEqual(SVG_LIMIT)
+  expect(blastDrawing.levels).toEqual([0, 0])
+  // Both parts drawn, each in place.
+  const still = paintSvg(blastDrawing.svg, 180, 96, null)
+  const crash0 = framePixels(CRASH, 0)
+  for (let y = 0; y < 32; y += 1) for (let x = 0; x < 96; x += 1) if (crash0[y * 96 + x] !== null) expect(still[(64 + y) * 180 + 84 + x]).toBe(crash0[y * 96 + x])
+})
+
+test('sprites: a drawing too large for the Svg element loses frames, at worst to a still of the first, and never runs over', { timeoutMs: 60_000 }, async () => {
+  // Twelve frames of noise: far over the limit whole, so neighbours merge until it fits.
+  const loud = noise(96, 96, 12, 60, 7)
+  const table: SpriteTable = { loud, small: animOf(spriteId('bocchi', 'anxious', 'mini')) as SpriteAnim, huge: noise(200, 200, 2, 60, 11) }
+  const merged = drawSvg([{ id: 'loud', x: 0, y: 0 }], 96, 96, 1, table)
+  expect(merged.svg.length).toBeLessThanOrEqual(SVG_LIMIT)
+  expect(merged.levels[0]).toBeGreaterThan(0)
+  const frames = decodeFrames(loud).map(pixelsOf)
+  // Where nothing animates, and at the start, it is the first frame; at any time after, one of its own frames, held.
+  expect(differing(paintSvg(merged.svg, 96, 96, null), frames[0] as (string | null)[])).toBe(0)
+  const { starts } = frameStarts(loud)
+  const shown = new Set<number>()
+  for (const t of starts) {
+    const painted = paintSvg(merged.svg, 96, 96, t + 50)
+    const which = frames.findIndex(f => differing(f, painted) === 0)
+    expect(which).toBeGreaterThanOrEqual(0)
+    shown.add(which)
+  }
+  expect(shown.has(0)).toBe(true)
+  expect(shown.size).toBeLessThanOrEqual(Math.ceil(12 / 2 ** (merged.levels[0] as number)))
+  expect(shown.size).toBeLessThan(12)
+  // Beside a small sprite, the large one gives and the small one stays whole.
+  const pair = drawSvg([{ id: 'small', x: 0, y: 0 }, { id: 'loud', x: 16, y: 0 }], 112, 96, 1, table)
+  expect(pair.svg.length).toBeLessThanOrEqual(SVG_LIMIT)
+  expect(pair.levels[0]).toBe(0)
+  expect(pair.levels[1]).toBeGreaterThan(0)
+  // Too large even as a still: left out, the drawing empty but well formed.
+  const none = drawSvg([{ id: 'huge', x: 0, y: 0 }], 200, 200, 1, table)
+  expect(none.levels).toEqual([-1])
+  expect(none.svg.length).toBeLessThanOrEqual(SVG_LIMIT)
+  expect(paintSvg(none.svg, 200, 200, null).every(c => c === null)).toBe(true)
+  // A loop merged down keeps its length and its first frame first.
+  const down = mergeTimeline(decodeFrames(loud), loud.frames.map(([ms]) => ms), 3)
+  expect(down.frames).toHaveLength(3)
+  expect(down.durations.reduce((n, ms) => n + ms, 0)).toBe(1200)
+  expect(differing(pixelsOf(down.frames[0] as Uint16Array), frames[0] as (string | null)[])).toBe(0)
 })
 
 test('the band is drawn as sprites: a Raster on the terminal, repainted by blit; an animated Svg on the desktop', async ($, on) => {
@@ -976,9 +1305,19 @@ test('the band is drawn as sprites: a Raster on the terminal, repainted by blit;
   bottoms(on, clock, seen)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await $.command.run(cmd('bocchi', 'demo'))
-  // A tall pane: four cards with half-block portraits (16 x 8 cells).
+  const now = 1_000_000
+  // The moods on stage, read off the desktop's drawing of the same moment.
+  const desk = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  const bocchiSvg = (await desk.find({ type: 'Svg' }))?.props
+  await desk.unmount()
+  const bocchiMood = moodsIn(String(bocchiSvg?.alt)).bocchi as KessokuMood
+  expect(bocchiMood).toBeDefined()
+  // A tall pane: four cards, each with her hand-drawn mini in half blocks (16 x 8 cells, every color kept).
   const tall = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: { ...PANE_PROPS, scroll: { offset: 0, bodyRows: 50 } } })
-  expect((await tall.find({ type: 'Raster', key: 'sprite-bocchi' }))?.props).toMatchObject({ columns: 16, rows: 8 })
+  const tallBocchi = (await tall.find({ type: 'Raster', key: 'sprite-bocchi' }))?.props
+  expect(tallBocchi).toMatchObject({ columns: 16, rows: 8 })
+  const bocchiMini = spriteId('bocchi', bocchiMood, 'mini')
+  expect(tallBocchi?.cells).toBe(encodeCells(composite([{ id: bocchiMini, x: 0, y: 0 }], 16, 16, now), 16, 16, 'half', '#26262c').cells)
   expect(await tall.find({ type: 'Raster', key: 'sprite-ryo' })).toBeDefined()
   // No kaomoji where the sprite stands in for her face.
   expect(await tall.find({ type: 'Text', text: BOCCHI_ANXIOUS })).toBeUndefined()
@@ -986,14 +1325,25 @@ test('the band is drawn as sprites: a Raster on the terminal, repainted by blit;
   await clock.advance(3000)
   expect(seen.blits.some(x => x.requestId === 'kessoku-band' && x.key.startsWith('sprite-') && x.isTaken)).toBe(true)
   await tall.unmount()
-  // A shorter one: quadrant portraits (8 x 4), so the four cards fit.
+  // A shorter one: the minis in quadrants (8 x 4), so the four cards fit.
   const short = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
   expect((await short.find({ type: 'Raster', key: 'sprite-kita' }))?.props).toMatchObject({ columns: 8, rows: 4 })
   expect(await short.find({ type: 'Text', text: /legacyQuery/ })).toBeDefined()
   await short.unmount()
-  // The strip: the four heads in one picture where the band has the rows, the one-line strip where it does not.
+  // The strip: the four minis in one picture where the band has the rows (35 x 4), the one-line strip where it does not.
+  const t2 = 1_003_000
+  const deskStrip = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  const stripSvg = (await deskStrip.find({ type: 'Svg' }))?.props
+  await deskStrip.unmount()
+  // On a remote surface: the four portraits side by side, 34 apart, one CSS pixel a pixel.
+  expect(stripSvg).toMatchObject({ width: 134, height: 32, isInteractive: true })
+  const moods = moodsIn(String(stripSvg?.alt))
+  expect(Object.keys(moods)).toHaveLength(4)
   const strip = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
-  expect((await strip.find({ type: 'Raster', key: 'strip-sprites' }))?.props).toMatchObject({ columns: 35, rows: 4 })
+  const stripRaster = (await strip.find({ type: 'Raster', key: 'strip-sprites' }))?.props
+  expect(stripRaster).toMatchObject({ columns: 35, rows: 4 })
+  const minis = SPRITE_MEMBERS.map((m, i) => ({ id: spriteId(m, moods[m] as KessokuMood, 'mini'), x: i * 18, y: 0 }))
+  expect(stripRaster?.cells).toBe(encodeCells(composite(minis, 70, 16, t2), 70, 16, 'quad', '#1b1b1f').cells)
   expect(await strip.find({ type: 'Text', text: /Nijika/ })).toBeDefined()
   expect(await strip.find({ type: 'Button', key: 'strip-panel' })).toBeDefined()
   await strip.unmount()
@@ -1002,20 +1352,54 @@ test('the band is drawn as sprites: a Raster on the terminal, repainted by blit;
   expect(await low.find({ type: 'Button', key: 'strip-panel' })).toBeDefined()
   await low.unmount()
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
+    // The panel's whole figure, 96 x 96 at one CSS pixel a pixel.
     const pane = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
     const svg = await pane.find({ type: 'Svg' })
     expect(svg).toBeDefined()
-    expect(svg?.props).toMatchObject({ isInteractive: true, width: 64, height: 64 })
+    expect(svg?.props).toMatchObject({ isInteractive: true, width: 96, height: 96 })
     expect(String(svg?.props.source)).toContain('<animate')
+    expect(String(svg?.props.source).length).toBeLessThanOrEqual(SVG_LIMIT)
     expect(String(svg?.props.alt)).toMatch(/Bocchi/)
     await pane.unmount()
   }
-  // Nijika's memo carries her portrait above the prompt.
+  // Nijika's memo carries her mini above the prompt in a terminal, her portrait on the desktop.
   await $.command.run(cmd('bocchi', 'memo'))
   const memoBand = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
   expect((await memoBand.find({ type: 'Raster', key: 'memo-sprite' }))?.props).toMatchObject({ columns: 8, rows: 4 })
-  await memoBand.press({ key: 'memo-skip' })
   await memoBand.unmount()
+  const memoDesk = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect((await memoDesk.find({ type: 'Svg' }))?.props).toMatchObject({ width: 32, height: 32 })
+  await memoDesk.press({ key: 'memo-skip' })
+  await memoDesk.unmount()
+})
+
+test("the small spots keep v1's footprints: Cache Tax and the panel above the prompt, the minis in a terminal, portraits elsewhere", async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen, { unplaced: true })
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // Cache Tax: Bocchi's mini in quadrants (8 x 4) in a terminal, her portrait (32 CSS pixels) on a remote surface.
+  await $.command.run(cmd('bocchi', 'tax'))
+  const tax = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  const taxRaster = (await tax.find({ type: 'Raster', key: 'tax-sprite' }))?.props
+  expect(taxRaster).toMatchObject({ columns: 8, rows: 4 })
+  expect(taxRaster?.cells).toBe(encodeCells(composite([{ id: spriteId('bocchi', 'panic', 'mini'), x: 0, y: 0 }], 16, 16, 1_000_000), 16, 16, 'quad', '#1b1b1f').cells)
+  await tax.unmount()
+  const taxDesk = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect((await taxDesk.find({ type: 'Svg' }))?.props).toMatchObject({ width: 32, height: 32, isInteractive: true })
+  await taxDesk.press({ key: 'tax-dismiss' })
+  await taxDesk.unmount()
+  // No room for a pane: the panel is drawn above the prompt, its cards with the minis (8 x 4) in a terminal and the
+  // portraits (32 CSS pixels) on a remote surface.
+  expect((await $.command.run(cmd('kessoku'))).text).toMatch(/above the prompt/)
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect((await band.find({ type: 'Raster', key: 'sprite-bocchi' }))?.props).toMatchObject({ columns: 8, rows: 4 })
+  await band.unmount()
+  for (const surface of ['desktop', 'mobile'] as const) {
+    const remote = await $.ui.mount({ plugin: PLUGIN, surface, component: 'AbovePrompt', props: BAND_PROPS })
+    expect((await remote.find({ type: 'Svg' }))?.props).toMatchObject({ width: 32, height: 32 })
+    await remote.unmount()
+  }
 })
 
 test('the guard screen fits its picture to the room inside its frame, and keeps the command in view', async ($, on) => {
@@ -1033,21 +1417,39 @@ test('the guard screen fits its picture to the room inside its frame, and keeps 
     await pane.unmount()
     return { raster: raster?.props, ascii: ascii !== undefined, command: command !== undefined }
   }
-  // 70 columns (what the pane asks for): her head and the crash, half blocks.
-  expect((await pictureAt(at(70))).raster).toMatchObject({ columns: 66, rows: 8 })
+  // What a picture's cells are, the parts laid on a canvas of w x h and drawn in quadrants on the screen's charcoal.
+  const cellsOf = (parts: { id: string; x: number; y: number; zoom?: number }[], w: number, h: number) => encodeCells(composite(parts, w, h, 1_000_000), w, h, 'quad', '#1b1b1f').cells
+  const panicMini = spriteId('bocchi', 'panic', 'mini')
+  // 70 columns (what the pane asks for): her mini in half blocks (16 x 8 cells, drawn at zoom 2 in the quadrant canvas)
+  // beside the crash in quadrants, 66 x 8 as before.
+  const wide = (await pictureAt(at(70))).raster
+  expect(wide).toMatchObject({ columns: 66, rows: 8 })
+  expect(wide?.cells).toBe(cellsOf([{ id: panicMini, x: 0, y: 0, zoom: 2 }, { id: CRASH, x: 36, y: 0 }], 132, 32))
+  const miniHalves = encodeCells(composite([{ id: panicMini, x: 0, y: 0 }], 16, 16, 1_000_000), 16, 16, 'half', '#1b1b1f').cells
+  expect(halvesOf(String(wide?.cells), 66, 0, 0, 16, 8)).toEqual(halvesOf(miniHalves, 16, 0, 0, 16, 8))
   // 66: the frame leaves 62, too few for both: the crash alone.
-  expect((await pictureAt(at(66))).raster).toMatchObject({ columns: 48, rows: 8 })
-  // 50: quadrants, her head and the crash in 33 columns, 4 rows.
-  expect((await pictureAt(at(50))).raster).toMatchObject({ columns: 33, rows: 4 })
-  // Short on rows (a band): quadrants however wide.
+  const crashOnly = (await pictureAt(at(66))).raster
+  expect(crashOnly).toMatchObject({ columns: 48, rows: 8 })
+  expect(crashOnly?.cells).toBe(cellsOf([{ id: CRASH, x: 0, y: 0 }], 96, 32))
+  // 50: her mini and the small crash in 33 columns, 4 rows.
+  const small = (await pictureAt(at(50))).raster
+  expect(small).toMatchObject({ columns: 33, rows: 4 })
+  expect(small?.cells).toBe(cellsOf([{ id: panicMini, x: 0, y: 0 }, { id: CRASH_MINI, x: 18, y: 0 }], 66, 16))
+  // 30: the frame leaves 26, too few for her mini beside it: the small crash alone.
+  expect((await pictureAt(at(30))).raster).toMatchObject({ columns: 24, rows: 4 })
+  // Short on rows (a band): the small picture however wide.
   expect((await pictureAt(at(70, 26))).raster).toMatchObject({ rows: 4 })
   // Too narrow for any picture: the old ASCII line, and the command still shows.
   const narrow = await pictureAt(at(24))
   expect(narrow.raster).toBeUndefined()
   expect(narrow.ascii).toBe(true)
   expect(narrow.command).toBe(true)
+  // On a remote surface: her whole figure and the crash at her feet, one CSS pixel a pixel.
   const blastD = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-blast-radius', props: PANE_PROPS })
-  expect(String((await blastD.find({ type: 'Svg' }))?.props.alt)).toMatch(/guitar/)
+  const blastSvg = (await blastD.find({ type: 'Svg' }))?.props
+  expect(String(blastSvg?.alt)).toMatch(/guitar/)
+  expect(blastSvg).toMatchObject({ width: 180, height: 96, isInteractive: true })
+  expect(String(blastSvg?.source).length).toBeLessThanOrEqual(SVG_LIMIT)
   await blastD.press({ key: 'blast-cancel' })
   await blastD.unmount()
 })

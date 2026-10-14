@@ -1,0 +1,42 @@
+{
+  "name": "kessoku-sprite-studio",
+  "version": "1.0.0",
+  "description": "Kessoku Band pixel-art sprites: drawn as palette grids, animated and rendered with Remotion, exported to the mod",
+  "repository": {},
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@remotion/bundler": "4.0.534",
+    "@remotion/cli": "4.0.534",
+    "@remotion/renderer": "4.0.534",
+    "pngjs": "^7.0.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.534"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.534",
+    "@types/node": "^20.19.43",
+    "@types/pngjs": "^6.0.5",
+    "@types/react": "19.2.7",
+    "@types/web": "0.0.166",
+    "esbuild": "0.28.1",
+    "eslint": "9.39.5",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio",
+    "check": "node scripts/check.mjs",
+    "compare": "node scripts/compare.mjs",
+    "grid": "node scripts/grid.mjs",
+    "look": "node scripts/look.mjs",
+    "onion": "node scripts/onion.mjs",
+    "lineup": "node scripts/lineup.mjs",
+    "sheet": "node scripts/sheet.mjs all",
+    "sprites": "node scripts/sprites.mjs",
+    "aseprite": "node scripts/aseprite.mjs",
+    "showcase": "remotion render Showcase out/kessoku-band.gif --codec=gif",
+    "lint": "tsc -p ."
+  }
+}

@@ -27,7 +27,7 @@
     "characterArt": {
       "type": "string",
       "title": "Character art",
-      "description": "How the band is drawn: sprites (animated pixel art, rendered with Remotion: an SVG in the desktop app, half-block pixels in a terminal) or kaomoji (the text faces). Text-only spots (status line, toasts) keep the kaomoji either way",
+      "description": "How the band is drawn: sprites (animated pixel art, rendered with Remotion: an SVG in the desktop app, block-character pixels in a terminal) or kaomoji (the text faces). Text-only spots (status line, toasts) keep the kaomoji either way",
       "options": [
         "sprites",
         "kaomoji"
