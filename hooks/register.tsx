@@ -89,8 +89,8 @@ import type { Risk } from './lib/blast'
 import { cutHunks, patchToUnified, unifiedDiff } from './lib/diff'
 import type { Unified } from './lib/diff'
 import { appendRule, cleanRule, looksLikeCorrection, rulePrompt } from './lib/reflect'
-import { CRASH, animOf, cellsFor, composite, encodeCells, frameSignature, isAnimated, spriteId, spritesSvg } from './lib/sprite'
-import type { CellMode, SpritePart } from './lib/sprite'
+import { CRASH, CRASH_MINI, animOf, cellsFor, composite, encodeCells, frameSignature, isAnimated, spriteId, spritesSvg, viewSize } from './lib/sprite'
+import type { CellMode, SpritePart, SpriteView } from './lib/sprite'
 import { ALWAYS_IGNORED, IGNORED_DIRS, MAX_PATHS, baseName, isAnyHot, isGlowing, isInside, isLit, relPath, treeRows, windowRows } from './lib/tree'
 
 // ---- Names, atoms, options --------------------------------------------------
@@ -1254,9 +1254,28 @@ function oneSprite(key: string, id: string, mode: CellMode, scale: number, alt: 
   return { key, parts: [{ id, x: 0, y: 0 }], w: anim?.w ?? 0, h: anim?.h ?? 0, mode, scale, bg: bgColor, alt }
 }
 
-/** A member in a mood: her whole figure, or the window over her head. */
-function memberSprite(key: string, member: KessokuMember, mood: KessokuMood, view: 'full' | 'portrait', mode: CellMode, scale: number, bgColor?: string): SpriteSpec {
+/** A member in a mood: her whole figure (96x96), the window over her head (32x32), or her hand-drawn mini head (16x16). */
+function memberSprite(key: string, member: KessokuMember, mood: KessokuMood, view: SpriteView, mode: CellMode, scale: number, bgColor?: string): SpriteSpec {
   return oneSprite(key, spriteId(member, mood, view), mode, scale, `${MEMBERS[member].name}, ${mood}`, bgColor)
+}
+
+/**
+ * A terminal draws a head as the member's hand-drawn mini (16x16): in half
+ * blocks (16x8 cells, every color kept) where there is room, in quadrants
+ * (8x4) in the small spots. A remote surface draws the portrait, one CSS
+ * pixel a pixel.
+ */
+type HeadMode = CellMode
+
+/** The cells the mini takes in a head mode. */
+function headCells(mode: HeadMode): { columns: number; rows: number } {
+  const { w, h } = viewSize('mini')
+  return cellsFor(w, h, mode)
+}
+
+/** A member's head as `e`'s surface draws a small one: the mini in quadrants on a terminal (8x4 cells), the portrait elsewhere (32 CSS pixels). */
+function headSprite(key: string, e: RenderInput, member: KessokuMember, mood: KessokuMood, bgColor?: string): SpriteSpec {
+  return memberSprite(key, member, mood, e.surface === 'terminal' ? 'mini' : 'portrait', 'quad', 1, bgColor)
 }
 
 /**
@@ -1387,20 +1406,21 @@ function cardTextRows(b: KessokuBand, member: KessokuMember, compact: boolean): 
 }
 
 /**
- * How a terminal's panel cards carry their portraits: half blocks (16x8 cells)
- * where every card that tall fits the room with a readable column of text
- * beside it, quadrants (8x4) where they fit (or where the cards scroll anyway,
- * which dropping the portraits would not stop), none where even quadrants
- * would squeeze the text or add the scroll. `cardRows` is each drawn card's
- * text rows, `fixedRows` the panel's own lines around them.
+ * How a terminal's panel cards draw the heads (the minis): in half blocks
+ * (16x8 cells) where every card that tall fits the room with a readable
+ * column of text beside it, in quadrants (8x4) where they fit (or where the
+ * cards scroll anyway, which dropping the heads would not stop), not at all
+ * where even the quadrants would squeeze the text or add the scroll.
+ * `cardRows` is each drawn card's text rows, `fixedRows` the panel's own
+ * lines around them.
  */
-function panelCellMode(bodyColumns: number, bodyRows: number, compact: boolean, cardRows: readonly number[], fixedRows: number): CellMode | null {
+function panelHead(bodyColumns: number, bodyRows: number, compact: boolean, cardRows: readonly number[], fixedRows: number): HeadMode | null {
   // The panel's own padding, then each card's border and padding.
   const inner = bodyColumns - (compact ? 0 : 2) - 4
-  const textBeside = (mode: CellMode) => inner - cellsFor(16, 16, mode).columns - 1
+  const textBeside = (mode: HeadMode) => inner - headCells(mode).columns - 1
   const height = (spriteRows: number) => fixedRows + cardRows.reduce((n, rows) => n + 2 + Math.max(rows, spriteRows), 0)
-  if (!compact && textBeside('half') >= 34 && height(8) <= bodyRows) return 'half'
-  if (textBeside('quad') >= 24 && (height(4) <= bodyRows || height(0) > bodyRows)) return 'quad'
+  if (!compact && textBeside('half') >= 34 && height(headCells('half').rows) <= bodyRows) return 'half'
+  if (textBeside('quad') >= 24 && (height(headCells('quad').rows) <= bodyRows || height(0) > bodyRows)) return 'quad'
   return null
 }
 
@@ -1416,7 +1436,7 @@ function drawPanel($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache,
   // The title, the ctx line and the footer, the plan line and the last wrong note when they show.
   const fixedRows = 3 + (b.rateLimitPercent > 0 ? 1 : 0) + (b.lastError ? 1 : 0)
   const cardRows = members.filter(hasCard).map(member => cardTextRows(b, member, compact))
-  const cellMode = e.surface === 'terminal' ? panelCellMode(e.props.bodyColumns, e.props.scroll.bodyRows, compact, cardRows, fixedRows) : 'half'
+  const head = e.surface === 'terminal' ? panelHead(e.props.bodyColumns, e.props.scroll.bodyRows, compact, cardRows, fixedRows) : null
 
   const memberBox = (member: KessokuMember) => {
     const m = MEMBERS[member]
@@ -1424,16 +1444,17 @@ function drawPanel($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache,
     const color = cardColor(mood, m.color)
     const mine = b.agents.filter(a => a.member === member && a.id !== 'main').sort((x, y) => y.startedAt - x.startedAt)
     if (!hasCard(member)) return null
-    // Her sprite beside the card: the whole figure on a remote surface, the window over her head in a terminal.
+    // Her sprite beside the card: on a remote surface her whole figure (her portrait above the prompt), one CSS
+    // pixel a pixel; in a terminal her mini, in half blocks or quadrants.
     const spec =
       e.surface !== 'terminal'
-        ? memberSprite(`sprite-${member}`, member, mood, compact ? 'portrait' : 'full', 'half', 2)
-        : cellMode === null
+        ? memberSprite(`sprite-${member}`, member, mood, compact ? 'portrait' : 'full', 'quad', 1)
+        : head === null
           ? null
-          : memberSprite(`sprite-${member}`, member, mood, 'portrait', cellMode, 1, bg(true))
+          : memberSprite(`sprite-${member}`, member, mood, 'mini', head, 1, bg(true))
     const sprite = spec === null ? null : drawSprite($, e, spec, now)
     // The text column beside a terminal's sprite: the card's border and padding, the sprite, the gap.
-    const textCols = width - 4 - (sprite !== null && e.surface === 'terminal' && cellMode !== null ? cellsFor(16, 16, cellMode).columns + 1 : 0)
+    const textCols = width - 4 - (sprite !== null && e.surface === 'terminal' && head !== null ? headCells(head).columns + 1 : 0)
     const rows: Draw[] = []
     if (member === 'bocchi') {
       rows.push(
@@ -1530,11 +1551,18 @@ function drawPanel($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache,
   )
 }
 
-/** The four heads side by side, two pixels apart: the strip's picture. */
+/**
+ * The four heads side by side, two pixels apart: the strip's picture. A
+ * terminal draws the minis in quadrants (35x4 cells for four), a remote
+ * surface the portraits, one CSS pixel a pixel.
+ */
 function stripSpec(b: KessokuBand, members: readonly KessokuMember[], now: number, isTerminal: boolean): SpriteSpec {
-  const parts = members.map((member, i) => ({ id: spriteId(member, memberMood(b, member, now), 'portrait'), x: i * 18, y: 0 }))
+  const view: SpriteView = isTerminal ? 'mini' : 'portrait'
+  const { w, h } = viewSize(view)
+  const pitch = w + 2
+  const parts = members.map((member, i) => ({ id: spriteId(member, memberMood(b, member, now), view), x: i * pitch, y: 0 }))
   const names = members.map(member => `${MEMBERS[member].name}, ${memberMood(b, member, now)}`).join('; ')
-  return { key: 'strip-sprites', parts, w: members.length * 18 - 2, h: 16, mode: isTerminal ? 'quad' : 'half', scale: 2, bg: bg(), alt: `Kessoku Band: ${names}` }
+  return { key: 'strip-sprites', parts, w: members.length * pitch - 2, h, mode: 'quad', scale: 1, bg: bg(), alt: `Kessoku Band: ${names}` }
 }
 
 function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: KessokuBand, c: KessokuCache, r: KessokuReplay, now: number, isRoomy: boolean): Draw {
@@ -1601,30 +1629,45 @@ function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: Kessoku
 
 /**
  * The guard screen's picture: Bocchi panicking beside her guitar hitting the
- * stage. A remote surface shows her whole. A terminal shows her head and the
- * crash where `columns` (the room inside the screen's frame) and `rows` (what
- * the room spares beside the command and the buttons) hold them: in half
- * blocks (8 rows) where it can, in quadrants (4 rows) where it must, the crash
- * alone where her head does not fit, nothing where neither does.
+ * stage. A remote surface shows her whole beside the crash at her feet, one
+ * CSS pixel a pixel. A terminal draws her mini head and the crash where
+ * `columns` (the room inside the screen's frame) and `rows` (what the room
+ * spares beside the command and the buttons) hold them: her mini in half
+ * blocks beside the crash in quadrants (8 rows, 66 columns) where it can, her
+ * mini beside the small crash, both in quadrants (4 rows, 33 columns), where
+ * it must, the crash alone where her head does not fit, nothing where neither
+ * does. The half blocks are the mini at zoom 2 in the quadrant canvas: one
+ * Raster, each of its cells the mini's pixel over the one below.
  */
 function blastSpec(isTerminal: boolean, columns: number, rows: number): SpriteSpec | null {
-  const crash = animOf(CRASH)
-  const head = animOf(spriteId('bocchi', 'panic', 'portrait'))
-  const whole = animOf(spriteId('bocchi', 'panic', 'full'))
-  if (crash === undefined) return null
   const alt = 'Bocchi panics as her guitar crashes onto the stage'
   if (!isTerminal) {
-    if (whole === undefined) return { key: 'blast-sprite', parts: [{ id: CRASH, x: 0, y: 0 }], w: crash.w, h: crash.h, mode: 'half', scale: 3, alt }
-    return { key: 'blast-sprite', parts: [{ id: spriteId('bocchi', 'panic', 'full'), x: 0, y: 0 }, { id: CRASH, x: whole.w + 2, y: whole.h - crash.h }], w: whole.w + 2 + crash.w, h: whole.h, mode: 'half', scale: 3, alt }
+    const crash = animOf(CRASH)
+    const whole = animOf(spriteId('bocchi', 'panic', 'full'))
+    if (crash === undefined) return null
+    if (whole === undefined) return { key: 'blast-sprite', parts: [{ id: CRASH, x: 0, y: 0 }], w: crash.w, h: crash.h, mode: 'quad', scale: 1, alt }
+    // The crash tucks into the right eighth of her canvas, which her figure leaves clear.
+    const x = Math.round((whole.w * 7) / 8)
+    return { key: 'blast-sprite', parts: [{ id: spriteId('bocchi', 'panic', 'full'), x: 0, y: 0 }, { id: CRASH, x, y: whole.h - crash.h }], w: x + crash.w, h: whole.h, mode: 'quad', scale: 1, alt }
   }
-  for (const mode of ['half', 'quad'] as const) {
-    if (rows < cellsFor(crash.w, crash.h, mode).rows) continue
-    if (head !== undefined) {
-      const w = head.w + 2 + crash.w
-      const h = Math.max(head.h, crash.h)
-      if (cellsFor(w, h, mode).columns <= columns) return { key: 'blast-sprite', parts: [{ id: spriteId('bocchi', 'panic', 'portrait'), x: 0, y: 0 }, { id: CRASH, x: head.w + 2, y: 0 }], w, h, mode, scale: 1, bg: bg(), alt }
+  const head = spriteId('bocchi', 'panic', 'mini')
+  const tiers = [
+    { zoom: 2, crash: CRASH },
+    { zoom: 1, crash: CRASH_MINI },
+  ]
+  for (const tier of tiers) {
+    const crash = animOf(tier.crash)
+    if (crash === undefined || rows < cellsFor(crash.w, crash.h, 'quad').rows) continue
+    const mini = animOf(head)
+    if (mini !== undefined) {
+      // An eighth of her head apart: two columns beside the large head, one beside the small.
+      const headW = mini.w * tier.zoom
+      const gap = Math.max(1, Math.round(headW / 8))
+      const w = headW + gap + crash.w
+      const h = Math.max(mini.h * tier.zoom, crash.h)
+      if (cellsFor(w, h, 'quad').columns <= columns) return { key: 'blast-sprite', parts: [{ id: head, x: 0, y: 0, zoom: tier.zoom }, { id: tier.crash, x: headW + gap, y: 0 }], w, h, mode: 'quad', scale: 1, bg: bg(), alt }
     }
-    if (cellsFor(crash.w, crash.h, mode).columns <= columns) return { key: 'blast-sprite', parts: [{ id: CRASH, x: 0, y: 0 }], w: crash.w, h: crash.h, mode, scale: 1, bg: bg(), alt }
+    if (cellsFor(crash.w, crash.h, 'quad').columns <= columns) return { key: 'blast-sprite', parts: [{ id: tier.crash, x: 0, y: 0 }], w: crash.w, h: crash.h, mode: 'quad', scale: 1, bg: bg(), alt }
   }
   return null
 }
@@ -1702,8 +1745,8 @@ function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: Kess
   const age = c.lastWarmAt > 0 ? fmtDuration(now - c.lastWarmAt) : '?'
   const { price, isExact } = priceInfo(c.model || 'default')
   const rate = ttlMs() > 5 * 60_000 ? price.cacheWriteHour : price.cacheWrite
-  // Bocchi panicking beside the bill: her head in quadrants on a terminal (four rows), larger elsewhere.
-  const sprite = drawSprite($, e, memberSprite('tax-sprite', 'bocchi', 'panic', 'portrait', 'quad', 3, bg()), now)
+  // Bocchi panicking beside the bill: her mini in quadrants on a terminal (four rows), her portrait elsewhere.
+  const sprite = drawSprite($, e, headSprite('tax-sprite', e, 'bocchi', 'panic', bg()), now)
   return (
     <Box flexDirection="row" gap={1} borderStyle="round" borderColor="error" paddingX={1} backgroundColor={bg()}>
       {sprite}
@@ -1740,7 +1783,7 @@ function drawMemo($: EngineInterface, e: RenderInput<'AbovePrompt'>, m: KessokuM
   const n = MEMBERS.nijika
   // Nijika at work: scribbling while the memo drafts, beaming once it is saved, her usual smile in between.
   const mood: KessokuMood = m.status === 'drafting' ? 'focused' : m.status === 'saved' ? 'happy' : 'anxious'
-  const sprite = drawSprite($, e, memberSprite('memo-sprite', 'nijika', mood, 'portrait', 'quad', 2, bg()), now)
+  const sprite = drawSprite($, e, headSprite('memo-sprite', e, 'nijika', mood, bg()), now)
   const face = (f: string) => (sprite === null ? `${f} ` : '')
   if (m.status === 'drafting') {
     return (
@@ -1811,7 +1854,7 @@ function drawReplay($: EngineInterface, e: Site, r: KessokuReplay, inBand: boole
   const cut = window.hidden > 0
   const go = (to: number) => () => void update($, replay, x => ({ ...x, index: Math.max(0, Math.min(to, total - 1)) }))
   // Whoever played the track, at it, beside the header (four rows in a terminal).
-  const sprite = drawSprite($, e, memberSprite('replay-sprite', track.by, 'focused', 'portrait', 'quad', 2, bg()), now)
+  const sprite = drawSprite($, e, headSprite('replay-sprite', e, track.by, 'focused', bg()), now)
   const header = (
     <Box flexDirection="column" flexGrow={1} flexShrink={1}>
       <Box flexDirection="row" justifyContent="space-between">
@@ -2618,7 +2661,7 @@ export const register: Register = (on, options) => {
     const n = MEMBERS.nijika
     const now = await $.clock.now()
     beginSprites(e)
-    const sprite = drawSprite($, e, memberSprite('ask-sprite', 'nijika', 'focused', 'portrait', 'quad', 2), now)
+    const sprite = drawSprite($, e, headSprite('ask-sprite', e, 'nijika', 'focused'), now)
     if (sprite !== null) {
       return (
         <Box flexDirection="column">
