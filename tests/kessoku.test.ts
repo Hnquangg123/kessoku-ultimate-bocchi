@@ -8,7 +8,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import type { KessokuMood } from '../types'
-import { memberFor, memberForTool, parseDuration, fmtTokens, fmtUsd, priceInfo, cacheWriteUsd, describeCall, slimeState } from '../hooks/lib/band'
+import { BAND_AGENTS, memberFor, memberForTool, parseDuration, fmtTokens, fmtUsd, priceInfo, cacheWriteUsd, describeCall, seatOf, slimeState } from '../hooks/lib/band'
 import { classify, classifyPowerShell, isGitCommit } from '../hooks/lib/blast'
 import { cutHunks, patchToUnified, unifiedDiff } from '../hooks/lib/diff'
 import { FACE_WIDTH, MEMBERS, SPINNER_WORDS_BY_MODE, THEME_OVERRIDES, TURN_WORDS, padFace, textWidth } from '../hooks/lib/palette'
@@ -34,9 +34,10 @@ const PANE_PROPS = { title: 'x', isFocused: false, bodyColumns: 80, placement: '
 const BAND_PROPS = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 18 }, view: {} }
 
 type Entry = { name: string; kind: 'file' | 'dir'; size: number; mtimeMs: number; isLink: boolean }
-type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[]; suggested: string[]; notified: { text: string; title: string | undefined }[] }
+type Registered = { name: string; description: string; prompt?: string; tools?: readonly string[] }
+type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[]; suggested: string[]; notified: { text: string; title: string | undefined }[]; agents: Registered[] }
 /** What a test may vary in the engine beneath: one bottom per event, so the knobs live here. */
-type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string; notifyReason?: 'disabled' | 'no-channel' | 'no-surface' | 'refused'; engineVersion?: string; noVersion?: boolean }
+type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string; notifyReason?: 'disabled' | 'no-channel' | 'no-surface' | 'refused'; engineVersion?: string; noVersion?: boolean; refuseRegister?: boolean }
 const THEME_OPTION_LIGHT = 'Kessoku Bocchi Light (kessoku-ultimate-bocchi)'
 
 /** `C:\proj\x` and `/proj/x` are the same file to the engine's fs; the tests key by the forward-slash spelling. */
@@ -110,6 +111,12 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
   on('command.register', ($, e) => {
     seen.commands.push(e.name)
     return { value: { command: e.name } }
+  })
+  // The band's agent types, named as the engine names a plugin's own; or (a knob) refused.
+  on('agent.register', ($, e) => {
+    if (a.refuseRegister) throw new Error('refused by another plugin')
+    seen.agents.push(e)
+    return { value: { agent: `${PLUGIN}:${e.name}` } }
   })
   on('config.list', () => ({
     value: [{ key: 'theme', label: 'Theme', kind: 'choice' as const, value: seen.theme, options: ['dark', 'light', THEME_OPTION, THEME_OPTION_LIGHT], provider: { plugin: 'engine', tier: 'core' as const }, isLocked: false }],
@@ -204,7 +211,7 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
 }
 
 function fresh(): Seen {
-  return { commands: [], status: [], toasts: [], opened: [], closed: [], filled: [], written: {}, sleeps: 0, sleepers: [], forks: 0, configSets: [], theme: 'dark', asks: [], askAnswer: 'Not now', rendered: {}, blits: [], suggested: [], notified: [] }
+  return { commands: [], status: [], toasts: [], opened: [], closed: [], filled: [], written: {}, sleeps: 0, sleepers: [], forks: 0, configSets: [], theme: 'dark', asks: [], askAnswer: 'Not now', rendered: {}, blits: [], suggested: [], notified: [], agents: [] }
 }
 
 /** One warm main-thread turn, as the engine would report it: 300k tokens read from the cache. */
@@ -335,6 +342,52 @@ test('memberFor: the band takes the work by its kind', async () => {
   expect(memberForTool('Edit')).toBe('kita')
 })
 
+test('memberFor: a band agent type seats by name before any keyword runs; other types keep the tables', async () => {
+  // The engine's spelling of a plugin's own type, and the short one, in any case.
+  expect(seatOf('kessoku-ultimate-bocchi:ryo')).toBe('ryo')
+  expect(seatOf('kessoku:nijika')).toBe('nijika')
+  expect(seatOf('Kessoku:Kita')).toBe('kita')
+  expect(seatOf('kessoku:bocchi')).toBe('bocchi')
+  for (const other of ['kessoku:drummer', 'kessoku:', 'ryo', 'other-plugin:ryo', 'kessoku-ultimate-bocchi:ryo:x', 'general-purpose', 'Explore', '']) expect(seatOf(other)).toBeNull()
+  // By name, whatever the words say: a Ryo type asked to plan is still Ryo's act.
+  expect(memberFor({ type: 'kessoku-ultimate-bocchi:ryo', description: 'Plan the rollout and coordinate the steps', prompt: '', background: false })).toBe('ryo')
+  expect(memberFor({ type: 'kessoku:kita', description: 'Refactor the database query layer', prompt: '', background: true })).toBe('kita')
+  expect(memberFor({ type: 'kessoku:nijika', description: 'Update the README', prompt: '', background: false })).toBe('nijika')
+  // Unknown names and plain types fall through to today's tables, unchanged.
+  expect(memberFor({ type: 'kessoku:drummer', description: 'Update the README and the docs page', prompt: '', background: false })).toBe('kita')
+  expect(memberFor({ type: 'Plan', description: 'Look around', prompt: '', background: false })).toBe('nijika')
+  expect(memberFor({ type: 'general-purpose', description: 'Look into why the strip flickers on resize', prompt: 'Read hooks/register.tsx around drawStrip.', background: false })).toBe('bocchi')
+})
+
+test('the band agent types: three specs, each with a when-to-delegate line, a whole prompt and a tool list that fits the part', async () => {
+  expect(BAND_AGENTS.map(a => a.name)).toEqual(['nijika', 'ryo', 'kita'])
+  for (const a of BAND_AGENTS) {
+    // A short name the engine takes (letters, digits, _ and -, up to 64), seated by name once it is `<plugin>:<name>`.
+    expect(a.name).toMatch(/^[A-Za-z0-9_-]{1,64}$/)
+    expect(seatOf(`kessoku-ultimate-bocchi:${a.name}`)).toBe(a.name)
+    expect(a.description).toMatch(/Delegate /)
+    expect(a.description.length).toBeLessThan(320)
+    // The prompt replaces the session's: it says who she works for and that her last message is all the main agent reads.
+    expect(a.prompt).toMatch(/subagent for the main agent/)
+    expect(a.prompt).toMatch(/final message is the only thing the main agent sees/)
+    expect(a.tools.length).toBeGreaterThan(0)
+    expect(a.tools).toContain('Read')
+    expect(a.tools.every(t => t !== 'Agent')).toBe(true)
+  }
+  const [nijika, ryo, kita] = BAND_AGENTS
+  const writes = ['Edit', 'Write', 'NotebookEdit']
+  // Nijika edits nothing and runs nothing; Ryo is read-only plus the shells; Kita has Read, Edit and Write.
+  expect(nijika?.tools.some(t => writes.includes(t) || t === 'Bash' || t === 'PowerShell')).toBe(false)
+  expect(nijika?.prompt).toMatch(/numbered plan/)
+  expect(nijika?.prompt).toMatch(/verdict/)
+  expect(ryo?.tools.some(t => writes.includes(t))).toBe(false)
+  expect(ryo?.tools).toContain('Bash')
+  expect(ryo?.tools).toContain('PowerShell')
+  expect(ryo?.prompt).toMatch(/short lines/)
+  expect(kita?.tools).toEqual(['Read', 'Edit', 'Write'])
+  expect(kita?.prompt).toMatch(/every file you touched/)
+})
+
 test('reflect: corrections are spotted, questions and chatter are not, rules cleaned and appended once', async () => {
   for (const s of ['no — in this repo we always use pnpm, not npm', "don't use any, type the props properly", 'please use tabs in this repo', 'We write tests in Vitest here, not Jest', 'Prefer named exports over default exports', 'The API is at /v2 now, not /v1', 'I said use the existing helper', 'stop using moment, we moved to date-fns', 'not like that, keep the imports sorted']) {
     expect(looksLikeCorrection(s)).toBe(true)
@@ -404,6 +457,10 @@ test('session.start registers the commands, opens the panel and seats Bocchi in 
   expect(seen.commands.sort()).toEqual(['bocchi', 'cache-tax', 'filetree', 'keepwarm', 'kessoku', 'replay'])
   expect(seen.opened).toContain('kessoku-band')
   expect(seen.status.at(-1)).toMatch(/bocchi/)
+  // The band's agent types, for the model from the next turn on.
+  expect(seen.agents.map(a => a.name)).toEqual(['nijika', 'ryo', 'kita'])
+  expect(seen.agents.map(a => a.tools)).toEqual(BAND_AGENTS.map(a => a.tools))
+  expect(seen.agents.every(a => (a.prompt ?? '').length > 200)).toBe(true)
 })
 
 test('the engine theme is offered once, switched on when accepted, and restored by /bocchi theme off', async ($, on) => {
@@ -665,6 +722,41 @@ test('subagents take the stage as band members and leave with their cost', async
   await panel.unmount()
   await $.turn.complete({ turnId: 'a1', agentId: 'agent-1', answer: 'found 3', durationMs: 4000, isAborted: false, reason: 'answer' })
   expect(seen.toasts.some(t => /Ryo finished/.test(t))).toBe(true)
+})
+
+test('a band agent type lands on its member\'s card by name, the short spelling dispatched as the registered type', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  const dispatched: string[] = []
+  let n = 0
+  on('agent.spawn', ($, e) => {
+    dispatched.push(e.subagentType)
+    n += 1
+    return { model: 'claude-sonnet-5-5', agentId: `agent-${n}` }
+  })
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const spawn = (subagentType: string, description: string, prompt: string) =>
+    $.agent.spawn({ tool_use_id: `tu-${description}`, prompt, description, subagentType, provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-sonnet-5-5', background: false, fork: false })
+  // No keyword in it would have found Ryo: by the tables this is Bocchi's.
+  expect((await spawn('kessoku:ryo', 'Look into why the strip flickers on resize', 'Read hooks/register.tsx around drawStrip.')).agentId).toBe('agent-1')
+  expect(dispatched[0]).toBe(`${PLUGIN}:ryo`)
+  expect(seen.toasts.some(t => /Ryo takes the stage: Look into why the strip flickers on resize \(seated by name: kessoku-ultimate-bocchi:ryo\)/.test(t))).toBe(true)
+  await spawn(`${PLUGIN}:nijika`, 'Update the README', 'Check the README.')
+  expect(dispatched[1]).toBe(`${PLUGIN}:nijika`)
+  await spawn('general-purpose', 'Implement the feature', 'Build it end to end.')
+  expect(seen.toasts.at(-1)).toMatch(/Bocchi takes the stage: Implement the feature$/)
+  // Each act sits on her own card: Ryo's on Ryo's, Nijika's on Nijika's (whatever the words said), the plain one on Bocchi's.
+  for (const surface of SURFACES) {
+    const panel = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+    const card = async (member: string) => JSON.stringify(await panel.find({ type: 'Box', key: `card-${member}` }))
+    expect(await card('ryo')).toContain('strip flickers')
+    expect(await card('nijika')).toContain('Update the README')
+    expect(await card('bocchi')).toContain('Implement the feature')
+    expect(await card('bocchi')).not.toContain('strip flickers')
+    expect(await card('kita')).not.toContain('Update the README')
+    await panel.unmount()
+  }
 })
 
 test('the skin frames tool rows and diff cards, borrows spinner words, and marks the footer', async ($, on) => {
@@ -2095,8 +2187,34 @@ test('/bocchi help opens with the mod and engine versions, and names what this e
   expect(isAtLeast('3.0.0', '2.1.287')).toBe(true)
   expect(isAtLeast('2.10.0', '2.9.9')).toBe(true)
   expect(isAtLeast('', '2.1.287')).toBe(false)
-  const allOn = { suggest: true, notify: true, version: true }
+  const allOn = { suggest: true, notify: true, version: true, agents: true }
   expect(offLine(allOn)).toBe('')
   expect(offLine({ ...allOn, notify: false })).toBe('off on this engine: native notifications (no $.ui.notify)')
   expect(offLine({ ...allOn, suggest: false, version: false })).toBe('off on this engine: the Replay suggestion (no $.prompt.suggest), the engine version (no $.session.version)')
+  expect(offLine({ ...allOn, agents: false })).toBe('off on this engine: the band agent types (no $.agent.register)')
+  // Help names the band types.
+  expect(lines.some(l => l.startsWith('Band agent types:') && l.includes('kessoku-ultimate-bocchi:nijika'))).toBe(true)
+})
+
+test('a refused registration breaks nothing: the session starts, help names no missing call, band types still seat by name', { options: { applyTheme: false } }, async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen, { refuseRegister: true })
+  const dispatched: string[] = []
+  on('agent.spawn', ($, e) => {
+    dispatched.push(e.subagentType)
+    return { model: 'claude-sonnet-5-5', agentId: `agent-${dispatched.length}` }
+  })
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  expect(seen.agents).toEqual([])
+  expect(seen.opened).toContain('kessoku-band')
+  // A refusal is not a missing call: nothing is named off (that line is for an engine without $.agent.register or $.tool.register).
+  const lines = ((await $.command.run(cmd('bocchi', 'help'))).text ?? '').split('\n')
+  expect(lines.some(l => l.startsWith('off on this engine'))).toBe(false)
+  // Nothing was registered to dispatch to, so the short name goes on as spelled; the tables and the seat still work.
+  await $.agent.spawn({ tool_use_id: 'tu-a', prompt: 'Look around.', description: 'Explore the repo', subagentType: 'Explore', provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-sonnet-5-5', background: false, fork: false })
+  expect(seen.toasts.some(t => /Ryo takes the stage: Explore the repo$/.test(t))).toBe(true)
+  await $.agent.spawn({ tool_use_id: 'tu-b', prompt: 'Fix it.', description: 'Fix the README typo', subagentType: 'kessoku:kita', provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-sonnet-5-5', background: false, fork: false })
+  expect(dispatched).toEqual(['Explore', 'kessoku:kita'])
+  expect(seen.toasts.some(t => /Kita takes the stage: Fix the README typo \(seated by name: kessoku:kita\)/.test(t))).toBe(true)
 })

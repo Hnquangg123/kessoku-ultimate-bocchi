@@ -15,10 +15,12 @@
 //             the hint line, the question dialog, `♪ kessoku` in the footer,
 //             and Bocchi's face in the status line.
 //   band      the Kessoku Band panel (`/kessoku`): subagents mapped to
-//             Nijika, Ryo and Kita by what they were asked, Bocchi for the
-//             main loop and heavy work, each with task, tokens, cost, status,
-//             and each drawn as a slime in its member's color (bouncing,
-//             breathing or asleep) on her card and in the strip.
+//             Nijika, Ryo and Kita by their band agent type (registered at
+//             session.start, so the model picks a member by name) or else by
+//             what they were asked, Bocchi for the main loop and heavy work,
+//             each with task, tokens, cost, status, and each drawn as a slime
+//             in its member's color (bouncing, breathing or asleep) on her
+//             card and in the strip.
 //   cache     Cache Tax: a cold prompt cache holds the next send once, with
 //             the re-write cost; `/keepwarm` pings keep it warm; `/cache-tax`.
 //   blast     Blast Radius: a risky Bash or PowerShell command (rm -rf,
@@ -72,6 +74,7 @@ import {
   textWidth,
 } from './lib/palette'
 import {
+  BAND_AGENTS,
   EMPTY_USAGE,
   addUsage,
   cacheWriteUsd,
@@ -85,6 +88,7 @@ import {
   meter,
   parseDuration,
   priceInfo,
+  seatOf,
   slimeState,
 } from './lib/band'
 import { LIST_MAX, classify, classifyPowerShell, cleanArgs, globToRegExp, isGitCommit, size } from './lib/blast'
@@ -268,7 +272,9 @@ let modVersion = ''
  * (`session.compact`, `prompt.autocomplete`) cannot be gated: an engine that
  * does not know an event refuses the whole module at load.
  */
-const features: Record<FeatureKey, boolean> = { suggest: true, notify: true, version: true }
+const features: Record<FeatureKey, boolean> = { suggest: true, notify: true, version: true, agents: true }
+/** The band's agent types as the engine named them (`kessoku-ultimate-bocchi:ryo`), by member; filled at each session.start. */
+const bandTypes = new Map<string, string>()
 
 /**
  * A sprite a terminal drawing holds as a Raster, repainted by the sprite
@@ -494,6 +500,28 @@ async function readEngine($: EngineInterface): Promise<void> {
     if (typeof manifest.version === 'string') modVersion = manifest.version
   } catch {
     modVersion = ''
+  }
+}
+
+/**
+ * At each session.start: the band's agent types for the Agent tool (from the
+ * next turn on), kept by the names the engine gave them. A feature off when
+ * the engine has no `$.agent.register`; a type the engine or another plugin
+ * refuses is simply not offered.
+ */
+async function registerBand($: EngineInterface): Promise<void> {
+  if (!features.agents) return
+  for (const spec of BAND_AGENTS) {
+    try {
+      const r = await $.agent.register({ name: spec.name, description: spec.description, prompt: spec.prompt, tools: spec.tools })
+      bandTypes.set(spec.name, r.agent)
+    } catch (error) {
+      if (isMissingApi(error)) {
+        features.agents = false
+        return
+      }
+      bandTypes.delete(spec.name)
+    }
   }
 }
 
@@ -2401,6 +2429,7 @@ const HELP_LINES = [
   '/bocchi mood <anxious|focused|happy|panic|melting|hiding>   try a face in the status line',
   '/bocchi demo [off]   put sample acts on the panel · /bocchi memo · /bocchi tax · /bocchi crash · /bocchi setlist   previews',
   'Blast Radius and Reflect need no command: a risky command or a correction brings them up.',
+  "Band agent types: Claude can delegate to kessoku-ultimate-bocchi:nijika (plans, reviews, triage), :ryo (searches, shells, tests) and :kita (edits to named files); each act sits on its member's card by name.",
   'Config: /config → kessoku-ultimate-bocchi (engine theme, transcript skin, restyle other mods, toasts, accent, backgrounds, tool cards, spinner words, cache TTL, keepwarm, reflect, panel on start).',
 ]
 
@@ -2482,6 +2511,8 @@ export const register: Register = (on, options) => {
     await $.command.register({ name: 'cache-tax', description: 'Cache Tax: is the cache warm, and what would a cold send cost?' })
     await $.command.register({ name: 'bocchi', description: 'Kessoku theme: help, the engine theme, previews, moods, the strip', argumentHint: '[help|theme on|off|strip|mood <m>|demo|memo|tax|crash|setlist]' })
     await readEngine($).catch(() => undefined)
+    // What the model can do with the band: delegate to a member by name.
+    await registerBand($).catch(() => undefined)
     // The REPL has its screen now; a host like the desktop app attaches its client a moment later (session.attach);
     // a bare `claude -p` or SDK run never does, and the commands are enough for it.
     if (canDraw()) await startUi($)
@@ -2697,16 +2728,20 @@ export const register: Register = (on, options) => {
 
   // -- subagents -------------------------------------------------------------------
   on('agent.spawn', async ($, e, next) => {
-    const r = await next(e)
+    // A band type seats by name; spelled short (`kessoku:ryo`), it is dispatched as the type the engine registered.
+    const seat = seatOf(e.subagentType)
+    const registered = seat === null ? undefined : bandTypes.get(seat)
+    const type = registered !== undefined && e.workflow === undefined && e.resume === undefined ? registered : e.subagentType
+    const r = await next(type === e.subagentType ? e : { ...e, subagentType: type })
     if (r.deny !== undefined || r.agentId === undefined) return r
     const now = await $.clock.now()
-    const member = memberFor({ type: e.subagentType, description: e.description, prompt: e.prompt, background: e.background })
+    const member = memberFor({ type, description: e.description, prompt: e.prompt, background: e.background })
     await upsertAgent($, {
       ...mainAgent(),
       id: r.agentId,
       member,
-      description: e.description || e.subagentType,
-      type: e.subagentType,
+      description: e.description || type,
+      type,
       status: 'running',
       task: 'warming up',
       startedAt: now,
@@ -2714,7 +2749,7 @@ export const register: Register = (on, options) => {
     })
     ensureTick($)
     const m = MEMBERS[member]
-    toast($, `${m.faces.focused} ${m.name} takes the stage: ${e.description.slice(0, 60)}`, 'chatter')
+    toast($, `${m.faces.focused} ${m.name} takes the stage: ${e.description.slice(0, 60)}${seat !== null ? ` (seated by name: ${type})` : ''}`, 'chatter')
     return r
   }).catch(($, e, next) => next(e))
 

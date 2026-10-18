@@ -14,13 +14,14 @@ export const MIN_ENGINE = '2.1.287'
  * module at load, so the hooks are not gated: the floor for them is the
  * engine version the README names.)
  */
-export type FeatureKey = 'suggest' | 'notify' | 'version'
+export type FeatureKey = 'suggest' | 'notify' | 'version' | 'agents'
 
 /** What each feature needs of the engine, and how help names it. */
 export const FEATURES: Readonly<Record<FeatureKey, { api: string; label: string }>> = {
   suggest: { api: '$.prompt.suggest', label: 'the Replay suggestion' },
   notify: { api: '$.ui.notify', label: 'native notifications' },
   version: { api: '$.session.version', label: 'the engine version' },
+  agents: { api: '$.agent.register', label: 'the band agent types' },
 }
 
 /** `2.1.299`, `2.1.299-dev`, `2.1.280-dev.20260920.t101500.sha1a2b3c4`, `v2.1.1` as their three numbers; null for anything that does not open as a release. */

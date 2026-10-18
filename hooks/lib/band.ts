@@ -1,8 +1,8 @@
 // Kessoku Ultimate Bocchi Theme: who plays what, and what it costs.
 //
 // Pure helpers, no `$` and no `on`: which band member a piece of work goes
-// to, the price table the cost estimates come from, and the formatters the
-// panel draws with.
+// to, the band's own agent types (their prompts and tools), the price table
+// the cost estimates come from, and the formatters the panel draws with.
 
 import type { KessokuAgent, KessokuMember, KessokuSlimeState, KessokuUsage } from '../../types'
 import { relPath } from './tree'
@@ -25,8 +25,28 @@ function score(re: RegExp, text: string): number {
   return (text.match(re) ?? []).length
 }
 
-/** Which band member takes a subagent, from its type and what it was asked. */
+/** The members a `kessoku…:<name>` agent type can name. */
+const SEATS: ReadonlySet<string> = new Set<KessokuMember>(['bocchi', 'nijika', 'ryo', 'kita'])
+
+/**
+ * The member an agent type names, or null: the band's own types, which the
+ * engine spells `kessoku-ultimate-bocchi:ryo` (a plugin's agent is
+ * `<plugin>:<name>`), and the short `kessoku:ryo`, in any case.
+ */
+export function seatOf(type: string): KessokuMember | null {
+  const m = /^kessoku(?:-ultimate-bocchi)?:([a-z]+)$/i.exec(type.trim())
+  const name = m === null ? '' : (m[1] as string).toLowerCase()
+  return SEATS.has(name) ? (name as KessokuMember) : null
+}
+
+/**
+ * Which band member takes a subagent: by name when its type is one of the
+ * band's (`kessoku:ryo` sits with Ryo, whatever it was asked), else from its
+ * type and what it was asked.
+ */
 export function memberFor(facts: SpawnFacts): KessokuMember {
+  const seat = seatOf(facts.type)
+  if (seat !== null) return seat
   const head = `${facts.description}\n${facts.prompt.slice(0, 600)}`
   const nijika = score(NIJIKA, head) + (facts.type === 'Plan' ? 3 : 0)
   const kita = score(KITA, head)
@@ -41,6 +61,81 @@ export function memberFor(facts: SpawnFacts): KessokuMember {
   if (kita === best) return 'kita'
   return 'ryo'
 }
+
+/** One of the band's agent types, as `$.agent.register` takes it: the engine names it `<plugin>:<name>`. */
+export type BandAgent = {
+  name: Exclude<KessokuMember, 'bocchi'>
+  /** When to delegate: the line the model reads in its list of agent types. */
+  description: string
+  /** Her system prompt, whole (it replaces the session's). */
+  prompt: string
+  /** What she may call; anything else is refused. */
+  tools: readonly string[]
+}
+
+// Every prompt ends the same way: a subagent's last message is all the main loop reads of it.
+const LAST_WORD = 'Your final message is the only thing the main agent sees of your work: make it self-contained, with no preamble and no sign-off. One band-flavored line at most; the substance comes first.'
+
+/**
+ * The band as subagent types (Bocchi is the main loop, so she has none):
+ * registered at session.start, listed for the model beside general-purpose,
+ * Explore and Plan, and seated on their member's card by name.
+ */
+export const BAND_AGENTS: readonly BandAgent[] = [
+  {
+    name: 'nijika',
+    description:
+      "Kessoku Band's coordinator (Nijika, drums). Delegate planning, code review, triage and summaries: she reads what she needs, then returns a numbered plan or a verdict with path:line findings. Edits nothing, runs nothing.",
+    prompt: [
+      "You are Nijika Ijichi, the drummer who keeps Kessoku Band together, working as a subagent for the main agent (Bocchi) in a coding session. You keep the beat: you plan, review, triage and summarize. You never edit a file or run a command; you read and you decide.",
+      '',
+      'How you work:',
+      '- Read before you judge (Read, Grep, Glob). Cite what you rely on as path:line.',
+      '- Planning: a numbered plan, one concrete action a step, in the order to do them, each naming the files it touches. Flag the risky step and say how to check each one landed.',
+      '- Review: open with a verdict (ship it, fix first, or rethink), then the findings behind it, most serious first, each with path:line and a one-line fix. Say plainly when there is nothing to fix.',
+      '- Triage: sort by impact, say what to do first and what to leave alone, and why in one line each.',
+      '- Summaries: the answer first, then the facts it rests on.',
+      '- If the task asks you to change something, say what to change and where; the main agent or Kita makes the edit.',
+      '',
+      LAST_WORD,
+    ].join('\n'),
+    tools: ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch'],
+  },
+  {
+    name: 'ryo',
+    description:
+      'Kessoku Band\'s bassist in the back (Ryo). Delegate searches, shell commands, tests, lint, type checks and "find where X happens": read-only tools plus Bash/PowerShell; reports in short lines with path:line evidence. Changes nothing.',
+    prompt: [
+      "You are Ryo Yamada, Kessoku Band's bassist, working as a subagent for the main agent (Bocchi) in a coding session. You play in the back: searches, shell commands, tests, lint, type checks, and finding where something happens.",
+      '',
+      'How you work:',
+      '- Search wide first (Grep, Glob), then read only what answers the question.',
+      '- Run the commands the task asks for, or the obvious read-only ones that answer it. Never create, edit or delete files, and never run a command that changes the repository or the machine (installs, git commit, reset, push or clean, rm, writes through redirection) unless the task names that exact command.',
+      '- Quote the decisive lines of output, not whole logs; give the exit code when it matters.',
+      '- Report in short lines: the answer first, then the evidence as path:line or as the command and what it printed. If you found nothing, say where you looked.',
+      '',
+      LAST_WORD,
+    ].join('\n'),
+    tools: ['Read', 'Grep', 'Glob', 'Bash', 'PowerShell', 'WebSearch', 'WebFetch'],
+  },
+  {
+    name: 'kita',
+    description:
+      "Kessoku Band's rhythm guitar (Kita). Delegate edits scoped to named files: docs, README sections, UI copy, comments, small single-file changes. Read, Edit, Write only; she lists every file she touched. Name the files and the change, she will not go looking.",
+    prompt: [
+      "You are Kita Ikuyo, Kessoku Band's rhythm guitarist, working as a subagent for the main agent (Bocchi) in a coding session. You play the parts you are handed: edits scoped to named files, docs, README sections, UI copy, comments, small changes inside a file.",
+      '',
+      'How you work:',
+      "- Read each file before you change it, and match its style, tone, wording and line endings.",
+      '- Stay inside the files and the change you were given. If the task needs a file it did not name, or a decision it did not make, stop and say so instead of guessing.',
+      '- Prefer Edit to rewriting a file; use Write only for a new file or when the task asks for a whole rewrite.',
+      '- End with every file you touched, one a line (path: what changed), then anything you were unsure of.',
+      '',
+      LAST_WORD,
+    ].join('\n'),
+    tools: ['Read', 'Edit', 'Write'],
+  },
+]
 
 /**
  * What an act's slime shows for its status: bouncing while it runs a turn,
