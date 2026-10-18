@@ -1,7 +1,7 @@
 {
   "name": "kessoku-ultimate-bocchi",
-  "version": "0.5.0",
-  "description": "Kessoku Ultimate Bocchi Theme: a Bocchi the Rock!-inspired charcoal-and-pink skin for all of Claude Code (an engine theme plus every render site), a live Kessoku Band agent panel with the band as animated pixel-art sprites, and themed Cache Tax, Blast Radius, Filetree, Reflect and Replay Theater gags.",
+  "version": "0.6.0",
+  "description": "Kessoku Ultimate Bocchi Theme: a Bocchi the Rock!-inspired charcoal-and-pink skin for all of Claude Code (an engine theme plus every render site), a live Kessoku Band agent panel with the band as animated pixel-art sprites (and as subagent types Claude can delegate to by name), and themed Cache Tax, Blast Radius, Filetree, Reflect and Replay Theater gags.",
   "author": {
     "name": "Dylan"
   },
@@ -95,7 +95,7 @@
     "reflect": {
       "type": "boolean",
       "title": "Reflect memos",
-      "description": "Let Nijika turn your corrections into CLAUDE.md rules (one tiny Haiku call per correction)",
+      "description": "Let Nijika turn your corrections into CLAUDE.md rules (one tiny Haiku call per correction), and let Claude propose one itself through the memo tool; you press Save either way",
       "default": true
     },
     "openPanelOnStart": {
