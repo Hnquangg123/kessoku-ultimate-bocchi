@@ -13,6 +13,7 @@ import { classify, classifyPowerShell, isGitCommit } from '../hooks/lib/blast'
 import { cutHunks, patchToUnified, unifiedDiff } from '../hooks/lib/diff'
 import { FACE_WIDTH, MEMBERS, SPINNER_WORDS_BY_MODE, THEME_OVERRIDES, TURN_WORDS, padFace, textWidth } from '../hooks/lib/palette'
 import { appendRule, cleanRule, looksLikeCorrection } from '../hooks/lib/reflect'
+import { completions } from '../hooks/lib/typeahead'
 import { CRASH, CRASH_MINI, SVG_LIMIT, animOf, base64, cellsFor, colorOf, composite, decodeCodes, decodeFrames, drawSvg, encodeCells, frameAt, framePixels, layerFrames, mergeTimeline, pixelsOf, spriteId, spritesSvg, viewSize } from '../hooks/lib/sprite'
 import type { SpriteAnim, SpriteTable } from '../hooks/lib/sprite'
 import { SPRITES, SPRITE_COLORS } from '../hooks/lib/sprites.gen'
@@ -32,7 +33,7 @@ const PANE_PROPS = { title: 'x', isFocused: false, bodyColumns: 80, placement: '
 const BAND_PROPS = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 18 }, view: {} }
 
 type Entry = { name: string; kind: 'file' | 'dir'; size: number; mtimeMs: number; isLink: boolean }
-type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[] }
+type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[]; suggested: string[] }
 /** What a test may vary in the engine beneath: one bottom per event, so the knobs live here. */
 type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string }
 const THEME_OPTION_LIGHT = 'Kessoku Bocchi Light (kessoku-ultimate-bocchi)'
@@ -176,6 +177,12 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
   on('turn.complete', ($, e) => ({ text: e.answer }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.measure', ($, e) => ({ changed: e.changed }))
+  // The prompt box takes every dim suggestion; the typeahead's own rows are none.
+  on('prompt.suggest', ($, e) => {
+    seen.suggested.push(e.text)
+    return { isShown: true }
+  })
+  on('prompt.autocomplete', () => ({ suggestions: [] }))
   // The engine's own compaction: a summary that takes a while (on this clock), 180k tokens down to 12k, or a veto.
   on('session.compact', async ($, e) => {
     if (a.compactMs) await clock.sleep(a.compactMs)
@@ -185,7 +192,7 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
 }
 
 function fresh(): Seen {
-  return { commands: [], status: [], toasts: [], opened: [], closed: [], filled: [], written: {}, sleeps: 0, sleepers: [], forks: 0, configSets: [], theme: 'dark', asks: [], askAnswer: 'Not now', rendered: {}, blits: [] }
+  return { commands: [], status: [], toasts: [], opened: [], closed: [], filled: [], written: {}, sleeps: 0, sleepers: [], forks: 0, configSets: [], theme: 'dark', asks: [], askAnswer: 'Not now', rendered: {}, blits: [], suggested: [] }
 }
 
 /** One warm main-thread turn, as the engine would report it: 300k tokens read from the cache. */
@@ -1902,4 +1909,65 @@ test('a compaction melts Bocchi in the strip, then the panel and Cache Tax read 
   const vetoed = await $.session.compact({ trigger: 'auto', messages: TRANSCRIPT })
   expect(vetoed.skip).toBe('off')
   expect(seen.status.at(-1)).not.toMatch(/compacting/)
+})
+
+test('typeahead: /bocchi and /keepwarm complete their next word, and nothing else does', async () => {
+  // The box with the caret at its end: the token is the last word.
+  const at = (text: string) => {
+    const start = text.lastIndexOf(' ') + 1
+    return { text, cursor: text.length, token: text.slice(start), start }
+  }
+  const texts = (text: string) => completions(at(text)).map(c => c.text)
+  expect(texts('/bocchi')).toEqual(['/bocchi theme', '/bocchi mood', '/bocchi demo', '/bocchi tax', '/bocchi crash', '/bocchi memo', '/bocchi setlist', '/bocchi strip', '/bocchi help'])
+  expect(texts('/bocchi t')).toEqual(['theme', 'tax'])
+  expect(texts('/bocchi T')).toEqual(['theme', 'tax'])
+  expect(texts('/bocchi s')).toEqual(['setlist', 'strip'])
+  expect(texts('/bocchi theme')).toEqual([])
+  expect(texts('/bocchi theme o')).toEqual(['on', 'off'])
+  expect(texts('/bocchi mood h')).toEqual(['happy', 'hiding'])
+  expect(texts('/bocchi demo o')).toEqual(['off'])
+  expect(texts('/bocchi tax x')).toEqual([])
+  expect(texts('/bocchi theme on x')).toEqual([])
+  expect(texts('/keepwarm')).toEqual(['/keepwarm 30m', '/keepwarm 1h', '/keepwarm 2h', '/keepwarm off'])
+  expect(texts('/keepwarm 1')).toEqual(['1h'])
+  expect(texts('/keepwarm o')).toEqual(['off'])
+  expect(texts('/keepwarm 1h 2')).toEqual([])
+  for (const other of ['/boc', '/bocch', '/replay', '/kessoku', 'bocchi t', 'fix the /bocchi t', '/compact t']) expect(texts(other)).toEqual([])
+  // Every row says what it does, in the help's words.
+  expect(completions(at('/bocchi')).every(c => (c.description ?? '').length > 0)).toBe(true)
+  expect(completions(at('/bocchi t'))[0]?.description).toMatch(/theme/)
+  // A caret in the middle of the draft completes the word under it.
+  expect(completions({ text: '/bocchi theme on', cursor: 9, token: 't', start: 8 }).map(c => c.text)).toEqual(['theme', 'tax'])
+})
+
+test('after a turn with edits the prompt box is offered /replay, Tab to take; a turn without edits offers nothing', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: 'look around', turnId: 't1' })
+  await $.turn.complete({ turnId: 't1', answer: 'nothing to change', durationMs: 500, isAborted: false, reason: 'answer' })
+  expect(seen.suggested).toEqual([])
+  await $.turn.start({ text: 'rename greet', turnId: 't2' })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/app.ts', old_string: 'greet(', new_string: 'welcome(' })
+  await $.turn.complete({ turnId: 't2', answer: 'done', durationMs: 1200, isAborted: false, reason: 'answer' })
+  expect(seen.suggested).toEqual(['/replay 1 track'])
+  // Taken and sent, the suggestion runs as the command: the words after /replay are ignored.
+  expect((await $.command.run(cmd('replay', '1 track'))).text).toMatch(/1 track on the setlist/)
+  // An interrupted turn with edits, and a turn while Replay is open, offer nothing.
+  await $.turn.start({ text: 'rename again', turnId: 't3' })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/app.ts', old_string: 'welcome(', new_string: 'hello(' })
+  await $.turn.complete({ turnId: 't3', answer: '', durationMs: 300, isAborted: true, reason: 'aborted' })
+  expect(seen.suggested).toHaveLength(1)
+  await $.turn.start({ text: 'and again', turnId: 't4' })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/app.ts', old_string: 'hello(', new_string: 'hi(' })
+  await $.turn.complete({ turnId: 't4', answer: 'done', durationMs: 300, isAborted: false, reason: 'answer' })
+  expect(seen.suggested).toHaveLength(1)
+  // The typeahead hook itself: the kit raises the event (untyped, as it is not among its typed engine calls).
+  type Box = { text: string; cursor: number; token: string; start: number }
+  const autocomplete = ($ as unknown as { prompt: { autocomplete: (e: Box) => Promise<{ suggestions: { text: string; description?: string }[] }> } }).prompt.autocomplete
+  const rows = await autocomplete({ text: '/bocchi t', cursor: 9, token: 't', start: 8 })
+  expect(rows.suggestions.map(s => s.text)).toEqual(['theme', 'tax'])
+  expect(rows.suggestions[0]?.description).toMatch(/theme/)
+  expect((await autocomplete({ text: '/replay x', cursor: 9, token: 'x', start: 8 })).suggestions).toEqual([])
 })

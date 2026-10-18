@@ -92,6 +92,7 @@ import type { Risk } from './lib/blast'
 import { cutHunks, patchToUnified, unifiedDiff } from './lib/diff'
 import type { Unified } from './lib/diff'
 import { appendRule, cleanRule, looksLikeCorrection, rulePrompt } from './lib/reflect'
+import { completions } from './lib/typeahead'
 import { CRASH, CRASH_MINI, animOf, cellsFor, composite, encodeCells, frameSignature, isAnimated, spriteId, spritesSvg, viewSize } from './lib/sprite'
 import type { CellMode, MemberView, SlimeView, SpritePart } from './lib/sprite'
 import { ALWAYS_IGNORED, IGNORED_DIRS, MAX_PATHS, baseName, isAnyHot, isGlowing, isInside, isLit, relPath, treeRows, windowRows } from './lib/tree'
@@ -1251,6 +1252,16 @@ async function closeReplay($: EngineInterface): Promise<void> {
   await update($, replay, x => ({ ...x, isOpen: false, inBand: false }))
   // Always by id: a pane that waited undrawn in a narrow terminal is open to the engine too.
   await $.ui.close({ id: REPLAY }).catch(() => undefined)
+}
+
+/**
+ * Replay's quiet second door: `/replay 3 tracks` as the prompt box's dim
+ * suggestion, Tab to take, after a turn that put edits on the setlist. The
+ * engine shows it only in an empty box between turns; `/replay` ignores the
+ * words after it, so the taken suggestion runs as the command.
+ */
+function suggestReplay($: EngineInterface, tracks: number): void {
+  void $.prompt.suggest({ text: `/replay ${tracks} ${tracks === 1 ? 'track' : 'tracks'}` }).catch(() => undefined)
 }
 
 // ---- The panel ---------------------------------------------------------------
@@ -2520,7 +2531,8 @@ export const register: Register = (on, options) => {
     if (edits > 0) {
       const tracks = pendingTracks.slice(-MAX_TRACKS)
       pendingTracks = []
-      await update($, replay, x => ({ ...x, tracks, index: 0, setlist: x.setlist + 1 }))
+      const setlist = await update($, replay, x => ({ ...x, tracks, index: 0, setlist: x.setlist + 1 }))
+      if (e.reason === 'answer' && !setlist.isOpen && canDraw()) suggestReplay($, tracks.length)
     }
     await update($, cache, c => ({ ...c, lastWarmAt: now }))
     if (e.reason === 'answer') await setMood($, 'happy', `${MEMBERS.bocchi.lines.happy} ${fmtDuration(e.durationMs)}${edits > 0 ? ` · ${edits} ${edits === 1 ? 'edit' : 'edits'} on the setlist (/replay)` : ''}`, 6000)
@@ -2700,6 +2712,14 @@ export const register: Register = (on, options) => {
       })
     }
     return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // -- the typeahead: /bocchi's sub-commands and /keepwarm's durations, beneath the engine's own rows ------
+  on('prompt.autocomplete', async ($, e, next) => {
+    const mine = completions(e)
+    if (mine.length === 0) return next(e)
+    const r = await next(e)
+    return { suggestions: [...r.suggestions, ...mine] }
   }).catch(($, e, next) => next(e))
 
   // -- the theme row: follow it once written, so the charcoal backgrounds know light from dark ------
