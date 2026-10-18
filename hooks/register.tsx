@@ -528,6 +528,13 @@ async function registerBand($: EngineInterface): Promise<void> {
   }
 }
 
+/** The registered name of a band type spelled another way (`kessoku:ryo`), or null: unknown, unregistered, or already the name. */
+function registeredType(type: string): string | null {
+  const seat = seatOf(type)
+  const name = seat === null ? undefined : bandTypes.get(seat)
+  return name === undefined || name === type ? null : name
+}
+
 /** At each session.start, while reflect is on: the memo tool Claude proposes a rule through. A feature off when the engine has no `$.tool.register`. */
 async function registerMemoTool($: EngineInterface): Promise<void> {
   if (!features.memo || !opts.reflect) return
@@ -2804,20 +2811,18 @@ export const register: Register = (on, options) => {
 
   // -- subagents -------------------------------------------------------------------
   on('agent.spawn', async ($, e, next) => {
-    // A band type seats by name; spelled short (`kessoku:ryo`), it is dispatched as the type the engine registered.
-    const seat = seatOf(e.subagentType)
-    const registered = seat === null ? undefined : bandTypes.get(seat)
-    const type = registered !== undefined && e.workflow === undefined && e.resume === undefined ? registered : e.subagentType
-    const r = await next(type === e.subagentType ? e : { ...e, subagentType: type })
+    const r = await next(e)
     if (r.deny !== undefined || r.agentId === undefined) return r
     const now = await $.clock.now()
-    const member = memberFor({ type, description: e.description, prompt: e.prompt, background: e.background })
+    // A band type seats by name; any other, by the keyword tables.
+    const isNamed = seatOf(e.subagentType) !== null
+    const member = memberFor({ type: e.subagentType, description: e.description, prompt: e.prompt, background: e.background })
     await upsertAgent($, {
       ...mainAgent(),
       id: r.agentId,
       member,
-      description: e.description || type,
-      type,
+      description: e.description || e.subagentType,
+      type: e.subagentType,
       status: 'running',
       task: 'warming up',
       startedAt: now,
@@ -2825,17 +2830,17 @@ export const register: Register = (on, options) => {
     })
     ensureTick($)
     const m = MEMBERS[member]
-    toast($, `${m.faces.focused} ${m.name} takes the stage: ${e.description.slice(0, 60)}${seat !== null ? ` (seated by name: ${type})` : ''}`, 'chatter')
+    toast($, `${m.faces.focused} ${m.name} takes the stage: ${e.description.slice(0, 60)}${isNamed ? ` (seated by name: ${e.subagentType})` : ''}`, 'chatter')
     return r
   }).catch(($, e, next) => next(e))
 
   on('classic.SubagentStart', async ($, e, next) => {
-    const b = await read($, band)
-    if (!b.agents.some(a => a.id === e.agent_id)) {
-      const now = await $.clock.now()
-      await upsertAgent($, { ...mainAgent(), id: e.agent_id, member: memberFor({ type: e.agent_type, description: '', prompt: '', background: false }), description: e.agent_type, type: e.agent_type, status: 'running', startedAt: now })
-      ensureTick($)
-    }
+    const now = await $.clock.now()
+    const seated: KessokuAgent = { ...mainAgent(), id: e.agent_id, member: memberFor({ type: e.agent_type, description: '', prompt: '', background: false }), description: e.agent_type, type: e.agent_type, status: 'running', startedAt: now }
+    // Only an act no spawn has seated, decided inside the write: the engine starts the subagent while the spawn's
+    // hook is still seating it, and a check made before the write let this bare act land over the spawn's.
+    await update($, band, b => (b.agents.some(a => a.id === e.agent_id) ? b : { ...b, agents: trimAgents([...b.agents, seated]) }))
+    ensureTick($)
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -2873,7 +2878,10 @@ export const register: Register = (on, options) => {
       return member
     })().catch((): KessokuMember => 'bocchi')
 
-    const ran = await next(e)
+    // A band type spelled short (`kessoku:ryo`) goes to the Agent tool as the type the engine registered, which it
+    // resolves before any spawn hook could rename it.
+    const alias = tool === 'Agent' ? registeredType(readField(input, 'subagent_type')) : null
+    const ran = await next(alias === null ? e : ({ ...e, subagent_type: alias } as typeof e))
     const member = await pre
 
     const failed = ran.deny === undefined && ran.isError === true

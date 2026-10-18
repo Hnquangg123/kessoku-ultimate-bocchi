@@ -871,9 +871,38 @@ test('subagents take the stage as band members and leave with their cost', async
   expect(seen.toasts.some(t => /Ryo finished/.test(t))).toBe(true)
 })
 
-test('a band agent type lands on its member\'s card by name, the short spelling dispatched as the registered type', async ($, on) => {
+test('a SubagentStart for an act its spawn seated leaves the act as the spawn wrote it', async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  // The engine starts the subagent (SubagentStart) as it resolves the spawn, so the two hooks run at once. The real
+  // engine interleaves them closely enough that a check-then-write let the bare act land over the spawn's (its
+  // description became the type); this kit runs them in turn, so this test guards the end state only.
+  let start: Promise<unknown> = Promise.resolve()
+  on('agent.spawn', () => {
+    start = $.classic.SubagentStart({ agent_id: 'agent-1', agent_type: 'Explore' })
+    return { model: 'claude-sonnet-5-5', agentId: 'agent-1' }
+  })
+  on('classic.SubagentStart', () => ({}))
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.agent.spawn({ tool_use_id: 'tu-r', prompt: 'Find every call site of legacyQuery.', description: 'Search for legacyQuery call sites', subagentType: 'Explore', provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-sonnet-5-5', background: false, fork: false })
+  await start
+  const panel = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  const ryo = JSON.stringify(await panel.find({ type: 'Box', key: 'card-ryo' }))
+  expect(ryo).toContain('Search for legacyQuery call sites')
+  expect(ryo).toContain('warming up')
+  await panel.unmount()
+})
+
+test('a band agent type lands on its member\'s card by name, and the Agent tool takes the short spelling as the registered type', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  // The Agent tool as the engine runs it: what reaches it is kept (registered first, so it answers before the generic bottom).
+  const toAgentTool: string[] = []
+  on('tool.call', { tool: 'Agent' }, ($, e) => {
+    toAgentTool.push(String((e as unknown as { subagent_type?: string }).subagent_type))
+    return { result: { status: 'async_launched' } }
+  })
   bottoms(on, clock, seen)
   const dispatched: string[] = []
   let n = 0
@@ -885,8 +914,13 @@ test('a band agent type lands on its member\'s card by name, the short spelling 
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   const spawn = (subagentType: string, description: string, prompt: string) =>
     $.agent.spawn({ tool_use_id: `tu-${description}`, prompt, description, subagentType, provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-sonnet-5-5', background: false, fork: false })
-  // No keyword in it would have found Ryo: by the tables this is Bocchi's.
-  expect((await spawn('kessoku:ryo', 'Look into why the strip flickers on resize', 'Read hooks/register.tsx around drawStrip.')).agentId).toBe('agent-1')
+  // The model may write the short spelling: the engine resolves the type in the Agent tool, so the tool gets the registered name.
+  for (const subagent_type of ['kessoku:ryo', 'Kessoku:Nijika', `${PLUGIN}:kita`, 'kessoku:drummer', 'Explore']) {
+    await $.tool.call({ tool: 'Agent', subagent_type, description: 'x', prompt: 'y' } as never)
+  }
+  expect(toAgentTool).toEqual([`${PLUGIN}:ryo`, `${PLUGIN}:nijika`, `${PLUGIN}:kita`, 'kessoku:drummer', 'Explore'])
+  // The spawn that follows names the registered type. No keyword in it would have found Ryo: by the tables this is Bocchi's.
+  expect((await spawn(`${PLUGIN}:ryo`, 'Look into why the strip flickers on resize', 'Read hooks/register.tsx around drawStrip.')).agentId).toBe('agent-1')
   expect(dispatched[0]).toBe(`${PLUGIN}:ryo`)
   expect(seen.toasts.some(t => /Ryo takes the stage: Look into why the strip flickers on resize \(seated by name: kessoku-ultimate-bocchi:ryo\)/.test(t))).toBe(true)
   await spawn(`${PLUGIN}:nijika`, 'Update the README', 'Check the README.')
