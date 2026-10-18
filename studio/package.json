@@ -27,7 +27,7 @@
   },
   "scripts": {
     "dev": "remotion studio",
-    "check": "node scripts/check.mjs",
+    "check": "node scripts/check.mjs && node scripts/themes.mjs --check",
     "compare": "node scripts/compare.mjs",
     "grid": "node scripts/grid.mjs",
     "look": "node scripts/look.mjs",
@@ -35,6 +35,8 @@
     "lineup": "node scripts/lineup.mjs",
     "sheet": "node scripts/sheet.mjs all",
     "sprites": "node scripts/sprites.mjs",
+    "themes": "node scripts/themes.mjs",
+    "themes:check": "node scripts/themes.mjs --check",
     "aseprite": "node scripts/aseprite.mjs",
     "showcase": "remotion render Showcase out/kessoku-band.gif --codec=gif",
     "lint": "tsc -p ."
