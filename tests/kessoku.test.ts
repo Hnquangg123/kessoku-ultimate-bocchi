@@ -14,6 +14,7 @@ import { cutHunks, patchToUnified, unifiedDiff } from '../hooks/lib/diff'
 import { FACE_WIDTH, MEMBERS, SPINNER_WORDS_BY_MODE, THEME_OVERRIDES, TURN_WORDS, padFace, textWidth } from '../hooks/lib/palette'
 import { appendRule, cleanRule, looksLikeCorrection } from '../hooks/lib/reflect'
 import { completions } from '../hooks/lib/typeahead'
+import { isAtLeast, offLine, parseVersion } from '../hooks/lib/engine'
 import { CRASH, CRASH_MINI, SVG_LIMIT, animOf, base64, cellsFor, colorOf, composite, decodeCodes, decodeFrames, drawSvg, encodeCells, frameAt, framePixels, layerFrames, mergeTimeline, pixelsOf, spriteId, spritesSvg, viewSize } from '../hooks/lib/sprite'
 import type { SpriteAnim, SpriteTable } from '../hooks/lib/sprite'
 import { SPRITES, SPRITE_COLORS } from '../hooks/lib/sprites.gen'
@@ -35,7 +36,7 @@ const BAND_PROPS = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumn
 type Entry = { name: string; kind: 'file' | 'dir'; size: number; mtimeMs: number; isLink: boolean }
 type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[]; suggested: string[]; notified: { text: string; title: string | undefined }[] }
 /** What a test may vary in the engine beneath: one bottom per event, so the knobs live here. */
-type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string; notifyReason?: 'disabled' | 'no-channel' | 'no-surface' | 'refused' }
+type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string; notifyReason?: 'disabled' | 'no-channel' | 'no-surface' | 'refused'; engineVersion?: string; noVersion?: boolean }
 const THEME_OPTION_LIGHT = 'Kessoku Bocchi Light (kessoku-ultimate-bocchi)'
 
 /** `C:\proj\x` and `/proj/x` are the same file to the engine's fs; the tests key by the forward-slash spelling. */
@@ -123,7 +124,13 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
   on('session.root', () => ({ value: '/proj' }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000, percent: 12, tokens: 24_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-10T12:00:00Z' }], cost: { usd: 0.42 } } }))
   on('fs.exists', ($, e) => ({ value: key(e.path) in seen.written }))
-  on('fs.read', ($, e) => ({ value: seen.written[key(e.path)] ?? '' }))
+  // The mod's own manifest, read for its version; anything else is what a test wrote.
+  on('fs.read', ($, e) => ({ value: /\.claude-plugin\/plugin\.json$/.test(key(e.path)) ? '{ "name": "kessoku-ultimate-bocchi", "version": "9.9.9" }' : (seen.written[key(e.path)] ?? '') }))
+  on('session.version', () => {
+    if (a.noVersion) throw new Error('no such op on this engine')
+    const version = a.engineVersion ?? '2.1.299'
+    return { value: { version, base: version } }
+  })
   on('fs.write', ($, e) => {
     seen.written[key(e.path)] = e.text
     return { value: undefined }
@@ -2058,4 +2065,38 @@ test('toasts none silences the notifications too', { options: { toasts: 'none', 
   await clock.advance(58 * 60_000)
   expect(seen.notified).toEqual([])
   expect(seen.toasts).toEqual([])
+})
+
+test('/bocchi help opens with the mod and engine versions, and names what this engine lacks', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const knobs: Answers = {}
+  bottoms(on, clock, seen, knobs)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const lines = ((await $.command.run(cmd('bocchi', 'help'))).text ?? '').split('\n')
+  expect(lines[0]).toBe('♪ Kessoku Ultimate Bocchi Theme v9.9.9 · Claude Code 2.1.299')
+  expect(lines.some(l => l.startsWith('/kessoku'))).toBe(true)
+  expect(lines.some(l => l.startsWith('off on this engine'))).toBe(false)
+  // An older engine is named as such; one that cannot say its version, as unknown.
+  knobs.engineVersion = '2.1.280'
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  expect(((await $.command.run(cmd('bocchi', 'help'))).text ?? '').split('\n')[0]).toBe('♪ Kessoku Ultimate Bocchi Theme v9.9.9 · Claude Code 2.1.280 (older than the mod expects, 2.1.287+)')
+  knobs.noVersion = true
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  expect(((await $.command.run(cmd('bocchi', 'help'))).text ?? '').split('\n')[0]).toBe('♪ Kessoku Ultimate Bocchi Theme v9.9.9 · Claude Code (version unknown)')
+  // The pure parts: versions compare as releases, dev builds included; what does not parse is never enough.
+  expect(parseVersion('2.1.299')).toEqual([2, 1, 299])
+  expect(parseVersion('2.1.280-dev.20260920.t101500.sha1a2b3c4')).toEqual([2, 1, 280])
+  expect(parseVersion('v2.1.1')).toEqual([2, 1, 1])
+  expect(parseVersion('dev')).toBeNull()
+  expect(isAtLeast('2.1.299', '2.1.287')).toBe(true)
+  expect(isAtLeast('2.1.287', '2.1.287')).toBe(true)
+  expect(isAtLeast('2.1.280', '2.1.287')).toBe(false)
+  expect(isAtLeast('3.0.0', '2.1.287')).toBe(true)
+  expect(isAtLeast('2.10.0', '2.9.9')).toBe(true)
+  expect(isAtLeast('', '2.1.287')).toBe(false)
+  const allOn = { suggest: true, notify: true, version: true }
+  expect(offLine(allOn)).toBe('')
+  expect(offLine({ ...allOn, notify: false })).toBe('off on this engine: native notifications (no $.ui.notify)')
+  expect(offLine({ ...allOn, suggest: false, version: false })).toBe('off on this engine: the Replay suggestion (no $.prompt.suggest), the engine version (no $.session.version)')
 })

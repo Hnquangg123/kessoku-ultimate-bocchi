@@ -91,6 +91,8 @@ import { LIST_MAX, classify, classifyPowerShell, cleanArgs, globToRegExp, isGitC
 import type { Risk } from './lib/blast'
 import { cutHunks, patchToUnified, unifiedDiff } from './lib/diff'
 import type { Unified } from './lib/diff'
+import { offLine, versionLine } from './lib/engine'
+import type { FeatureKey } from './lib/engine'
 import { appendRule, cleanRule, looksLikeCorrection, rulePrompt } from './lib/reflect'
 import { completions } from './lib/typeahead'
 import { CRASH, CRASH_MINI, animOf, cellsFor, composite, encodeCells, frameSignature, isAnimated, spriteId, spritesSvg, viewSize } from './lib/sprite'
@@ -256,6 +258,17 @@ let pendingTracks: KessokuTrack[] = []
 let isCompacting = false
 /** The warm period (its `lastWarmAt`) the cold-cache notice went out for, so it goes once per period. */
 let coldNoticeFor = 0
+/** The engine's release (`2.1.299`), '' when it could not say; the mod's own version from its manifest, '' when unread. */
+let engineVersion = ''
+let modVersion = ''
+/**
+ * The gate: each feature that leans on a newer engine call, on until the
+ * call turns out not to exist (a TypeError where it is first made); a feature
+ * that is off calls nothing more, and `/bocchi help` names it. The hooks
+ * (`session.compact`, `prompt.autocomplete`) cannot be gated: an engine that
+ * does not know an event refuses the whole module at load.
+ */
+const features: Record<FeatureKey, boolean> = { suggest: true, notify: true, version: true }
 
 /**
  * A sprite a terminal drawing holds as a Raster, repainted by the sprite
@@ -316,10 +329,11 @@ function toast($: EngineInterface, text: string, level: 'important' | 'chatter' 
  * caller decides what else to show.
  */
 async function notify($: EngineInterface, text: string): Promise<boolean> {
-  if (opts.toasts === 'none') return false
+  if (opts.toasts === 'none' || !features.notify) return false
   try {
     return (await $.ui.notify(text, { title: NOTIFY_TITLE })).isSent
-  } catch {
+  } catch (error) {
+    if (isMissingApi(error)) features.notify = false
     return false
   }
 }
@@ -450,6 +464,37 @@ async function configDir($: EngineInterface): Promise<string | null> {
   if (set !== undefined && set !== '') return set
   const home = await homeDir($)
   return home === null ? null : `${home}/.claude`
+}
+
+/**
+ * Whether a failed call means the engine has no such method at all (`$.ui.notify is not a function`), as
+ * against a call that was made and refused: the former switches its feature off for the session.
+ */
+function isMissingApi(error: unknown): boolean {
+  return error instanceof TypeError && /not a function/.test(error.message)
+}
+
+/**
+ * Once per session: the engine's version (a feature off when the call is
+ * not there), and the mod's own from its manifest (read through the engine's
+ * file system: a hooks module can import no JSON, and a constant would drift
+ * from plugin.json). The other calls are probed where they are first made.
+ */
+async function readEngine($: EngineInterface): Promise<void> {
+  engineVersion = ''
+  try {
+    const v = await $.session.version()
+    engineVersion = v.base ?? v.version
+  } catch (error) {
+    if (isMissingApi(error)) features.version = false
+  }
+  modVersion = ''
+  try {
+    const manifest = JSON.parse(await $.fs.read(joinPath($.plugin.root, '.claude-plugin/plugin.json'))) as { version?: unknown }
+    if (typeof manifest.version === 'string') modVersion = manifest.version
+  } catch {
+    modVersion = ''
+  }
 }
 
 // ---- Mood and status line ----------------------------------------------------
@@ -1308,7 +1353,14 @@ async function closeReplay($: EngineInterface): Promise<void> {
  * words after it, so the taken suggestion runs as the command.
  */
 function suggestReplay($: EngineInterface, tracks: number): void {
-  void $.prompt.suggest({ text: `/replay ${tracks} ${tracks === 1 ? 'track' : 'tracks'}` }).catch(() => undefined)
+  if (!features.suggest) return
+  void (async () => {
+    try {
+      await $.prompt.suggest({ text: `/replay ${tracks} ${tracks === 1 ? 'track' : 'tracks'}` })
+    } catch (error) {
+      if (isMissingApi(error)) features.suggest = false
+    }
+  })()
 }
 
 // ---- The panel ---------------------------------------------------------------
@@ -2338,8 +2390,7 @@ async function demoReplay($: EngineInterface): Promise<string> {
   return 'Replay Theater: a two-track sample setlist is open (preview).'
 }
 
-const HELP = [
-  '♪ Kessoku Ultimate Bocchi Theme',
+const HELP_LINES = [
   '/kessoku          toggle the Kessoku Band panel (subagents as Nijika, Ryo, Kita; Bocchi is the main loop)',
   '/filetree         toggle the file tree: pink while Claude edits a file, neon green once a commit lands',
   '/replay           step through the last turn\'s edits as a setlist, one diff at a time',
@@ -2351,7 +2402,13 @@ const HELP = [
   '/bocchi demo [off]   put sample acts on the panel · /bocchi memo · /bocchi tax · /bocchi crash · /bocchi setlist   previews',
   'Blast Radius and Reflect need no command: a risky command or a correction brings them up.',
   'Config: /config → kessoku-ultimate-bocchi (engine theme, transcript skin, restyle other mods, toasts, accent, backgrounds, tool cards, spinner words, cache TTL, keepwarm, reflect, panel on start).',
-].join('\n')
+]
+
+/** `/bocchi help`: the mod's and the engine's versions first, then every command, then what is off on this engine (only when something is). */
+function help(): string {
+  const off = offLine(features)
+  return [versionLine(modVersion, engineVersion), ...HELP_LINES, ...(off === '' ? [] : [off])].join('\n')
+}
 
 /** The panel, the timers, the first face and the theme offer: once per load, when a screen exists. */
 async function startUi($: EngineInterface): Promise<void> {
@@ -2424,6 +2481,7 @@ export const register: Register = (on, options) => {
     await $.command.register({ name: 'keepwarm', description: 'Cache Tax: keep the prompt cache warm (e.g. /keepwarm 90m, /keepwarm off)', argumentHint: '[duration|off]' })
     await $.command.register({ name: 'cache-tax', description: 'Cache Tax: is the cache warm, and what would a cold send cost?' })
     await $.command.register({ name: 'bocchi', description: 'Kessoku theme: help, the engine theme, previews, moods, the strip', argumentHint: '[help|theme on|off|strip|mood <m>|demo|memo|tax|crash|setlist]' })
+    await readEngine($).catch(() => undefined)
     // The REPL has its screen now; a host like the desktop app attaches its client a moment later (session.attach);
     // a bare `claude -p` or SDK run never does, and the commands are enough for it.
     if (canDraw()) await startUi($)
@@ -2523,7 +2581,7 @@ export const register: Register = (on, options) => {
       case 'setlist':
         return { text: await demoReplay($) }
       default:
-        return { text: HELP }
+        return { text: help() }
     }
   }).catch(() => ({ text: `${MEMBERS.bocchi.faces.panic} /bocchi hit a wrong note and could not finish; try again.` }))
 

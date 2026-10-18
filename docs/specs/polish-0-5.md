@@ -41,8 +41,9 @@ Six small changes to the hooks module and the studio, no new state keys and one 
 - `$.ui.notify`, titled `Kessoku Band`, for the three things worth coming back for: the guard holding a command,
   the set finishing after a long turn, the cache about to go cold. The `toasts` option governs them too.
 - An engine-version gate: `$.session.version()` read once, the mod's own version read from its manifest, both shown
-  by `/bocchi help`; every new API probed before use, so a feature whose API the running engine lacks is off and
-  listed, never a failing hook.
+  by `/bocchi help`; every new call guarded where it is made, so a call the running engine lacks switches its
+  feature off and is listed, never a failing hook (the new hooks cannot be gated: the loader refuses a module
+  that hooks an event it does not know, so they set the floor).
 - `npm run themes` in the studio writes `themes/*.json` from the palette's maps, and `npm run themes -- --check`
   (run by `npm run check` too) fails when the committed files drift.
 - The prototype files leave; `docs/BACKLOG.md` keeps the table.
@@ -90,9 +91,11 @@ Six small changes to the hooks module and the studio, no new state keys and one 
   `PromptAutocompleteSuggestion` has it; taking it writes `text` over the token.
 - A **notification** is one `$.ui.notify(text, { title })` call; the channel answers `{ isSent, channel }` or
   `{ isSent: false, reason }` with reason `disabled`, `no-channel`, `no-surface` or `refused`.
-- A **feature** is one of the five new uses of the engine: `compaction` (`session.compact`), `typeahead`
-  (`prompt.autocomplete`), `suggest` (`$.prompt.suggest`), `notify` (`$.ui.notify`), `version`
-  (`$.session.version`). Each has a flag the gate sets; a feature that is off draws, hooks and calls nothing.
+- A **feature** is one of the three new *calls* on the engine: `suggest` (`$.prompt.suggest`), `notify`
+  (`$.ui.notify`), `version` (`$.session.version`). Each has a flag the gate sets; a feature that is off calls
+  nothing more. The two new *hooks* (`session.compact`, `prompt.autocomplete`) are not features: an engine that does
+  not know an event refuses the whole module at load (see Further Notes), so they cannot be gated and set the
+  mod's floor instead.
 
 ### Compaction awareness (hook `session.compact`)
 
@@ -172,12 +175,17 @@ Six small changes to the hooks module and the studio, no new state keys and one 
 - A pure module `hooks/lib/engine.ts`: `MIN_ENGINE = '2.1.287'` (the README's floor), `parseVersion`, `isAtLeast`,
   and the feature table (key, the API it needs, its label for help).
 - Module state: `engineVersion` (the base, else the version, else `''`), `modVersion` (`''` when the manifest could
-  not be read) and `features: Record<FeatureKey, boolean>`.
-- The gate: the two hooks (`session.compact`, `prompt.autocomplete`) are registered inside a try; a registration
-  the engine refuses sets the feature off. The three calls are probed at `session.start`
-  (`typeof $.ui.notify === 'function'`, and so on; `EngineInterfaceBuilt` is an object, so a missing member reads
-  `undefined`) and every call site goes through a helper that catches a rejection. `$.session.version` and the
-  manifest read are each one try at `session.start`.
+  not be read) and `features: Record<FeatureKey, boolean>` for the three calls.
+- The gate: a call the engine lacks throws a `TypeError` (`$.ui.notify is not a function`) where it is made, so
+  every call site sits in a try that reads that error as "no such call" and switches the feature off for the
+  session, and reads any other failure (a hook's deny, a failed write) as the call refused, nothing more. The
+  loader forbids reading a call as a value (`typeof $.ui.notify`): `$` is always spelled `$.noun.event(...)`, so
+  the probe is the first call itself. `$.session.version` and the manifest read are each one try at
+  `session.start`; `notify` and `suggest` are probed where they are first used.
+- The hooks are registered plainly: the loader scans the compiled module and refuses one that hooks an event it
+  does not know (`"session.nothing" is not an event`), before `register` runs, so a try around `on(...)` gates
+  nothing. The floor is therefore the engine version the README names, and both installed engines (2.1.295,
+  2.1.299) declare every hook and call used here.
 - `/bocchi help` opens with `♪ Kessoku Ultimate Bocchi Theme v0.5.0 · Claude Code 2.1.299` (`version unknown`
   where the engine did not say; `older than the mod expects (2.1.287)` appended when `base` is below `MIN_ENGINE`)
   and, only when a feature is off, one line `off on this engine: native notifications (no $.ui.notify), …`.
@@ -229,7 +237,8 @@ Six small changes to the hooks module and the studio, no new state keys and one 
     `Kessoku Band` with the expected words; a 3 s turn sent none; the cold notice came once and, where the channel
     answered `no-surface`, as a toast; under `toasts: none` none of the three was sent;
   - `/bocchi help` opens with the version the manifest bottom gave and the engine version the bottom gave, says
-    `version unknown` when the engine call fails, and names a feature as off when its probe failed.
+    `version unknown` when the engine call fails, and names an older engine as such; the line naming features
+    that are off is tested as a pure part, since the kit's `$` has every call.
 - **Pure parts tested directly** (prior art: the `small helpers` test): `completions` for each rule above and for
   drafts that get nothing; `parseVersion` and `isAtLeast` on releases, dev builds and junk.
 - **The typeahead hook itself** is raised through the kit where the kit can (the event is not among the kit's typed
@@ -253,9 +262,12 @@ Six small changes to the hooks module and the studio, no new state keys and one 
 
 ## Further Notes
 
-- `EngineInterfaceBuilt = EngineInterface & { readonly [noun: string]: unknown }`: `$` is an object whose members
-  can be probed; the loader's static scan lists the module's calls and hooks (`claude plugin validate` prints them)
-  and passed on both installed engines with the new names.
+- What the loader does with an API the engine lacks, measured on 2.1.299 with a scratch copy of the module:
+  `claude plugin validate` passes it either way; at load, a hook on an event the engine does not know refuses the
+  whole module (`hooks module did not load: "session.nothing" is not an event`), a call it does not know loads
+  and throws `TypeError: $.ui.nothingOfTheSort is not a function` when made, and reading a call as a value
+  (`typeof $.ui.notify`) refuses the module too (`$.ui.notify is used as a value ... instead of called`). The gate
+  follows: calls are guarded at the call, hooks are the floor.
 - The kit's typed engine calls (`EventCalls`) carry `prompt.suggest` but not `prompt.autocomplete`; the test of the
   completion table is therefore the test of the typeahead unless the kit raises the event untyped.
 - "Away" is a guess: the engine does not say whether the window is focused, so the set's notice fires on length
