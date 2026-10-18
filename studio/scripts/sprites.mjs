@@ -12,7 +12,8 @@
 //   node scripts/sprites.mjs --out <path>    writes there instead (a scratch export)
 //
 // The sprites: <member>-<mood> (96x96), <member>-<mood>-portrait (32x32),
-// <member>-<mood>-mini (16x16), fx-crash (96x32), fx-crash-mini (48x16).
+// <member>-<mood>-mini (16x16), <member>-slime-<state> (36x24),
+// <member>-slime-<state>-mini (18x12), fx-crash (96x32), fx-crash-mini (48x16).
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -46,7 +47,7 @@ const ALPHABET = [
 ].join('')
 if (/[.=0-9'"\\`]/.test(ALPHABET) || new Set(ALPHABET).size !== ALPHABET.length) throw new Error('the alphabet holds a reserved or repeated character')
 
-const SPRITE_ID = /^(bocchi|nijika|ryo|kita)-(anxious|focused|happy|panic|melting|hiding)(-portrait|-mini)?$|^fx-crash(-mini)?$/
+const SPRITE_ID = /^(bocchi|nijika|ryo|kita)-(anxious|focused|happy|panic|melting|hiding)(-portrait|-mini)?$|^(bocchi|nijika|ryo|kita)-slime-(active|idle|asleep)(-mini)?$|^fx-crash(-mini)?$/
 
 const { serveUrl, browser, compositions } = await open()
 const palette = (compositions.find(c => c.id === 'Palette')?.props?.colors ?? []).map(c => c.toLowerCase())

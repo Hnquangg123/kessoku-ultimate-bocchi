@@ -4,7 +4,9 @@
 // cycles, a face region that differs between the poses, windows that miss the
 // face or the peeking eyes, sway overlays that do not fit, a palette key two
 // part files define with different colors, a mini rig not 16x16 or with
-// overlays off it). Exit code 1 when anything is wrong.
+// overlays off it, a slime grid that does not fit the slime canvas below its
+// top row, Bocchi's two slime faces not one body). Exit code 1 when anything
+// is wrong.
 //
 //   node scripts/check.mjs [member...]
 
@@ -20,7 +22,8 @@ for (const id of members) {
   const problems = S.checkArt(art)
   const colors = Object.keys(art.palette).length
   const patched = S.POSES.filter(p => S.isPatched(art.poses[p])).length
-  const summary = `${colors} colors, ${S.POSES.length - patched} grid poses, ${patched} patched, ${art.mini ? 'a mini rig' : 'no mini rig (the portrait halved)'}`
+  const slime = art.slime === undefined ? 'no slime' : `a slime (${art.slime.awake === undefined ? 'one face' : 'two faces'})`
+  const summary = `${colors} colors, ${S.POSES.length - patched} grid poses, ${patched} patched, ${art.mini ? 'a mini rig' : 'no mini rig (the portrait halved)'}, ${slime}`
   if (problems.length === 0) {
     console.log(`${id}: ok (${summary})`)
     continue

@@ -40,6 +40,7 @@ Look at the reference at full size before drawing anything, and again after.
 | full figure | 96x96 | the whole member; soles on row 93, rows 94-95 empty; rows 0-17 are headroom for a jump, the ahoge and the effects |
 | portrait | 32x32 | a window over the head (`head: {x, y}` on the stand pose): both eyes, the mouth, the hair top and the identifying accessory (Bocchi's clips, Nijika's triangle ahoge, Ryo's clip, Kita's side tail) |
 | mini | 16x16 | a hand-drawn head for the terminal (see "The minis"); `downscale2` of the portrait only where a member has none |
+| slime | 36x24 | her blob form, one an act on stage (a subagent), on a canvas of its own (see "The slimes"); its mini 18x12 is the slime halved |
 | crash | 96x32 | Bocchi's guitar dropping onto the stage, for Blast Radius; and its 48x16 mini |
 
 The terminal draws the mini in half blocks (16x8 cells, v1's footprint) or quadrants (8x4
@@ -64,6 +65,7 @@ export const bocchi: MemberArt = {
   head: { x, y },         // the 32x32 portrait window on the stand pose
   boxHead: { x, y },      // the same window on the box pose
   mini: { stand, box, face: { x, y, grids }, peek: { x, y, grids } },  // the 16x16 mini rig (see The minis)
+  slime: { content, awake, face: { x, y, w, h } },  // her slime (see The slimes); awake and face Bocchi's only
   tips: { playA: { x, y }, playB: { x, y } },  // Nijika only: where the striking stick's tip is
   extras: { guitarFlat, guitarTilt },  // Bocchi only
 }
@@ -83,6 +85,7 @@ at once without touching each other's files; its `index.ts` assembles the `Membe
 | `faces.ts` | `face` |
 | `sway.ts` | `sway` |
 | `mini.ts` | `mini` |
+| `slime.ts` | `slime` |
 | `extras.ts` | `guitarFlat`, `guitarTilt` (Bocchi only) |
 
 Any part may also export `colors`, palette entries of its own; `index.ts` merges them into the
@@ -199,6 +202,35 @@ accessory (Bocchi's blue-over-yellow cubes, Nijika's triangle and tail, Ryo's pi
 two clear eyes in the member's eye color, a mouth. The mini view follows the scene (its face or
 peek, a melt, a jump or a shake scaled down) with v1's small effects.
 
+## The slimes (`slime.ts`, 36x24)
+
+Each subagent the band takes on is an act on stage, drawn as a **slime** in its member's
+colors: the member's chibi blob form, from the user's five bead patterns (Kita, Nijika with her
+triangle ahoge, Ryo, Bocchi smiling with her clips, Bocchi with her eyes open), read back bead for
+bead. The main loop is never a slime: Bocchi stays her figure.
+
+- One canvas for the band, **36x24** (`SLIME_W`, `SLIME_H`): wide enough for Bocchi's awake
+  drawing, tall enough for Nijika's ahoge with a row above it. The grid (whole, `.`
+  transparent, never `_`) is at most 36 wide and 23 tall, laid **bottom-aligned and centred**,
+  so the top row is free for the bounce's stretch and hop and the feet stay planted.
+- The palette is the member's own: the body in her **hair's ramp** (base `h`; a shadow `r` down
+  the left side and along the scalloped bottom; a light rim `H` along the top-right curve; a
+  glint of the band's white `W W` on the crown, light from the upper right), the **outline**
+  the band's near-black `o` (the closed eyes and the hair's inner lines too), Bocchi's clips in
+  their own ramps (blue `b C` over `B b`, yellow `Y Z` over `q`), the open eyes' whites `W`.
+- Faces: Kita, Nijika and Ryo keep the bead patterns' smiling shut eyes (`> <`) in every state.
+  Bocchi has two grids on **one body**: `content` (shut, smiling) and `awake` (her open-eyed
+  bead pattern's face, a heavy lid two rows thick over each white eye, redrawn on the content
+  body), which may differ only inside `face`, the eyes' box. `checkArt` holds them to it.
+- Nijika's stem row under the ahoge is left out (the Dorito sits on her head), so her 23 rows
+  leave the canvas's top row free.
+- A squash or a stretch scales the blob's rows about its bottom row (`scaleRows`): the plainest
+  row (the one most like the row below it) gives, so the belly takes it while the face, the
+  outline and the feet hold. A slime has no `bend`.
+- The **slime mini** (18x12, the terminal's: 9x3 quadrant cells) is the slime halved
+  (`downscale2`), its `z` drawn again at the font's size on its own path. No hand-drawn slime
+  minis: the terminal's slime is a colored blob with its eyes, its motion carrying the state.
+
 ## Effects (`src/art/fx.ts`)
 
 Drawn at the new density (about twice v1's size: a note ~8x10, a sparkle ~9x9, a sweat drop
@@ -212,8 +244,8 @@ CRASH.
 ## Checking the art
 
 ```bash
-npm run check                         # every member: row lengths, palette, the face region, the windows
-node scripts/sheet.mjs <member>       # out/sheets/sheet-<member>.png: every pose, face and frame
+npm run check                         # every member: row lengths, palette, the face region, the windows, the slime
+node scripts/sheet.mjs <member>       # out/sheets/sheet-<member>.png: every pose, face and frame, the slime's too
 node scripts/compare.mjs <member>     # out/compare/compare-<member>.png: her stand beside the reference, same scale
 node scripts/grid.mjs <member> <pose> [x y w h]   # a pose's resolved grid with row and column rulers
 node scripts/look.mjs <member> <cell...>          # cells side by side: playA+focus, box+peekL, ref, mini:stand+blink, mood:happy, crash

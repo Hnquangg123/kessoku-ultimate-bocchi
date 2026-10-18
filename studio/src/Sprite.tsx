@@ -1,10 +1,12 @@
 import React from 'react'
 import { AbsoluteFill, useCurrentFrame } from 'remotion'
 import { ART } from './art/members'
-import type { MemberId, Mood } from './art/types'
+import type { MemberId, Mood, SlimeState } from './art/types'
 import { drawCrash, drawCrashMini } from './anim/crash'
 import { drawMood } from './anim/scene'
 import type { View } from './anim/scene'
+import { drawSlime } from './anim/slimes'
+import type { SlimeView } from './anim/slimes'
 import { PixelCanvas } from './PixelCanvas'
 
 export type SpriteProps = { member: MemberId; mood: Mood; view: View }
@@ -15,6 +17,18 @@ export const Sprite: React.FC<SpriteProps> = ({ member, mood, view }) => {
   return (
     <AbsoluteFill>
       <PixelCanvas px={drawMood(ART[member], mood, frame, view)} />
+    </AbsoluteFill>
+  )
+}
+
+export type SlimeProps = { member: MemberId; state: SlimeState; view: SlimeView }
+
+/** One member's slime (an act on stage) in one state, 1:1 on a transparent canvas: 36x24, or its mini 18x12. */
+export const Slime: React.FC<SlimeProps> = ({ member, state, view }) => {
+  const frame = useCurrentFrame()
+  return (
+    <AbsoluteFill>
+      <PixelCanvas px={drawSlime(ART[member], state, frame, view)} />
     </AbsoluteFill>
   )
 }

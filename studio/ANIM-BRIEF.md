@@ -87,6 +87,28 @@ a body effect shows only where it falls inside the portrait window. In the portr
 keyed off the window's edge is pulled in to it: keep Bocchi's left-side effects below window row
 15, clear of her clips (window columns 2-8, rows 5-14).
 
+## The slimes (`src/anim/slimes.ts`)
+
+A slime is one act on stage; its loop is its state's, not a mood. The keys are the same kind,
+with holds, and each state's loop is one length for the four members, its beats placed member by
+member a quarter of the loop apart down the band's row (Bocchi, Nijika, Ryo, Kita), so a row of
+slimes ripples. A key: `squash` (rows lower), `stretch` (rows taller), `dy` (the hop), `face`
+(Bocchi's `awake`), `z` (where the z is on the slime and on its mini, and its color).
+
+**active** (the act runs; 1.6 s, 16 frames): a bounce and a long hold. A squash on the floor
+(anticipation), a stretch (take-off), a hop of one pixel (two frames in the air), a landing squash.
+Bocchi hesitates (the squash held two frames) and is awake throughout; Nijika bobs once more on the
+off-beat; Ryo bounces once and holds longest; Kita hangs in the air a frame longer, performing.
+
+**idle** (pending or waiting; 2.4 s, 24 frames): a slow breath, squash 1 held 8 frames. Nothing else.
+
+**asleep** (done, failed or killed; 3.2 s, 32 frames): a slower breath (squash 1 held 12 frames)
+and a `z` from the 3x5 font drifting up on her open side (Bocchi's and Ryo's right, Nijika's and
+Kita's left), twice a loop: 14 frames each, up a row every other frame, a column outward halfway,
+fading in (dusk, lavender), held pale, fading out. Mid-tones with no outline, so the z shows on a
+dark surface and a light one. On the mini it rises from its own free corner, on frames where the
+slime's z moves too.
+
 ## The effects in motion
 
 An effect never pops on and off in the same place for a whole loop: it rises, drifts, grows in or
