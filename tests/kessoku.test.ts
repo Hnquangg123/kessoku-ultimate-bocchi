@@ -13,6 +13,8 @@ import { classify, classifyPowerShell, isGitCommit } from '../hooks/lib/blast'
 import { cutHunks, patchToUnified, unifiedDiff } from '../hooks/lib/diff'
 import { FACE_WIDTH, MEMBERS, SPINNER_WORDS_BY_MODE, THEME_OVERRIDES, TURN_WORDS, padFace, textWidth } from '../hooks/lib/palette'
 import { appendRule, cleanRule, looksLikeCorrection } from '../hooks/lib/reflect'
+import { completions } from '../hooks/lib/typeahead'
+import { isAtLeast, offLine, parseVersion } from '../hooks/lib/engine'
 import { CRASH, CRASH_MINI, SVG_LIMIT, animOf, base64, cellsFor, colorOf, composite, decodeCodes, decodeFrames, drawSvg, encodeCells, frameAt, framePixels, layerFrames, mergeTimeline, pixelsOf, spriteId, spritesSvg, viewSize } from '../hooks/lib/sprite'
 import type { SpriteAnim, SpriteTable } from '../hooks/lib/sprite'
 import { SPRITES, SPRITE_COLORS } from '../hooks/lib/sprites.gen'
@@ -32,9 +34,9 @@ const PANE_PROPS = { title: 'x', isFocused: false, bodyColumns: 80, placement: '
 const BAND_PROPS = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 18 }, view: {} }
 
 type Entry = { name: string; kind: 'file' | 'dir'; size: number; mtimeMs: number; isLink: boolean }
-type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[] }
+type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[]; suggested: string[]; notified: { text: string; title: string | undefined }[] }
 /** What a test may vary in the engine beneath: one bottom per event, so the knobs live here. */
-type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean }
+type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string; notifyReason?: 'disabled' | 'no-channel' | 'no-surface' | 'refused'; engineVersion?: string; noVersion?: boolean }
 const THEME_OPTION_LIGHT = 'Kessoku Bocchi Light (kessoku-ultimate-bocchi)'
 
 /** `C:\proj\x` and `/proj/x` are the same file to the engine's fs; the tests key by the forward-slash spelling. */
@@ -86,6 +88,11 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
     seen.toasts.push(e.text)
     return { value: undefined }
   })
+  // The person's notification channel: a terminal that takes them, or (a knob) one that cannot send.
+  on('ui.notify', ($, e) => {
+    seen.notified.push({ text: e.text, title: e.title })
+    return { value: a.notifyReason === undefined ? { isSent: true as const, channel: 'kitty' as const } : { isSent: false as const, reason: a.notifyReason } }
+  })
   on('ui.open', ($, e) => {
     seen.opened.push(e.id)
     return { value: a.unplaced === true ? { isPlaced: false as const, reason: 'the terminal is too narrow for a pane' } : { isPlaced: true as const } }
@@ -117,7 +124,13 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
   on('session.root', () => ({ value: '/proj' }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000, percent: 12, tokens: 24_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-10T12:00:00Z' }], cost: { usd: 0.42 } } }))
   on('fs.exists', ($, e) => ({ value: key(e.path) in seen.written }))
-  on('fs.read', ($, e) => ({ value: seen.written[key(e.path)] ?? '' }))
+  // The mod's own manifest, read for its version; anything else is what a test wrote.
+  on('fs.read', ($, e) => ({ value: /\.claude-plugin\/plugin\.json$/.test(key(e.path)) ? '{ "name": "kessoku-ultimate-bocchi", "version": "9.9.9" }' : (seen.written[key(e.path)] ?? '') }))
+  on('session.version', () => {
+    if (a.noVersion) throw new Error('no such op on this engine')
+    const version = a.engineVersion ?? '2.1.299'
+    return { value: { version, base: version } }
+  })
   on('fs.write', ($, e) => {
     seen.written[key(e.path)] = e.text
     return { value: undefined }
@@ -176,10 +189,22 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
   on('turn.complete', ($, e) => ({ text: e.answer }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.measure', ($, e) => ({ changed: e.changed }))
+  // The prompt box takes every dim suggestion; the typeahead's own rows are none.
+  on('prompt.suggest', ($, e) => {
+    seen.suggested.push(e.text)
+    return { isShown: true }
+  })
+  on('prompt.autocomplete', () => ({ suggestions: [] }))
+  // The engine's own compaction: a summary that takes a while (on this clock), 180k tokens down to 12k, or a veto.
+  on('session.compact', async ($, e) => {
+    if (a.compactMs) await clock.sleep(a.compactMs)
+    if (a.compactSkip !== undefined) return { skip: a.compactSkip }
+    return { messages: [{ role: 'user' as const, text: `summary of ${e.messages.length} messages`, toolUses: [] }], tokensBefore: 180_000, tokensAfter: 12_000 }
+  })
 }
 
 function fresh(): Seen {
-  return { commands: [], status: [], toasts: [], opened: [], closed: [], filled: [], written: {}, sleeps: 0, sleepers: [], forks: 0, configSets: [], theme: 'dark', asks: [], askAnswer: 'Not now', rendered: {}, blits: [] }
+  return { commands: [], status: [], toasts: [], opened: [], closed: [], filled: [], written: {}, sleeps: 0, sleepers: [], forks: 0, configSets: [], theme: 'dark', asks: [], askAnswer: 'Not now', rendered: {}, blits: [], suggested: [], notified: [] }
 }
 
 /** One warm main-thread turn, as the engine would report it: 300k tokens read from the cache. */
@@ -1837,4 +1862,241 @@ test('characterArt kaomoji keeps the text faces and draws no pictures', { option
   await blastT.unmount()
   await clock.advance(3000)
   expect(seen.blits).toHaveLength(0)
+})
+
+// ---- The v0.5.0 polish ---------------------------------------------------------------
+
+/** A conversation to compact: the engine refuses an empty one. */
+const TRANSCRIPT = [
+  { role: 'user' as const, text: 'where were we?', toolUses: [] },
+  { role: 'assistant' as const, text: 'renaming greet to welcome', toolUses: [] },
+]
+
+test('a compaction melts Bocchi in the strip, then the panel and Cache Tax read the compacted set', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const knobs: Answers = { compactMs: 3000 }
+  bottoms(on, clock, seen, knobs)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // A warm turn of 300k tokens, as Cache Tax books it; the panel reads the engine's 12%.
+  await $.turn.start({ text: 'warm up', turnId: 't1' })
+  const step = $.turn.step({ turnId: 't1', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })
+  for await (const chunk of step) void chunk
+  await $.turn.complete({ turnId: 't1', answer: 'ok', durationMs: 900, isAborted: false, reason: 'answer' })
+  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/cache warm/)
+  // /compact: while the engine summarizes (three seconds here), Bocchi melts in the strip and the status line.
+  const compacting = $.session.compact({ trigger: 'manual', messages: TRANSCRIPT })
+  await clock.settle()
+  expect(seen.status.at(-1)).toMatch(/compacting the set/)
+  const strip = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(moodsIn(String((await strip.find({ type: 'Svg' }))?.props.alt)).bocchi).toBe('melting')
+  await strip.unmount()
+  await clock.advance(3000)
+  const stood = await compacting
+  expect(stood.skip).toBeUndefined()
+  expect(seen.toasts.some(t => /the set is compacted: 180k → 12\.0k tokens/.test(t))).toBe(true)
+  expect(seen.status.at(-1)).not.toMatch(/compacting/)
+  // The panel's ctx is the compacted set over the window (12k of 200k), not the 12% the engine measured before (the
+  // desktop's drawing: a terminal's would start the sprite clock, which the hour below would have to tick through).
+  const panel = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect(await panel.find({ type: 'Text', text: /ctx .*6% · session/ })).toBeDefined()
+  await panel.unmount()
+  // Cache Tax: nothing is cached for the new transcript, and the next write is priced at the compacted size.
+  const report = (await $.command.run(cmd('cache-tax'))).text
+  expect(report).toMatch(/nothing cached yet/)
+  expect(report).toMatch(/12\.0k tokens/)
+  // An hour on, the send is not held: there is no cache entry to pay for (before the compaction it would have been).
+  await clock.advance(61 * 60_000)
+  const sent = await $.prompt.submit(typed('where were we?'))
+  expect(sent.drop).toBeUndefined()
+  expect(sent.text).toBe('where were we?')
+  // The precompute pass and a subagent's compaction leave the band alone; a vetoed one only brings Bocchi back.
+  knobs.compactMs = 0
+  const lines = seen.status.length
+  await $.session.compact({ trigger: 'precompute', messages: TRANSCRIPT })
+  await $.session.compact({ trigger: 'auto', agentId: 'agent-1', messages: TRANSCRIPT })
+  expect(seen.status.length).toBe(lines)
+  knobs.compactSkip = 'off'
+  const vetoed = await $.session.compact({ trigger: 'auto', messages: TRANSCRIPT })
+  expect(vetoed.skip).toBe('off')
+  expect(seen.status.at(-1)).not.toMatch(/compacting/)
+})
+
+test('typeahead: /bocchi and /keepwarm complete their next word, and nothing else does', async () => {
+  // The box with the caret at its end: the token is the last word.
+  const at = (text: string) => {
+    const start = text.lastIndexOf(' ') + 1
+    return { text, cursor: text.length, token: text.slice(start), start }
+  }
+  const texts = (text: string) => completions(at(text)).map(c => c.text)
+  expect(texts('/bocchi')).toEqual(['/bocchi theme', '/bocchi mood', '/bocchi demo', '/bocchi tax', '/bocchi crash', '/bocchi memo', '/bocchi setlist', '/bocchi strip', '/bocchi help'])
+  expect(texts('/bocchi t')).toEqual(['theme', 'tax'])
+  expect(texts('/bocchi T')).toEqual(['theme', 'tax'])
+  expect(texts('/bocchi s')).toEqual(['setlist', 'strip'])
+  expect(texts('/bocchi theme')).toEqual([])
+  expect(texts('/bocchi theme o')).toEqual(['on', 'off'])
+  expect(texts('/bocchi mood h')).toEqual(['happy', 'hiding'])
+  expect(texts('/bocchi demo o')).toEqual(['off'])
+  expect(texts('/bocchi tax x')).toEqual([])
+  expect(texts('/bocchi theme on x')).toEqual([])
+  expect(texts('/keepwarm')).toEqual(['/keepwarm 30m', '/keepwarm 1h', '/keepwarm 2h', '/keepwarm off'])
+  expect(texts('/keepwarm 1')).toEqual(['1h'])
+  expect(texts('/keepwarm o')).toEqual(['off'])
+  expect(texts('/keepwarm 1h 2')).toEqual([])
+  for (const other of ['/boc', '/bocch', '/replay', '/kessoku', 'bocchi t', 'fix the /bocchi t', '/compact t']) expect(texts(other)).toEqual([])
+  // Every row says what it does, in the help's words.
+  expect(completions(at('/bocchi')).every(c => (c.description ?? '').length > 0)).toBe(true)
+  expect(completions(at('/bocchi t'))[0]?.description).toMatch(/theme/)
+  // A caret in the middle of the draft completes the word under it.
+  expect(completions({ text: '/bocchi theme on', cursor: 9, token: 't', start: 8 }).map(c => c.text)).toEqual(['theme', 'tax'])
+})
+
+test('after a turn with edits the prompt box is offered /replay, Tab to take; a turn without edits offers nothing', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: 'look around', turnId: 't1' })
+  await $.turn.complete({ turnId: 't1', answer: 'nothing to change', durationMs: 500, isAborted: false, reason: 'answer' })
+  expect(seen.suggested).toEqual([])
+  await $.turn.start({ text: 'rename greet', turnId: 't2' })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/app.ts', old_string: 'greet(', new_string: 'welcome(' })
+  await $.turn.complete({ turnId: 't2', answer: 'done', durationMs: 1200, isAborted: false, reason: 'answer' })
+  expect(seen.suggested).toEqual(['/replay 1 track'])
+  // Taken and sent, the suggestion runs as the command: the words after /replay are ignored.
+  expect((await $.command.run(cmd('replay', '1 track'))).text).toMatch(/1 track on the setlist/)
+  // An interrupted turn with edits, and a turn while Replay is open, offer nothing.
+  await $.turn.start({ text: 'rename again', turnId: 't3' })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/app.ts', old_string: 'welcome(', new_string: 'hello(' })
+  await $.turn.complete({ turnId: 't3', answer: '', durationMs: 300, isAborted: true, reason: 'aborted' })
+  expect(seen.suggested).toHaveLength(1)
+  await $.turn.start({ text: 'and again', turnId: 't4' })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/app.ts', old_string: 'hello(', new_string: 'hi(' })
+  await $.turn.complete({ turnId: 't4', answer: 'done', durationMs: 300, isAborted: false, reason: 'answer' })
+  expect(seen.suggested).toHaveLength(1)
+  // The typeahead hook itself: the kit raises the event (untyped, as it is not among its typed engine calls).
+  type Box = { text: string; cursor: number; token: string; start: number }
+  const autocomplete = ($ as unknown as { prompt: { autocomplete: (e: Box) => Promise<{ suggestions: { text: string; description?: string }[] }> } }).prompt.autocomplete
+  const rows = await autocomplete({ text: '/bocchi t', cursor: 9, token: 't', start: 8 })
+  expect(rows.suggestions.map(s => s.text)).toEqual(['theme', 'tax'])
+  expect(rows.suggestions[0]?.description).toMatch(/theme/)
+  expect((await autocomplete({ text: '/replay x', cursor: 9, token: 'x', start: 8 })).suggestions).toEqual([])
+})
+
+test('native notifications: the guard holding a command, a long set done, the cache about to go cold', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const knobs: Answers = {}
+  bottoms(on, clock, seen, knobs)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // The guard: told once the screen is up, with what the command would do.
+  const call = $.tool.call({ tool: 'Bash', command: 'rm -rf build' })
+  await clock.settle()
+  expect(seen.notified).toHaveLength(1)
+  expect(seen.notified[0]?.title).toBe('Kessoku Band')
+  expect(seen.notified[0]?.text).toBe('Blast Radius is holding rm -rf: it would delete 3 files (about 1.3 MB). Answer the dropped-guitar screen.')
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-blast-radius', props: PANE_PROPS })
+  await pane.press({ key: 'blast-cancel' })
+  await clock.advance(300)
+  expect((await call).deny).toMatch(/caught the guitar/)
+  await pane.unmount()
+  // A short set ends unannounced; a long one with edits is announced with its count.
+  await $.turn.start({ text: 'quick', turnId: 't1' })
+  await $.turn.complete({ turnId: 't1', answer: 'ok', durationMs: 3000, isAborted: false, reason: 'answer' })
+  expect(seen.notified).toHaveLength(1)
+  await $.turn.start({ text: 'long', turnId: 't2' })
+  const step = $.turn.step({ turnId: 't2', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })
+  for await (const chunk of step) void chunk
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/app.ts', old_string: 'greet(', new_string: 'welcome(' })
+  await $.turn.complete({ turnId: 't2', answer: 'done', durationMs: 72_000, isAborted: false, reason: 'answer' })
+  expect(seen.notified[1]?.text).toBe('Nijika: the set is done after 1:12 · 1 edit on the setlist (/replay)')
+  // Five minutes before the hour-long TTL lapses, idle and without keepwarm: told once, priced like the tax.
+  await clock.advance(54 * 60_000)
+  expect(seen.notified).toHaveLength(2)
+  await clock.advance(2 * 60_000)
+  expect(seen.notified).toHaveLength(3)
+  expect(seen.notified[2]?.text).toMatch(/^Cache Tax: the cache goes cold in 4:\d\d · re-writing 30[34]k tokens would cost ≈\$\d/)
+  expect(seen.notified[2]?.text).toMatch(/\/keepwarm keeps it warm$/)
+  await clock.advance(3 * 60_000)
+  expect(seen.notified).toHaveLength(3)
+  expect(seen.toasts.some(t => /goes cold/.test(t))).toBe(false)
+  // A set that stopped on an error is announced too; an interrupted one is not (the person was there).
+  await $.turn.start({ text: 'again', turnId: 't3' })
+  await $.turn.complete({ turnId: 't3', answer: '', durationMs: 40_000, isAborted: false, reason: 'error' })
+  expect(seen.notified[3]?.text).toBe('Nijika: the set stopped on error after 0:40')
+  await $.turn.start({ text: 'once more', turnId: 't4' })
+  await $.turn.complete({ turnId: 't4', answer: '', durationMs: 40_000, isAborted: true, reason: 'aborted' })
+  expect(seen.notified).toHaveLength(4)
+  // No channel (the desktop app): the cold-cache notice becomes a toast; the guard and the set keep their screens.
+  knobs.notifyReason = 'no-surface'
+  await clock.advance(56 * 60_000)
+  expect(seen.notified).toHaveLength(5)
+  expect(seen.toasts.filter(t => /goes cold/.test(t))).toHaveLength(1)
+  const held = $.tool.call({ tool: 'Bash', command: 'rm -rf build' })
+  await clock.settle()
+  expect(seen.notified).toHaveLength(6)
+  expect(seen.toasts.filter(t => /holding/.test(t))).toHaveLength(0)
+  const pane2 = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-blast-radius', props: PANE_PROPS })
+  await pane2.press({ key: 'blast-cancel' })
+  await clock.advance(300)
+  expect((await held).deny).toMatch(/caught the guitar/)
+  await pane2.unmount()
+})
+
+test('toasts none silences the notifications too', { options: { toasts: 'none', applyTheme: false } }, async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const call = $.tool.call({ tool: 'Bash', command: 'rm -rf build' })
+  await clock.settle()
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-blast-radius', props: PANE_PROPS })
+  await pane.press({ key: 'blast-cancel' })
+  await clock.advance(300)
+  expect((await call).deny).toMatch(/caught the guitar/)
+  await pane.unmount()
+  await $.turn.start({ text: 'long', turnId: 't1' })
+  const step = $.turn.step({ turnId: 't1', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })
+  for await (const chunk of step) void chunk
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 72_000, isAborted: false, reason: 'answer' })
+  await clock.advance(58 * 60_000)
+  expect(seen.notified).toEqual([])
+  expect(seen.toasts).toEqual([])
+})
+
+test('/bocchi help opens with the mod and engine versions, and names what this engine lacks', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const knobs: Answers = {}
+  bottoms(on, clock, seen, knobs)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const lines = ((await $.command.run(cmd('bocchi', 'help'))).text ?? '').split('\n')
+  expect(lines[0]).toBe('♪ Kessoku Ultimate Bocchi Theme v9.9.9 · Claude Code 2.1.299')
+  expect(lines.some(l => l.startsWith('/kessoku'))).toBe(true)
+  expect(lines.some(l => l.startsWith('off on this engine'))).toBe(false)
+  // An older engine is named as such; one that cannot say its version, as unknown.
+  knobs.engineVersion = '2.1.280'
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  expect(((await $.command.run(cmd('bocchi', 'help'))).text ?? '').split('\n')[0]).toBe('♪ Kessoku Ultimate Bocchi Theme v9.9.9 · Claude Code 2.1.280 (older than the mod expects, 2.1.287+)')
+  knobs.noVersion = true
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  expect(((await $.command.run(cmd('bocchi', 'help'))).text ?? '').split('\n')[0]).toBe('♪ Kessoku Ultimate Bocchi Theme v9.9.9 · Claude Code (version unknown)')
+  // The pure parts: versions compare as releases, dev builds included; what does not parse is never enough.
+  expect(parseVersion('2.1.299')).toEqual([2, 1, 299])
+  expect(parseVersion('2.1.280-dev.20260920.t101500.sha1a2b3c4')).toEqual([2, 1, 280])
+  expect(parseVersion('v2.1.1')).toEqual([2, 1, 1])
+  expect(parseVersion('dev')).toBeNull()
+  expect(isAtLeast('2.1.299', '2.1.287')).toBe(true)
+  expect(isAtLeast('2.1.287', '2.1.287')).toBe(true)
+  expect(isAtLeast('2.1.280', '2.1.287')).toBe(false)
+  expect(isAtLeast('3.0.0', '2.1.287')).toBe(true)
+  expect(isAtLeast('2.10.0', '2.9.9')).toBe(true)
+  expect(isAtLeast('', '2.1.287')).toBe(false)
+  const allOn = { suggest: true, notify: true, version: true }
+  expect(offLine(allOn)).toBe('')
+  expect(offLine({ ...allOn, notify: false })).toBe('off on this engine: native notifications (no $.ui.notify)')
+  expect(offLine({ ...allOn, suggest: false, version: false })).toBe('off on this engine: the Replay suggestion (no $.prompt.suggest), the engine version (no $.session.version)')
 })

@@ -91,7 +91,10 @@ import { LIST_MAX, classify, classifyPowerShell, cleanArgs, globToRegExp, isGitC
 import type { Risk } from './lib/blast'
 import { cutHunks, patchToUnified, unifiedDiff } from './lib/diff'
 import type { Unified } from './lib/diff'
+import { offLine, versionLine } from './lib/engine'
+import type { FeatureKey } from './lib/engine'
 import { appendRule, cleanRule, looksLikeCorrection, rulePrompt } from './lib/reflect'
+import { completions } from './lib/typeahead'
 import { CRASH, CRASH_MINI, animOf, cellsFor, composite, encodeCells, frameSignature, isAnimated, spriteId, spritesSvg, viewSize } from './lib/sprite'
 import type { CellMode, MemberView, SlimeView, SpritePart } from './lib/sprite'
 import { ALWAYS_IGNORED, IGNORED_DIRS, MAX_PATHS, baseName, isAnyHot, isGlowing, isInside, isLit, relPath, treeRows, windowRows } from './lib/tree'
@@ -115,6 +118,14 @@ const MAX_TRACKS = 40
 const MAX_AGENTS = 24
 const MEASURE_CAP = 5000
 const HELD_PROMPT_MS = 15 * 60_000
+/** Below this many context tokens a cold send is too cheap to hold for, or to warn about. */
+const TAX_MIN_TOKENS = 20_000
+/** A set at least this long may have been left to play alone: its end is worth a notification. */
+const SET_AWAY_MS = 30_000
+/** The cache about to go cold is notified this long before it lapses (half the TTL when that is shorter). */
+const COLD_NOTICE_MS = 5 * 60_000
+/** What heads every native notification. */
+const NOTIFY_TITLE = 'Kessoku Band'
 
 function mainAgent(): KessokuAgent {
   return {
@@ -243,6 +254,21 @@ let keepWarmTimer: Timer | null = null
 let moodTimer: Timer | null = null
 let memoTimer: Timer | null = null
 let pendingTracks: KessokuTrack[] = []
+/** The main conversation is being compacted: Bocchi melts, and nothing pings the cache meanwhile. */
+let isCompacting = false
+/** The warm period (its `lastWarmAt`) the cold-cache notice went out for, so it goes once per period. */
+let coldNoticeFor = 0
+/** The engine's release (`2.1.299`), '' when it could not say; the mod's own version from its manifest, '' when unread. */
+let engineVersion = ''
+let modVersion = ''
+/**
+ * The gate: each feature that leans on a newer engine call, on until the
+ * call turns out not to exist (a TypeError where it is first made); a feature
+ * that is off calls nothing more, and `/bocchi help` names it. The hooks
+ * (`session.compact`, `prompt.autocomplete`) cannot be gated: an engine that
+ * does not know an event refuses the whole module at load.
+ */
+const features: Record<FeatureKey, boolean> = { suggest: true, notify: true, version: true }
 
 /**
  * A sprite a terminal drawing holds as a Raster, repainted by the sprite
@@ -293,6 +319,23 @@ function toast($: EngineInterface, text: string, level: 'important' | 'chatter' 
   if (opts.toasts === 'none') return
   if (opts.toasts === 'important' && level === 'chatter') return
   $.ui.toast(text)
+}
+
+/**
+ * A native notification through the person's own channel (`$.ui.notify`),
+ * titled with the band, for the things worth coming back for. Silent when
+ * toasts are off; a channel that cannot send (the desktop app, an SDK host,
+ * notifications turned off) or a failed call reads as not sent, and the
+ * caller decides what else to show.
+ */
+async function notify($: EngineInterface, text: string): Promise<boolean> {
+  if (opts.toasts === 'none' || !features.notify) return false
+  try {
+    return (await $.ui.notify(text, { title: NOTIFY_TITLE })).isSent
+  } catch (error) {
+    if (isMissingApi(error)) features.notify = false
+    return false
+  }
 }
 
 function isPersonPrompt(kind: string): boolean {
@@ -421,6 +464,37 @@ async function configDir($: EngineInterface): Promise<string | null> {
   if (set !== undefined && set !== '') return set
   const home = await homeDir($)
   return home === null ? null : `${home}/.claude`
+}
+
+/**
+ * Whether a failed call means the engine has no such method at all (`$.ui.notify is not a function`), as
+ * against a call that was made and refused: the former switches its feature off for the session.
+ */
+function isMissingApi(error: unknown): boolean {
+  return error instanceof TypeError && /not a function/.test(error.message)
+}
+
+/**
+ * Once per session: the engine's version (a feature off when the call is
+ * not there), and the mod's own from its manifest (read through the engine's
+ * file system: a hooks module can import no JSON, and a constant would drift
+ * from plugin.json). The other calls are probed where they are first made.
+ */
+async function readEngine($: EngineInterface): Promise<void> {
+  engineVersion = ''
+  try {
+    const v = await $.session.version()
+    engineVersion = v.base ?? v.version
+  } catch (error) {
+    if (isMissingApi(error)) features.version = false
+  }
+  modVersion = ''
+  try {
+    const manifest = JSON.parse(await $.fs.read(joinPath($.plugin.root, '.claude-plugin/plugin.json'))) as { version?: unknown }
+    if (typeof manifest.version === 'string') modVersion = manifest.version
+  } catch {
+    modVersion = ''
+  }
 }
 
 // ---- Mood and status line ----------------------------------------------------
@@ -664,7 +738,7 @@ async function keepWarmTick($: EngineInterface): Promise<void> {
   const c = await read($, cache)
   const b = await read($, band)
   const now = await $.clock.now()
-  if (c.keepWarmUntil <= now || b.isWorking || c.lastWarmAt === 0 || c.contextTokens < 1000) return
+  if (c.keepWarmUntil <= now || b.isWorking || isCompacting || c.lastWarmAt === 0 || c.contextTokens < 1000) return
   const age = now - c.lastWarmAt
   const ttl = ttlMs()
   if (age < ttl - 90_000) return
@@ -696,6 +770,25 @@ async function keepWarmTick($: EngineInterface): Promise<void> {
   }
 }
 
+/**
+ * The cache about to go cold while the session is idle and keepwarm is off:
+ * one notification a warm period, shortly before the TTL lapses, priced as
+ * the tax would be; a toast where no channel could send it. Keepwarm's own
+ * pings make it moot while they run.
+ */
+async function coldWatch($: EngineInterface): Promise<void> {
+  const c = await read($, cache)
+  const b = await read($, band)
+  const now = await $.clock.now()
+  if (c.lastWarmAt === 0 || c.lastWarmAt === coldNoticeFor || b.isWorking || isCompacting || c.keepWarmUntil > now || c.contextTokens < TAX_MIN_TOKENS) return
+  const ttl = ttlMs()
+  const left = ttl - (now - c.lastWarmAt)
+  if (left <= 0 || left > Math.min(COLD_NOTICE_MS, ttl / 2)) return
+  coldNoticeFor = c.lastWarmAt
+  const text = `Cache Tax: the cache goes cold in ${fmtDuration(left)} · re-writing ${fmtTokens(c.contextTokens)} tokens would cost ≈${fmtUsd(coldWriteUsd(c))} · /keepwarm keeps it warm`
+  if (!(await notify($, text))) toast($, `${MEMBERS.bocchi.faces.anxious} ${text}`)
+}
+
 function cacheTaxReason(c: KessokuCache, now: number): string {
   const age = c.lastWarmAt > 0 ? fmtDuration(now - c.lastWarmAt) : '?'
   return (
@@ -704,6 +797,25 @@ function cacheTaxReason(c: KessokuCache, now: number): string {
     `(a warm turn would have cost ≈ ${fmtUsd(c.warmUsd)}). ` +
     `Your prompt is back in the box: press Enter again to pay it and send, or /clear and start from a note.`
   )
+}
+
+// ---- Compaction --------------------------------------------------------------
+
+/**
+ * A compaction of the main conversation stood: the band's context figure and
+ * the main agent's tokens are the compacted set's (0 when the engine did not
+ * count it, so no stale figure survives; the next turn measures afresh), the
+ * cache has no entry for the new transcript yet (nothing warm, the compacted
+ * size to price the next write, no held prompt, no engine estimate for a
+ * prefix that is gone), and Bocchi comes back to her real face.
+ */
+async function settleCompaction($: EngineInterface, before: number | undefined, after: number | undefined): Promise<void> {
+  const tokens = after ?? 0
+  await update($, band, b => patchAgent({ ...b, contextPercent: after !== undefined && b.window > 0 ? Math.round((after / b.window) * 100) : 0 }, 'main', a => ({ ...a, context: tokens })))
+  await update($, cache, c => ({ ...c, lastWarmAt: 0, contextTokens: tokens, isArmed: false, heldAt: 0, heldText: '', heldUsd: 0, warmUsd: 0, engineWriteUsd: 0, engineModel: '' }))
+  await revertMood($)
+  const shrank = before !== undefined && after !== undefined ? `: ${fmtTokens(before)} → ${fmtTokens(after)} tokens` : ''
+  toast($, `${MEMBERS.nijika.faces.happy} Nijika: the set is compacted${shrank}`, 'chatter')
 }
 
 // ---- Blast Radius ------------------------------------------------------------
@@ -937,6 +1049,8 @@ async function holdForDecision($: EngineInterface, signal: AbortSignal, command:
     opened = true
     if (!placed.isPlaced) await update($, blast, s => (s === null ? s : { ...s, where: 'band' as const }))
     await setMood($, 'panic', 'the guitar is falling!! answer the screen')
+    // Someone away from the window is told: the screen waits ten minutes for an answer.
+    void notify($, `Blast Radius is holding ${risk.label}: it would ${summary}. Answer the dropped-guitar screen.`)
     const startedAt = await $.clock.now()
     while (mine.decision === null) {
       if (signal.aborted) {
@@ -1230,6 +1344,23 @@ async function closeReplay($: EngineInterface): Promise<void> {
   await update($, replay, x => ({ ...x, isOpen: false, inBand: false }))
   // Always by id: a pane that waited undrawn in a narrow terminal is open to the engine too.
   await $.ui.close({ id: REPLAY }).catch(() => undefined)
+}
+
+/**
+ * Replay's quiet second door: `/replay 3 tracks` as the prompt box's dim
+ * suggestion, Tab to take, after a turn that put edits on the setlist. The
+ * engine shows it only in an empty box between turns; `/replay` ignores the
+ * words after it, so the taken suggestion runs as the command.
+ */
+function suggestReplay($: EngineInterface, tracks: number): void {
+  if (!features.suggest) return
+  void (async () => {
+    try {
+      await $.prompt.suggest({ text: `/replay ${tracks} ${tracks === 1 ? 'track' : 'tracks'}` })
+    } catch (error) {
+      if (isMissingApi(error)) features.suggest = false
+    }
+  })()
 }
 
 // ---- The panel ---------------------------------------------------------------
@@ -2259,8 +2390,7 @@ async function demoReplay($: EngineInterface): Promise<string> {
   return 'Replay Theater: a two-track sample setlist is open (preview).'
 }
 
-const HELP = [
-  '♪ Kessoku Ultimate Bocchi Theme',
+const HELP_LINES = [
   '/kessoku          toggle the Kessoku Band panel (subagents as Nijika, Ryo, Kita; Bocchi is the main loop)',
   '/filetree         toggle the file tree: pink while Claude edits a file, neon green once a commit lands',
   '/replay           step through the last turn\'s edits as a setlist, one diff at a time',
@@ -2272,7 +2402,13 @@ const HELP = [
   '/bocchi demo [off]   put sample acts on the panel · /bocchi memo · /bocchi tax · /bocchi crash · /bocchi setlist   previews',
   'Blast Radius and Reflect need no command: a risky command or a correction brings them up.',
   'Config: /config → kessoku-ultimate-bocchi (engine theme, transcript skin, restyle other mods, toasts, accent, backgrounds, tool cards, spinner words, cache TTL, keepwarm, reflect, panel on start).',
-].join('\n')
+]
+
+/** `/bocchi help`: the mod's and the engine's versions first, then every command, then what is off on this engine (only when something is). */
+function help(): string {
+  const off = offLine(features)
+  return [versionLine(modVersion, engineVersion), ...HELP_LINES, ...(off === '' ? [] : [off])].join('\n')
+}
 
 /** The panel, the timers, the first face and the theme offer: once per load, when a screen exists. */
 async function startUi($: EngineInterface): Promise<void> {
@@ -2314,6 +2450,7 @@ async function startUi($: EngineInterface): Promise<void> {
 
   if (keepWarmTimer !== null) keepWarmTimer.cancel()
   keepWarmTimer = $.clock.every(60_000, () => {
+    void coldWatch($).catch(() => undefined)
     void keepWarmTick($)
   })
   if (b.mood === 'happy' || b.mood === 'panic' || b.mood === 'hiding') await revertMood($)
@@ -2344,6 +2481,7 @@ export const register: Register = (on, options) => {
     await $.command.register({ name: 'keepwarm', description: 'Cache Tax: keep the prompt cache warm (e.g. /keepwarm 90m, /keepwarm off)', argumentHint: '[duration|off]' })
     await $.command.register({ name: 'cache-tax', description: 'Cache Tax: is the cache warm, and what would a cold send cost?' })
     await $.command.register({ name: 'bocchi', description: 'Kessoku theme: help, the engine theme, previews, moods, the strip', argumentHint: '[help|theme on|off|strip|mood <m>|demo|memo|tax|crash|setlist]' })
+    await readEngine($).catch(() => undefined)
     // The REPL has its screen now; a host like the desktop app attaches its client a moment later (session.attach);
     // a bare `claude -p` or SDK run never does, and the commands are enough for it.
     if (canDraw()) await startUi($)
@@ -2443,7 +2581,7 @@ export const register: Register = (on, options) => {
       case 'setlist':
         return { text: await demoReplay($) }
       default:
-        return { text: HELP }
+        return { text: help() }
     }
   }).catch(() => ({ text: `${MEMBERS.bocchi.faces.panic} /bocchi hit a wrong note and could not finish; try again.` }))
 
@@ -2499,9 +2637,15 @@ export const register: Register = (on, options) => {
     if (edits > 0) {
       const tracks = pendingTracks.slice(-MAX_TRACKS)
       pendingTracks = []
-      await update($, replay, x => ({ ...x, tracks, index: 0, setlist: x.setlist + 1 }))
+      const setlist = await update($, replay, x => ({ ...x, tracks, index: 0, setlist: x.setlist + 1 }))
+      if (e.reason === 'answer' && !setlist.isOpen && canDraw()) suggestReplay($, tracks.length)
     }
     await update($, cache, c => ({ ...c, lastWarmAt: now }))
+    // A long set may have played to an empty room: its end is announced (an interrupted one had the person there).
+    if (e.durationMs >= SET_AWAY_MS && e.reason !== 'aborted') {
+      const took = fmtDuration(e.durationMs)
+      void notify($, e.reason === 'answer' ? `Nijika: the set is done after ${took}${edits > 0 ? ` · ${edits} ${edits === 1 ? 'edit' : 'edits'} on the setlist (/replay)` : ''}` : `Nijika: the set stopped on ${e.reason} after ${took}`)
+    }
     if (e.reason === 'answer') await setMood($, 'happy', `${MEMBERS.bocchi.lines.happy} ${fmtDuration(e.durationMs)}${edits > 0 ? ` · ${edits} ${edits === 1 ? 'edit' : 'edits'} on the setlist (/replay)` : ''}`, 6000)
     else if (e.reason === 'aborted') await setMood($, 'hiding', 'interrupted… hiding in the box', 8000)
     else await setMood($, 'panic', `the turn ended on ${e.reason}`, 8000)
@@ -2513,6 +2657,28 @@ export const register: Register = (on, options) => {
     await applyUsage($, e).catch(() => undefined)
     return next(e)
   })
+
+  // -- compaction: Bocchi melts while the set is compacted; afterwards the figures are the compacted set's ----
+  on('session.compact', async ($, e, next) => {
+    // A subagent's transcript, or the engine's precompute pass (it installs nothing): not the band's business.
+    if (e.agentId !== undefined || e.trigger === 'precompute') return next(e)
+    isCompacting = true
+    await setMood($, 'melting', 'compacting the set…').catch(() => undefined)
+    const r = await next(e).catch(async (error: unknown) => {
+      // The compaction failed: the engine says so; Bocchi only comes back.
+      isCompacting = false
+      await revertMood($).catch(() => undefined)
+      throw error
+    })
+    isCompacting = false
+    try {
+      if (r.skip === undefined) await settleCompaction($, r.tokensBefore, r.tokensAfter)
+      else await revertMood($)
+    } catch {
+      // the figures could not be reset here; the next measurement sets them
+    }
+    return r
+  }).catch(($, e, next) => next(e))
 
   on('classic.PostModelSwitch', async ($, e, next) => {
     // The engine's TTL wins only while the person kept the default; a configured TTL is theirs.
@@ -2633,7 +2799,7 @@ export const register: Register = (on, options) => {
     // The one held prompt, re-sent in time, passes; anything else is judged afresh.
     const isResend = c.isArmed && now - c.heldAt < HELD_PROMPT_MS && (c.heldText === '' || c.heldText === text)
     if (c.isArmed) await update($, cache, x => ({ ...x, isArmed: false, heldAt: 0, heldText: '' }))
-    if (!isResend && !b.isWorking && canResend(e.origin.kind) && c.lastWarmAt > 0 && c.contextTokens >= 20_000 && now - c.lastWarmAt > ttlMs()) {
+    if (!isResend && !b.isWorking && canResend(e.origin.kind) && c.lastWarmAt > 0 && c.contextTokens >= TAX_MIN_TOKENS && now - c.lastWarmAt > ttlMs()) {
       hasSurface = hasSurface || (await $.session.surfaces().catch(() => [])).length > 0
       if (!canDraw()) return next(e)
       const heldUsd = coldWriteUsd(c)
@@ -2657,6 +2823,14 @@ export const register: Register = (on, options) => {
       })
     }
     return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // -- the typeahead: /bocchi's sub-commands and /keepwarm's durations, beneath the engine's own rows ------
+  on('prompt.autocomplete', async ($, e, next) => {
+    const mine = completions(e)
+    if (mine.length === 0) return next(e)
+    const r = await next(e)
+    return { suggestions: [...r.suggestions, ...mine] }
   }).catch(($, e, next) => next(e))
 
   // -- the theme row: follow it once written, so the charcoal backgrounds know light from dark ------
