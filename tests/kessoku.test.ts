@@ -818,6 +818,47 @@ test('a memo nobody can answer is refused; once a client attaches, it opens', as
   await after.unmount()
 })
 
+test('an answered memo clears alone: a newer memo stays up, in the same conversation and after /clear', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const press = async (key: string) => {
+    const band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+    await band.press({ key })
+    await band.unmount()
+  }
+  const shows = async (text: RegExp) => {
+    const band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+    const found = await band.find({ type: 'Text', text })
+    await band.unmount()
+    return found !== undefined
+  }
+  // Saved, then a correction drafts the next memo before the saved one's six seconds are up: the clear leaves it.
+  await $.tool.call({ tool: MEMO_TOOL, rule: 'Keep commits small.' })
+  await press('memo-save')
+  await clock.advance(1000)
+  await $.prompt.submit(typed('no — in this repo we always use pnpm, not npm'))
+  await clock.advance(6000)
+  expect(await shows(/"Always use pnpm instead of npm in this repository\."/)).toBe(true)
+  // Skipped, it goes at once.
+  await press('memo-skip')
+  await clock.advance(100)
+  expect(await shows(/band memo/)).toBe(false)
+  // Saved, then /clear: the next conversation's memo outlives the old conversation's clear.
+  await $.tool.call({ tool: MEMO_TOOL, rule: 'Name branches after their ticket.' })
+  await press('memo-save')
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  await clock.advance(1000)
+  expect(String((await $.tool.call({ tool: MEMO_TOOL, rule: 'Run the linter before every commit.' })).result)).toMatch(/memo card is up/)
+  await clock.advance(6000)
+  expect(await shows(/"Run the linter before every commit\."/)).toBe(true)
+  // Its own Save still clears it.
+  await press('memo-save')
+  await clock.advance(7000)
+  expect(await shows(/band memo|saved to/)).toBe(false)
+})
+
 test('edits land on the Replay Theater setlist with the tool\'s own line numbers, and light the file tree', async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })

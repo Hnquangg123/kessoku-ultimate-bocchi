@@ -1372,17 +1372,28 @@ async function saveRule($: EngineInterface, where: 'project' | 'global'): Promis
     toast($, `${MEMBERS.nijika.faces.panic} Nijika could not write ${path}: ${String((error as { message?: string })?.message ?? error).slice(0, 120)}`)
     return
   }
-  await update($, memo, x => (x === null ? x : { ...x, status: 'saved' as const, savedTo: path }))
+  const saved = await update($, memo, x => (x === null ? x : { ...x, status: 'saved' as const, savedTo: path }))
   toast($, `${MEMBERS.nijika.faces.happy} Nijika wrote it down: ${path}`)
-  scheduleMemoClear($, 6000)
+  if (saved !== null) scheduleMemoClear($, saved, 6000)
 }
 
-function scheduleMemoClear($: EngineInterface, ms: number): void {
+async function skipRule($: EngineInterface): Promise<void> {
+  const skipped = await update($, memo, x => (x === null ? x : { ...x, status: 'skipped' as const }))
+  if (skipped !== null) scheduleMemoClear($, skipped, 10)
+}
+
+/**
+ * Takes an answered memo off Nijika's card after `ms`, then brings the next
+ * proposal up. Only that memo, still as it was answered: a memo that took the
+ * card since (a new correction's, or another conversation's, the timer being
+ * module state that outlives a /clear or a resume) stays up.
+ */
+function scheduleMemoClear($: EngineInterface, answered: KessokuMemo, ms: number): void {
   if (memoTimer !== null) memoTimer.cancel()
   memoTimer = $.clock.after(ms, () => {
     memoTimer = null
     void (async () => {
-      await update($, memo, () => null)
+      await update($, memo, x => (x !== null && x.at === answered.at && x.rule === answered.rule && x.status === answered.status ? null : x))
       await showNextProposal($)
     })().catch(() => undefined)
   })
@@ -2204,10 +2215,6 @@ function drawMemo($: EngineInterface, e: RenderInput<'AbovePrompt'>, m: KessokuM
       </Box>
     )
   }
-  const skip = () => {
-    void update($, memo, x => (x === null ? x : { ...x, status: 'skipped' as const }))
-    scheduleMemoClear($, 10)
-  }
   const Input = 'Input' in table ? table.Input : null
   const keep = (value: string) => void update($, memo, x => (x === null ? x : { ...x, rule: value.trim() || x.rule, status: 'open' as const }))
   return (
@@ -2237,7 +2244,7 @@ function drawMemo($: EngineInterface, e: RenderInput<'AbovePrompt'>, m: KessokuM
           <Button key="memo-save" label="Save to ./CLAUDE.md" hotkey="s" variant="primary" autoFocus onPress={() => void saveRule($, 'project')} />
           <Button key="memo-global" label="Global instead" hotkey="g" plain onPress={() => void saveRule($, 'global')} />
           {Input !== null ? <Button key="memo-edit" label="Edit" hotkey="e" plain onPress={() => void update($, memo, x => (x === null ? x : { ...x, status: 'editing' as const }))} /> : null}
-          <Button key="memo-skip" label="Skip" hotkey="k" plain dimColor onPress={skip} />
+          <Button key="memo-skip" label="Skip" hotkey="k" plain dimColor onPress={() => void skipRule($)} />
         </Box>
       </Box>
     </Box>
@@ -2618,6 +2625,10 @@ export const register: Register = (on, options) => {
       await update($, tree, x => ({ ...x, lights: [] }))
       await update($, memo, () => null)
       await update($, proposals, () => [])
+      if (memoTimer !== null) {
+        memoTimer.cancel()
+        memoTimer = null
+      }
     }
     return next(e)
   }).catch(($, e, next) => next(e))
