@@ -116,6 +116,14 @@ const MAX_TRACKS = 40
 const MAX_AGENTS = 24
 const MEASURE_CAP = 5000
 const HELD_PROMPT_MS = 15 * 60_000
+/** Below this many context tokens a cold send is too cheap to hold for, or to warn about. */
+const TAX_MIN_TOKENS = 20_000
+/** A set at least this long may have been left to play alone: its end is worth a notification. */
+const SET_AWAY_MS = 30_000
+/** The cache about to go cold is notified this long before it lapses (half the TTL when that is shorter). */
+const COLD_NOTICE_MS = 5 * 60_000
+/** What heads every native notification. */
+const NOTIFY_TITLE = 'Kessoku Band'
 
 function mainAgent(): KessokuAgent {
   return {
@@ -246,6 +254,8 @@ let memoTimer: Timer | null = null
 let pendingTracks: KessokuTrack[] = []
 /** The main conversation is being compacted: Bocchi melts, and nothing pings the cache meanwhile. */
 let isCompacting = false
+/** The warm period (its `lastWarmAt`) the cold-cache notice went out for, so it goes once per period. */
+let coldNoticeFor = 0
 
 /**
  * A sprite a terminal drawing holds as a Raster, repainted by the sprite
@@ -296,6 +306,22 @@ function toast($: EngineInterface, text: string, level: 'important' | 'chatter' 
   if (opts.toasts === 'none') return
   if (opts.toasts === 'important' && level === 'chatter') return
   $.ui.toast(text)
+}
+
+/**
+ * A native notification through the person's own channel (`$.ui.notify`),
+ * titled with the band, for the things worth coming back for. Silent when
+ * toasts are off; a channel that cannot send (the desktop app, an SDK host,
+ * notifications turned off) or a failed call reads as not sent, and the
+ * caller decides what else to show.
+ */
+async function notify($: EngineInterface, text: string): Promise<boolean> {
+  if (opts.toasts === 'none') return false
+  try {
+    return (await $.ui.notify(text, { title: NOTIFY_TITLE })).isSent
+  } catch {
+    return false
+  }
 }
 
 function isPersonPrompt(kind: string): boolean {
@@ -699,6 +725,25 @@ async function keepWarmTick($: EngineInterface): Promise<void> {
   }
 }
 
+/**
+ * The cache about to go cold while the session is idle and keepwarm is off:
+ * one notification a warm period, shortly before the TTL lapses, priced as
+ * the tax would be; a toast where no channel could send it. Keepwarm's own
+ * pings make it moot while they run.
+ */
+async function coldWatch($: EngineInterface): Promise<void> {
+  const c = await read($, cache)
+  const b = await read($, band)
+  const now = await $.clock.now()
+  if (c.lastWarmAt === 0 || c.lastWarmAt === coldNoticeFor || b.isWorking || isCompacting || c.keepWarmUntil > now || c.contextTokens < TAX_MIN_TOKENS) return
+  const ttl = ttlMs()
+  const left = ttl - (now - c.lastWarmAt)
+  if (left <= 0 || left > Math.min(COLD_NOTICE_MS, ttl / 2)) return
+  coldNoticeFor = c.lastWarmAt
+  const text = `Cache Tax: the cache goes cold in ${fmtDuration(left)} · re-writing ${fmtTokens(c.contextTokens)} tokens would cost ≈${fmtUsd(coldWriteUsd(c))} · /keepwarm keeps it warm`
+  if (!(await notify($, text))) toast($, `${MEMBERS.bocchi.faces.anxious} ${text}`)
+}
+
 function cacheTaxReason(c: KessokuCache, now: number): string {
   const age = c.lastWarmAt > 0 ? fmtDuration(now - c.lastWarmAt) : '?'
   return (
@@ -959,6 +1004,8 @@ async function holdForDecision($: EngineInterface, signal: AbortSignal, command:
     opened = true
     if (!placed.isPlaced) await update($, blast, s => (s === null ? s : { ...s, where: 'band' as const }))
     await setMood($, 'panic', 'the guitar is falling!! answer the screen')
+    // Someone away from the window is told: the screen waits ten minutes for an answer.
+    void notify($, `Blast Radius is holding ${risk.label}: it would ${summary}. Answer the dropped-guitar screen.`)
     const startedAt = await $.clock.now()
     while (mine.decision === null) {
       if (signal.aborted) {
@@ -2346,6 +2393,7 @@ async function startUi($: EngineInterface): Promise<void> {
 
   if (keepWarmTimer !== null) keepWarmTimer.cancel()
   keepWarmTimer = $.clock.every(60_000, () => {
+    void coldWatch($).catch(() => undefined)
     void keepWarmTick($)
   })
   if (b.mood === 'happy' || b.mood === 'panic' || b.mood === 'hiding') await revertMood($)
@@ -2535,6 +2583,11 @@ export const register: Register = (on, options) => {
       if (e.reason === 'answer' && !setlist.isOpen && canDraw()) suggestReplay($, tracks.length)
     }
     await update($, cache, c => ({ ...c, lastWarmAt: now }))
+    // A long set may have played to an empty room: its end is announced (an interrupted one had the person there).
+    if (e.durationMs >= SET_AWAY_MS && e.reason !== 'aborted') {
+      const took = fmtDuration(e.durationMs)
+      void notify($, e.reason === 'answer' ? `Nijika: the set is done after ${took}${edits > 0 ? ` · ${edits} ${edits === 1 ? 'edit' : 'edits'} on the setlist (/replay)` : ''}` : `Nijika: the set stopped on ${e.reason} after ${took}`)
+    }
     if (e.reason === 'answer') await setMood($, 'happy', `${MEMBERS.bocchi.lines.happy} ${fmtDuration(e.durationMs)}${edits > 0 ? ` · ${edits} ${edits === 1 ? 'edit' : 'edits'} on the setlist (/replay)` : ''}`, 6000)
     else if (e.reason === 'aborted') await setMood($, 'hiding', 'interrupted… hiding in the box', 8000)
     else await setMood($, 'panic', `the turn ended on ${e.reason}`, 8000)
@@ -2688,7 +2741,7 @@ export const register: Register = (on, options) => {
     // The one held prompt, re-sent in time, passes; anything else is judged afresh.
     const isResend = c.isArmed && now - c.heldAt < HELD_PROMPT_MS && (c.heldText === '' || c.heldText === text)
     if (c.isArmed) await update($, cache, x => ({ ...x, isArmed: false, heldAt: 0, heldText: '' }))
-    if (!isResend && !b.isWorking && canResend(e.origin.kind) && c.lastWarmAt > 0 && c.contextTokens >= 20_000 && now - c.lastWarmAt > ttlMs()) {
+    if (!isResend && !b.isWorking && canResend(e.origin.kind) && c.lastWarmAt > 0 && c.contextTokens >= TAX_MIN_TOKENS && now - c.lastWarmAt > ttlMs()) {
       hasSurface = hasSurface || (await $.session.surfaces().catch(() => [])).length > 0
       if (!canDraw()) return next(e)
       const heldUsd = coldWriteUsd(c)

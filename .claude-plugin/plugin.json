@@ -43,7 +43,7 @@
     "toasts": {
       "type": "string",
       "title": "Toasts",
-      "description": "Which band toasts to show: all (every subagent on and off stage), important (the guard, commits, the theme, a cold cache), or none",
+      "description": "Which band toasts to show: all (every subagent on and off stage), important (the guard, commits, the theme, a cold cache), or none. The native notifications (the guard holding a command, a long set done, the cache about to go cold) follow it: silent under none",
       "options": [
         "all",
         "important",

@@ -33,9 +33,9 @@ const PANE_PROPS = { title: 'x', isFocused: false, bodyColumns: 80, placement: '
 const BAND_PROPS = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 18 }, view: {} }
 
 type Entry = { name: string; kind: 'file' | 'dir'; size: number; mtimeMs: number; isLink: boolean }
-type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[]; suggested: string[] }
+type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[]; suggested: string[]; notified: { text: string; title: string | undefined }[] }
 /** What a test may vary in the engine beneath: one bottom per event, so the knobs live here. */
-type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string }
+type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string; notifyReason?: 'disabled' | 'no-channel' | 'no-surface' | 'refused' }
 const THEME_OPTION_LIGHT = 'Kessoku Bocchi Light (kessoku-ultimate-bocchi)'
 
 /** `C:\proj\x` and `/proj/x` are the same file to the engine's fs; the tests key by the forward-slash spelling. */
@@ -86,6 +86,11 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
   on('ui.toast', ($, e) => {
     seen.toasts.push(e.text)
     return { value: undefined }
+  })
+  // The person's notification channel: a terminal that takes them, or (a knob) one that cannot send.
+  on('ui.notify', ($, e) => {
+    seen.notified.push({ text: e.text, title: e.title })
+    return { value: a.notifyReason === undefined ? { isSent: true as const, channel: 'kitty' as const } : { isSent: false as const, reason: a.notifyReason } }
   })
   on('ui.open', ($, e) => {
     seen.opened.push(e.id)
@@ -192,7 +197,7 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
 }
 
 function fresh(): Seen {
-  return { commands: [], status: [], toasts: [], opened: [], closed: [], filled: [], written: {}, sleeps: 0, sleepers: [], forks: 0, configSets: [], theme: 'dark', asks: [], askAnswer: 'Not now', rendered: {}, blits: [], suggested: [] }
+  return { commands: [], status: [], toasts: [], opened: [], closed: [], filled: [], written: {}, sleeps: 0, sleepers: [], forks: 0, configSets: [], theme: 'dark', asks: [], askAnswer: 'Not now', rendered: {}, blits: [], suggested: [], notified: [] }
 }
 
 /** One warm main-thread turn, as the engine would report it: 300k tokens read from the cache. */
@@ -1970,4 +1975,87 @@ test('after a turn with edits the prompt box is offered /replay, Tab to take; a 
   expect(rows.suggestions.map(s => s.text)).toEqual(['theme', 'tax'])
   expect(rows.suggestions[0]?.description).toMatch(/theme/)
   expect((await autocomplete({ text: '/replay x', cursor: 9, token: 'x', start: 8 })).suggestions).toEqual([])
+})
+
+test('native notifications: the guard holding a command, a long set done, the cache about to go cold', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const knobs: Answers = {}
+  bottoms(on, clock, seen, knobs)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // The guard: told once the screen is up, with what the command would do.
+  const call = $.tool.call({ tool: 'Bash', command: 'rm -rf build' })
+  await clock.settle()
+  expect(seen.notified).toHaveLength(1)
+  expect(seen.notified[0]?.title).toBe('Kessoku Band')
+  expect(seen.notified[0]?.text).toBe('Blast Radius is holding rm -rf: it would delete 3 files (about 1.3 MB). Answer the dropped-guitar screen.')
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-blast-radius', props: PANE_PROPS })
+  await pane.press({ key: 'blast-cancel' })
+  await clock.advance(300)
+  expect((await call).deny).toMatch(/caught the guitar/)
+  await pane.unmount()
+  // A short set ends unannounced; a long one with edits is announced with its count.
+  await $.turn.start({ text: 'quick', turnId: 't1' })
+  await $.turn.complete({ turnId: 't1', answer: 'ok', durationMs: 3000, isAborted: false, reason: 'answer' })
+  expect(seen.notified).toHaveLength(1)
+  await $.turn.start({ text: 'long', turnId: 't2' })
+  const step = $.turn.step({ turnId: 't2', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })
+  for await (const chunk of step) void chunk
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/app.ts', old_string: 'greet(', new_string: 'welcome(' })
+  await $.turn.complete({ turnId: 't2', answer: 'done', durationMs: 72_000, isAborted: false, reason: 'answer' })
+  expect(seen.notified[1]?.text).toBe('Nijika: the set is done after 1:12 · 1 edit on the setlist (/replay)')
+  // Five minutes before the hour-long TTL lapses, idle and without keepwarm: told once, priced like the tax.
+  await clock.advance(54 * 60_000)
+  expect(seen.notified).toHaveLength(2)
+  await clock.advance(2 * 60_000)
+  expect(seen.notified).toHaveLength(3)
+  expect(seen.notified[2]?.text).toMatch(/^Cache Tax: the cache goes cold in 4:\d\d · re-writing 30[34]k tokens would cost ≈\$\d/)
+  expect(seen.notified[2]?.text).toMatch(/\/keepwarm keeps it warm$/)
+  await clock.advance(3 * 60_000)
+  expect(seen.notified).toHaveLength(3)
+  expect(seen.toasts.some(t => /goes cold/.test(t))).toBe(false)
+  // A set that stopped on an error is announced too; an interrupted one is not (the person was there).
+  await $.turn.start({ text: 'again', turnId: 't3' })
+  await $.turn.complete({ turnId: 't3', answer: '', durationMs: 40_000, isAborted: false, reason: 'error' })
+  expect(seen.notified[3]?.text).toBe('Nijika: the set stopped on error after 0:40')
+  await $.turn.start({ text: 'once more', turnId: 't4' })
+  await $.turn.complete({ turnId: 't4', answer: '', durationMs: 40_000, isAborted: true, reason: 'aborted' })
+  expect(seen.notified).toHaveLength(4)
+  // No channel (the desktop app): the cold-cache notice becomes a toast; the guard and the set keep their screens.
+  knobs.notifyReason = 'no-surface'
+  await clock.advance(56 * 60_000)
+  expect(seen.notified).toHaveLength(5)
+  expect(seen.toasts.filter(t => /goes cold/.test(t))).toHaveLength(1)
+  const held = $.tool.call({ tool: 'Bash', command: 'rm -rf build' })
+  await clock.settle()
+  expect(seen.notified).toHaveLength(6)
+  expect(seen.toasts.filter(t => /holding/.test(t))).toHaveLength(0)
+  const pane2 = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-blast-radius', props: PANE_PROPS })
+  await pane2.press({ key: 'blast-cancel' })
+  await clock.advance(300)
+  expect((await held).deny).toMatch(/caught the guitar/)
+  await pane2.unmount()
+})
+
+test('toasts none silences the notifications too', { options: { toasts: 'none', applyTheme: false } }, async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const call = $.tool.call({ tool: 'Bash', command: 'rm -rf build' })
+  await clock.settle()
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-blast-radius', props: PANE_PROPS })
+  await pane.press({ key: 'blast-cancel' })
+  await clock.advance(300)
+  expect((await call).deny).toMatch(/caught the guitar/)
+  await pane.unmount()
+  await $.turn.start({ text: 'long', turnId: 't1' })
+  const step = $.turn.step({ turnId: 't1', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })
+  for await (const chunk of step) void chunk
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 72_000, isAborted: false, reason: 'answer' })
+  await clock.advance(58 * 60_000)
+  expect(seen.notified).toEqual([])
+  expect(seen.toasts).toEqual([])
 })
