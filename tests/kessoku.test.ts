@@ -37,7 +37,7 @@ type Entry = { name: string; kind: 'file' | 'dir'; size: number; mtimeMs: number
 type Registered = { name: string; description: string; prompt?: string; tools?: readonly string[]; inputSchema?: Record<string, unknown>; isDeferred?: boolean }
 type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[]; suggested: string[]; notified: { text: string; title: string | undefined }[]; agents: Registered[]; tools: Registered[]; drafts: number }
 /** What a test may vary in the engine beneath: one bottom per event, so the knobs live here. */
-type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string; notifyReason?: 'disabled' | 'no-channel' | 'no-surface' | 'refused'; engineVersion?: string; noVersion?: boolean; refuseRegister?: boolean }
+type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string; notifyReason?: 'disabled' | 'no-channel' | 'no-surface' | 'refused'; engineVersion?: string; noVersion?: boolean; refuseRegister?: boolean; writeMs?: number }
 const THEME_OPTION_LIGHT = 'Kessoku Bocchi Light (kessoku-ultimate-bocchi)'
 
 /** `C:\proj\x` and `/proj/x` are the same file to the engine's fs; the tests key by the forward-slash spelling. */
@@ -143,7 +143,9 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
     const version = a.engineVersion ?? '2.1.299'
     return { value: { version, base: version } }
   })
-  on('fs.write', ($, e) => {
+  // A write lands at once, or (a knob) takes a while on this clock.
+  on('fs.write', async ($, e) => {
+    if (a.writeMs) await clock.sleep(a.writeMs)
     seen.written[key(e.path)] = e.text
     return { value: undefined }
   })
@@ -857,6 +859,28 @@ test('an answered memo clears alone: a newer memo stays up, in the same conversa
   await press('memo-save')
   await clock.advance(7000)
   expect(await shows(/band memo|saved to/)).toBe(false)
+})
+
+test('a memo that takes the card while Save writes stays open, unsaved; the written rule is the one saved', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen, { writeMs: 500 })
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: MEMO_TOOL, rule: 'Keep commits small.' })
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  await band.press({ key: 'memo-save' })
+  await band.unmount()
+  // A correction drafts the next memo while CLAUDE.md is still being written.
+  await $.prompt.submit(typed('no — in this repo we always use pnpm, not npm'))
+  await clock.advance(100)
+  await clock.advance(1000)
+  expect(seen.written['/proj/CLAUDE.md']).toContain('- Keep commits small.')
+  expect(seen.written['/proj/CLAUDE.md']).not.toContain('pnpm')
+  await clock.advance(7000)
+  const after = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await after.find({ type: 'Text', text: /"Always use pnpm instead of npm in this repository\."/ })).toBeDefined()
+  expect(await after.find({ type: 'Text', text: /saved to/ })).toBeUndefined()
+  await after.unmount()
 })
 
 test('edits land on the Replay Theater setlist with the tool\'s own line numbers, and light the file tree', async ($, on) => {

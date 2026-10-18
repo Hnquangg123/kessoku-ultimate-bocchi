@@ -1372,9 +1372,11 @@ async function saveRule($: EngineInterface, where: 'project' | 'global'): Promis
     toast($, `${MEMBERS.nijika.faces.panic} Nijika could not write ${path}: ${String((error as { message?: string })?.message ?? error).slice(0, 120)}`)
     return
   }
-  const saved = await update($, memo, x => (x === null ? x : { ...x, status: 'saved' as const, savedTo: path }))
+  // Marked saved only while the card still holds the rule just written: a memo that took it during the write stays open.
+  const isWritten = (x: KessokuMemo | null): x is KessokuMemo => x !== null && x.at === m.at && x.rule === m.rule
+  const saved = await update($, memo, x => (isWritten(x) ? { ...x, status: 'saved' as const, savedTo: path } : x))
   toast($, `${MEMBERS.nijika.faces.happy} Nijika wrote it down: ${path}`)
-  if (saved !== null) scheduleMemoClear($, saved, 6000)
+  if (isWritten(saved) && saved.status === 'saved') scheduleMemoClear($, saved, 6000)
 }
 
 async function skipRule($: EngineInterface): Promise<void> {
