@@ -7,7 +7,7 @@ import { FONT, FX, FX_INKS, FX_MINI, outlined } from './fx'
 import type { FxKind } from './fx'
 import { paletteClashes } from './parts'
 import type { Grid, HeadOffset, MemberArt, Palette, Patch, PoseDef, PoseName } from './types'
-import { H, MINI, PH, PW, W } from './types'
+import { H, MINI, PH, PW, SLIME_H, SLIME_W, W } from './types'
 
 /** A canvas: `[y][x]`, a `#rrggbb` color or null for transparent. */
 export type Pixels = (string | null)[][]
@@ -222,6 +222,44 @@ export function squash(px: Pixels, bend: number, n: number): Pixels {
     for (let x = 0; x < w; x += 1) {
       const c = src[x] ?? null
       if (c !== null) dst[x] = c
+    }
+  }
+  return out
+}
+
+/**
+ * A blob's squash (`n` rows) or stretch (`-n` rows), for the slimes, which
+ * have no bend row: the canvas's rows scaled about its bottom row, which stays
+ * planted. The rows that give are the plainest: each step drops (or doubles)
+ * the drawn row most like the one below it, the lowest of equals, so the belly
+ * takes it while the face, the outline and the feet hold. The rows above it
+ * move down (or up); a stretch past the top edge loses what leaves it. The
+ * drawing's own top and bottom rows never give.
+ */
+export function scaleRows(px: Pixels, n: number): Pixels {
+  if (n === 0) return px
+  const w = px[0]?.length ?? 0
+  const out = clone(px)
+  for (let k = 0; k < Math.abs(n); k += 1) {
+    const b = bounds(out)
+    if (b === null || b.maxY - b.minY < 2) break
+    let give = -1
+    let least = Infinity
+    for (let y = b.minY + 1; y < b.maxY; y += 1) {
+      const row = out[y] as (string | null)[]
+      const below = out[y + 1] as (string | null)[]
+      let d = 0
+      for (let x = 0; x < w; x += 1) if (row[x] !== below[x]) d += 1
+      if (d <= least) {
+        least = d
+        give = y
+      }
+    }
+    if (n > 0) {
+      for (let y = give; y > 0; y -= 1) out[y] = out[y - 1] as (string | null)[]
+      out[0] = Array.from({ length: w }, () => null as string | null)
+    } else {
+      for (let y = 0; y < give; y += 1) out[y] = (out[y + 1] as (string | null)[]).slice()
     }
   }
   return out
@@ -629,7 +667,9 @@ const RESERVED = /^[._=0-9'"\\` ]$/
  * differs between the poses, windows that miss the face or the peeking eyes,
  * sway overlays that do not fit stand, playA and playB, a palette key two
  * part files define with different colors, a mini rig that is not 16x16 or
- * whose overlays run off it, stick tips off the canvas.
+ * whose overlays run off it, stick tips off the canvas, a slime grid that
+ * does not fit its canvas below the bounce's row, and slime faces (Bocchi's
+ * awake and content) that differ outside their face region.
  */
 export function checkArt(art: MemberArt): string[] {
   const problems: string[] = []
@@ -706,6 +746,37 @@ export function checkArt(art: MemberArt): string[] {
         checkChars(`${label} ${name}`, grid, true)
         const { w, h } = gridSize(grid)
         if (ov.x < 0 || ov.y < 0 || ov.x + w > MINI || ov.y + h > MINI) problems.push(`${label} ${name}: ${w}x${h} at ${ov.x},${ov.y} runs off the ${MINI}x${MINI} mini`)
+      }
+    }
+  }
+  // The slime: whole grids on the slime canvas with its top row left for the bounce, Bocchi's two faces one body.
+  if (art.slime !== undefined) {
+    const { content, awake, face } = art.slime
+    const grids: [string, Grid][] = awake === undefined ? [['slime content', content]] : [['slime content', content], ['slime awake', awake]]
+    for (const [label, grid] of grids) {
+      checkChars(label, grid, false)
+      const { w, h } = gridSize(grid)
+      if (w === 0 || h === 0) problems.push(`${label}: empty`)
+      else if (w > SLIME_W || h > SLIME_H - 1) problems.push(`${label}: ${w}x${h} does not fit the ${SLIME_W}x${SLIME_H} slime canvas below its top row (the bounce's)`)
+    }
+    if (awake !== undefined && face === undefined) problems.push('slime awake: no face region says where it may differ from content')
+    if (awake !== undefined && face !== undefined) {
+      const a = gridSize(awake)
+      const c = gridSize(content)
+      if (face.x < 0 || face.y < 0 || face.w < 1 || face.h < 1 || face.x + face.w > c.w || face.y + face.h > c.h) problems.push(`slime face: ${face.w}x${face.h} at ${face.x},${face.y} is not inside the ${c.w}x${c.h} grid`)
+      if (a.w !== c.w || a.h !== c.h) {
+        problems.push(`slime awake: ${a.w}x${a.h} where content is ${c.w}x${c.h}, so they are not one body`)
+      } else {
+        let diff = 0
+        let first = ''
+        content.forEach((row, y) =>
+          [...row].forEach((ch, x) => {
+            if (ch === [...(awake[y] ?? '')][x] || (x >= face.x && x < face.x + face.w && y >= face.y && y < face.y + face.h)) return
+            diff += 1
+            if (first === '') first = ` (first at ${x},${y})`
+          }),
+        )
+        if (diff > 0) problems.push(`slime awake: differs from content in ${diff} pixels outside the face region (${face.w}x${face.h} at ${face.x},${face.y})${first}, so they are not one body`)
       }
     }
   }

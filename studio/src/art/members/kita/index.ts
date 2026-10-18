@@ -41,10 +41,11 @@ import * as mini from './mini'
 import * as palette from './palette'
 import * as panic from './panic'
 import * as play from './play'
+import * as slime from './slime'
 import * as stand from './stand'
 import * as sway from './sway'
 
-const { palette: merged, colorSources } = memberPalette({ palette, stand, play, crouch, cheer, panic, box, faces, sway, mini })
+const { palette: merged, colorSources } = memberPalette({ palette, stand, play, crouch, cheer, panic, box, faces, sway, mini, slime })
 
 /** One pixel of the stand's polish, at x, y on the stand: the old stand's character there, and the polished one. */
 type Touch = readonly [x: number, y: number, was: string, now: string]
@@ -149,4 +150,5 @@ export const kita: MemberArt = {
   head: stand.head,
   boxHead: box.boxHead,
   mini: mini.mini,
+  slime: slime.slime,
 }

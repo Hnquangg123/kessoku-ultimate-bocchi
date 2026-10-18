@@ -130,15 +130,15 @@ function topRow(art: MemberArt, pose: PoseName): number {
 type Lean = 'L' | 'R' | '-'
 
 /** A run in a track: a value held for so many frames. */
-type Run<T> = readonly [value: T, frames: number]
+export type Run<T> = readonly [value: T, frames: number]
 
 /** A track: its runs laid out frame by frame. */
-function track<T>(...runs: readonly Run<T>[]): T[] {
+export function track<T>(...runs: readonly Run<T>[]): T[] {
   return runs.flatMap(([v, n]) => Array.from({ length: n }, () => v))
 }
 
 /** A track of `n` frames, `rest` everywhere but the spans laid over it (from..to inclusive, on the loop's clock, wrapping past its end). */
-function spans<T>(n: number, rest: T, over: readonly (readonly [from: number, to: number, value: T])[]): T[] {
+export function spans<T>(n: number, rest: T, over: readonly (readonly [from: number, to: number, value: T])[]): T[] {
   const out = Array.from({ length: n }, () => rest)
   for (const [from, to, v] of over) {
     for (let k = 0, f = ((from % n) + n) % n; k < n; k += 1, f = (f + 1) % n) {

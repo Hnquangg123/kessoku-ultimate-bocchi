@@ -11,6 +11,13 @@ export type KessokuMember = 'bocchi' | 'nijika' | 'ryo' | 'kita'
 /** The expression a member's face shows. */
 export type KessokuMood = 'anxious' | 'focused' | 'happy' | 'panic' | 'melting' | 'hiding'
 
+/**
+ * What a subagent's slime shows: `active` while the act runs (a bounce),
+ * `idle` while it is pending or waiting (a breath), `asleep` once it is done,
+ * failed or killed (a doze, a z drifting up). Derived from the agent's status.
+ */
+export type KessokuSlimeState = 'active' | 'idle' | 'asleep'
+
 /** Token counts, summed over every response of one agent loop. */
 export type KessokuUsage = {
   input: number

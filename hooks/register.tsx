@@ -16,7 +16,9 @@
 //             and Bocchi's face in the status line.
 //   band      the Kessoku Band panel (`/kessoku`): subagents mapped to
 //             Nijika, Ryo and Kita by what they were asked, Bocchi for the
-//             main loop and heavy work, each with task, tokens, cost, status.
+//             main loop and heavy work, each with task, tokens, cost, status,
+//             and each drawn as a slime in its member's color (bouncing,
+//             breathing or asleep) on her card and in the strip.
 //   cache     Cache Tax: a cold prompt cache holds the next send once, with
 //             the re-write cost; `/keepwarm` pings keep it warm; `/cache-tax`.
 //   blast     Blast Radius: a risky Bash or PowerShell command (rm -rf,
@@ -83,6 +85,7 @@ import {
   meter,
   parseDuration,
   priceInfo,
+  slimeState,
 } from './lib/band'
 import { LIST_MAX, classify, classifyPowerShell, cleanArgs, globToRegExp, isGitCommit, size } from './lib/blast'
 import type { Risk } from './lib/blast'
@@ -90,7 +93,7 @@ import { cutHunks, patchToUnified, unifiedDiff } from './lib/diff'
 import type { Unified } from './lib/diff'
 import { appendRule, cleanRule, looksLikeCorrection, rulePrompt } from './lib/reflect'
 import { CRASH, CRASH_MINI, animOf, cellsFor, composite, encodeCells, frameSignature, isAnimated, spriteId, spritesSvg, viewSize } from './lib/sprite'
-import type { CellMode, SpritePart, SpriteView } from './lib/sprite'
+import type { CellMode, MemberView, SlimeView, SpritePart } from './lib/sprite'
 import { ALWAYS_IGNORED, IGNORED_DIRS, MAX_PATHS, baseName, isAnyHot, isGlowing, isInside, isLit, relPath, treeRows, windowRows } from './lib/tree'
 
 // ---- Names, atoms, options --------------------------------------------------
@@ -262,6 +265,13 @@ const SPRITE_TICK_MS = 100
 const SPRITE_RETRY_MS = 1000
 /** A passing site (a dialog) whose sprite has been refused this long is given up; a pane or the band is tried until it closes or redraws. */
 const SPRITE_GIVE_UP_MS = 60_000
+/** A finished act stays in the strip's row of slimes this long, asleep, then leaves. */
+const SLIME_TAIL_MS = 30_000
+/** The strip's row of slimes holds this many at most; the rest are counted `+n`. */
+const STRIP_SLIMES = 6
+/** The redraw that takes a sleeping act off the strip when its half minute is up (no state changes then), and when it is due. */
+let tailTimer: Timer | null = null
+let tailTimerAt = 0
 
 type Site = RenderInput<'Pane'> | RenderInput<'AbovePrompt'>
 type Draw = JSX.Element
@@ -1255,8 +1265,78 @@ function oneSprite(key: string, id: string, mode: CellMode, scale: number, alt: 
 }
 
 /** A member in a mood: her whole figure (96x96), the window over her head (32x32), or her hand-drawn mini head (16x16). */
-function memberSprite(key: string, member: KessokuMember, mood: KessokuMood, view: SpriteView, mode: CellMode, scale: number, bgColor?: string): SpriteSpec {
+function memberSprite(key: string, member: KessokuMember, mood: KessokuMood, view: MemberView, mode: CellMode, scale: number, bgColor?: string): SpriteSpec {
   return oneSprite(key, spriteId(member, mood, view), mode, scale, `${MEMBERS[member].name}, ${mood}`, bgColor)
+}
+
+/** What a slime's picture says: whose act it is and what it is doing. */
+function slimeAlt(a: KessokuAgent): string {
+  return `${MEMBERS[a.member].name}'s act, ${slimeState(a.status)}`
+}
+
+/**
+ * One act's slime, keyed by the act's id: the slime (36x24) one CSS pixel a
+ * pixel on a remote surface, its mini (18x12) in quadrants in a terminal
+ * (9x3 cells).
+ */
+function actSprite(a: KessokuAgent, isTerminal: boolean, bgColor?: string): SpriteSpec {
+  const view: SlimeView = isTerminal ? 'slime-mini' : 'slime'
+  return oneSprite(`slime-${a.id}`, spriteId(a.member, slimeState(a.status), view), 'quad', 1, slimeAlt(a), bgColor)
+}
+
+/**
+ * The acts the strip's row of slimes shows: every live act, and every act that
+ * ended less than SLIME_TAIL_MS ago (asleep), by the band's order and then
+ * when each came on stage; the live ones first when there are more than
+ * STRIP_SLIMES, the rest only counted. `nextTail` is when the first of the
+ * sleeping ones shown is due to leave (0 when none is).
+ */
+function stripActs(b: KessokuBand, now: number): { shown: KessokuAgent[]; more: number; nextTail: number } {
+  const order: readonly KessokuMember[] = ['bocchi', 'nijika', 'ryo', 'kita']
+  const byStage = (x: KessokuAgent, y: KessokuAgent) => order.indexOf(x.member) - order.indexOf(y.member) || x.startedAt - y.startedAt
+  const acts = b.agents.filter(a => a.id !== 'main')
+  const live = acts.filter(isLive).sort(byStage)
+  const resting = acts.filter(a => !isLive(a) && a.endedAt !== null && now - a.endedAt < SLIME_TAIL_MS).sort(byStage)
+  const all = [...live, ...resting]
+  const shown = all.slice(0, STRIP_SLIMES)
+  const leaving = shown.filter(a => !isLive(a)).map(a => (a.endedAt ?? now) + SLIME_TAIL_MS)
+  return { shown: shown.sort(byStage), more: all.length - shown.length, nextTail: leaving.length > 0 ? Math.min(...leaving) : 0 }
+}
+
+/**
+ * The strip's row of slimes as one picture, two pixels apart: the slimes on a
+ * remote surface, their minis in quadrants in a terminal (9x3 cells each).
+ */
+function stripSlimeSpec(acts: readonly KessokuAgent[], more: number, isTerminal: boolean): SpriteSpec {
+  const view: SlimeView = isTerminal ? 'slime-mini' : 'slime'
+  const { w, h } = viewSize(view)
+  const pitch = w + 2
+  const parts = acts.map((a, i) => ({ id: spriteId(a.member, slimeState(a.status), view), x: i * pitch, y: 0 }))
+  const alt = `Slimes on stage: ${acts.map(slimeAlt).join('; ')}${more > 0 ? `; and ${more} more` : ''}`
+  return { key: 'strip-slimes', parts, w: Math.max(0, acts.length * pitch - 2), h, mode: 'quad', scale: 1, bg: bg(), alt }
+}
+
+/** The acts on stage in words: `4 slimes on stage (3 playing, 1 waiting)`, or `0 on stage` (and without slimes, as before, `n on stage`). */
+function stageWords(b: KessokuBand): string {
+  const live = b.agents.filter(a => a.id !== 'main' && isLive(a))
+  if (opts.characterArt !== 'sprites' || live.length === 0) return `${live.length} on stage`
+  const playing = live.filter(a => a.status === 'running').length
+  return `${live.length} ${live.length === 1 ? 'slime' : 'slimes'} on stage (${playing} playing, ${live.length - playing} waiting)`
+}
+
+/**
+ * The redraw that lets a sleeping act leave the strip once its half minute is
+ * up, when nothing else changes then: one timer, for the first act due.
+ */
+function scheduleTail($: EngineInterface, at: number, now: number): void {
+  if (at <= 0 || (tailTimer !== null && tailTimerAt > now && tailTimerAt <= at)) return
+  if (tailTimer !== null) tailTimer.cancel()
+  tailTimerAt = at
+  tailTimer = $.clock.after(Math.max(1, at - now + 1), () => {
+    tailTimer = null
+    tailTimerAt = 0
+    $.ui.invalidate('ui.render')
+  })
 }
 
 /**
@@ -1273,6 +1353,12 @@ function headCells(mode: HeadMode): { columns: number; rows: number } {
   return cellsFor(w, h, mode)
 }
 
+/** The cells an act's slime takes in a terminal: its mini in quadrants (9x3). */
+function slimeCells(): { columns: number; rows: number } {
+  const { w, h } = viewSize('slime-mini')
+  return cellsFor(w, h, 'quad')
+}
+
 /** A member's head as `e`'s surface draws a small one: the mini in quadrants on a terminal (8x4 cells), the portrait elsewhere (32 CSS pixels). */
 function headSprite(key: string, e: RenderInput, member: KessokuMember, mood: KessokuMood, bgColor?: string): SpriteSpec {
   return memberSprite(key, member, mood, e.surface === 'terminal' ? 'mini' : 'portrait', 'quad', 1, bgColor)
@@ -1281,8 +1367,10 @@ function headSprite(key: string, e: RenderInput, member: KessokuMember, mood: Ke
 /**
  * The sprite as the surface `e` draws pictures: a Raster on the terminal
  * (its frame for now, then repainted by the sprite clock), an animated Svg on
- * the desktop, the editor and the phone. Null where art is off, the frames are
- * missing, or the surface has neither, so the caller draws the face as text.
+ * the desktop, the editor and the phone, in a Box under the Raster's key (an
+ * Svg carries none), so every picture is found by its key on every surface.
+ * Null where art is off, the frames are missing, or the surface has neither,
+ * so the caller draws the face as text.
  */
 function drawSprite($: EngineInterface, e: RenderInput, spec: SpriteSpec, now: number): Draw | null {
   if (opts.characterArt !== 'sprites' || spec.w === 0 || spec.parts.every(p => animOf(p.id) === undefined)) return null
@@ -1299,8 +1387,12 @@ function drawSprite($: EngineInterface, e: RenderInput, spec: SpriteSpec, now: n
   }
   const table = $.ui.resolve(e)
   if (!('Svg' in table)) return null
-  const { Svg } = table
-  return <Svg source={spritesSvg(spec.parts, spec.w, spec.h, spec.scale)} alt={spec.alt} width={spec.w * spec.scale} height={spec.h * spec.scale} isInteractive />
+  const { Box, Svg } = table
+  return (
+    <Box key={spec.key}>
+      <Svg source={spritesSvg(spec.parts, spec.w, spec.h, spec.scale)} alt={spec.alt} width={spec.w * spec.scale} height={spec.h * spec.scale} isInteractive />
+    </Box>
+  )
 }
 
 /** The clock that walks the terminal's sprites through their frames, while any is on screen. */
@@ -1398,11 +1490,15 @@ function panelSize(): { columns: number; rows: number } {
   return opts.characterArt === 'sprites' ? { columns: 64, rows: 28 } : { columns: 56, rows: 18 }
 }
 
-/** The rows a card's text takes: its header, Bocchi's two lines, a subagent's two (one above the prompt), the more and idle lines. */
-function cardTextRows(b: KessokuBand, member: KessokuMember, compact: boolean): number {
+/**
+ * The rows a card's text takes: its header, Bocchi's two lines, a subagent's two (one above the prompt), the more
+ * and idle lines. `actRows` is what a subagent's slime takes beside its lines where one is drawn (its rows when
+ * taller than the lines).
+ */
+function cardTextRows(b: KessokuBand, member: KessokuMember, compact: boolean, actRows = 0): number {
   const mine = b.agents.filter(a => a.member === member && a.id !== 'main').length
   const shown = Math.min(mine, compact ? 2 : 4)
-  return 1 + (member === 'bocchi' ? 2 : 0) + shown * (compact ? 1 : 2) + (mine > shown ? 1 : 0) + (member !== 'bocchi' && mine === 0 ? 1 : 0)
+  return 1 + (member === 'bocchi' ? 2 : 0) + shown * Math.max(compact ? 1 : 2, actRows) + (mine > shown ? 1 : 0) + (member !== 'bocchi' && mine === 0 ? 1 : 0)
 }
 
 /**
@@ -1412,14 +1508,15 @@ function cardTextRows(b: KessokuBand, member: KessokuMember, compact: boolean): 
  * cards scroll anyway, which dropping the heads would not stop), not at all
  * where even the quadrants would squeeze the text or add the scroll.
  * `cardRows` is each drawn card's text rows, `fixedRows` the panel's own
- * lines around them.
+ * lines around them; `tallRows`, where given, the cards' rows in the tall
+ * layout, whose acts each have their slime beside their lines.
  */
-function panelHead(bodyColumns: number, bodyRows: number, compact: boolean, cardRows: readonly number[], fixedRows: number): HeadMode | null {
+function panelHead(bodyColumns: number, bodyRows: number, compact: boolean, cardRows: readonly number[], fixedRows: number, tallRows: readonly number[] = cardRows): HeadMode | null {
   // The panel's own padding, then each card's border and padding.
   const inner = bodyColumns - (compact ? 0 : 2) - 4
   const textBeside = (mode: HeadMode) => inner - headCells(mode).columns - 1
-  const height = (spriteRows: number) => fixedRows + cardRows.reduce((n, rows) => n + 2 + Math.max(rows, spriteRows), 0)
-  if (!compact && textBeside('half') >= 34 && height(headCells('half').rows) <= bodyRows) return 'half'
+  const height = (spriteRows: number, rows: readonly number[] = cardRows) => fixedRows + rows.reduce((n, r) => n + 2 + Math.max(r, spriteRows), 0)
+  if (!compact && textBeside('half') >= 34 && height(headCells('half').rows, tallRows) <= bodyRows) return 'half'
   if (textBeside('quad') >= 24 && (height(headCells('quad').rows) <= bodyRows || height(0) > bodyRows)) return 'quad'
   return null
 }
@@ -1436,7 +1533,11 @@ function drawPanel($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache,
   // The title, the ctx line and the footer, the plan line and the last wrong note when they show.
   const fixedRows = 3 + (b.rateLimitPercent > 0 ? 1 : 0) + (b.lastError ? 1 : 0)
   const cardRows = members.filter(hasCard).map(member => cardTextRows(b, member, compact))
-  const head = e.surface === 'terminal' ? panelHead(e.props.bodyColumns, e.props.scroll.bodyRows, compact, cardRows, fixedRows) : null
+  // Each act is drawn as her slime (character art on): in a terminal's tall layout its mini in quadrants beside
+  // the act's two lines, three rows; where the cards are shorter, one glyph at the line's head.
+  const slimes = opts.characterArt === 'sprites'
+  const tallRows = members.filter(hasCard).map(member => cardTextRows(b, member, compact, slimes ? slimeCells().rows : 0))
+  const head = e.surface === 'terminal' ? panelHead(e.props.bodyColumns, e.props.scroll.bodyRows, compact, cardRows, fixedRows, tallRows) : null
 
   const memberBox = (member: KessokuMember) => {
     const m = MEMBERS[member]
@@ -1476,32 +1577,67 @@ function drawPanel($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache,
       const live = isLive(a)
       const mark = live ? note : a.isError ? '✖' : a.status === 'killed' ? '◌' : '✓'
       const age = fmtDuration((a.endedAt ?? now) - a.startedAt)
-      // The description takes what the mark, the status and the age leave.
-      const descMax = sprite === null ? Math.max(10, width - 30) : Math.max(10, textCols - 2 - textWidth(` ${a.status} ${age}`))
-      rows.push(
+      // The act's slime at the head of its row: a picture on a remote surface, and in a terminal where the cards are
+      // tall (the heads in half blocks); elsewhere in a terminal her color as one glyph, so no card grows for it.
+      const state = slimeState(a.status)
+      const picture = slimes && (e.surface !== 'terminal' || head === 'half') ? drawSprite($, e, actSprite(a, e.surface === 'terminal', bg(true)), now) : null
+      const glyph = slimes && picture === null && e.surface === 'terminal'
+      const beside = picture !== null && e.surface === 'terminal' ? slimeCells().columns + 1 : glyph ? 2 : 0
+      // The description takes what the slime, the mark, the status and the age leave.
+      const descMax = sprite === null ? Math.max(10, width - 30 - beside) : Math.max(10, textCols - beside - 2 - textWidth(` ${a.status} ${age}`))
+      const line = (
         <Text key={`a-${a.id}`} wrap="truncate-end">
+          {glyph ? (
+            <Text color={m.color} bold={state === 'active'} dimColor={state === 'asleep'}>
+              {'● '}
+            </Text>
+          ) : null}
           <Text color={live ? m.color : a.isError ? 'error' : 'inactive'} bold={live}>
             {mark} {a.description.slice(0, descMax)}
           </Text>
           <Text dimColor> {a.status} {age}</Text>
-        </Text>,
+        </Text>
       )
-      if (!compact) {
-        // The numbers before the task name: a cut takes the end of the name, never the cost.
-        rows.push(
-          <Text key={`s-${a.id}`} dimColor wrap="truncate-end">
-            {'   '}ctx {b.window > 0 ? Math.round((a.context / b.window) * 100) : 0}% · {fmtTokens(a.usage.input + a.usage.cacheRead + a.usage.cacheWrite + a.usage.output)} · ≈{fmtUsd(a.cost)} · {a.task || a.type}
-          </Text>,
-        )
+      // The numbers before the task name: a cut takes the end of the name, never the cost.
+      const stats = compact ? null : (
+        <Text key={`s-${a.id}`} dimColor wrap="truncate-end">
+          {'   '}ctx {b.window > 0 ? Math.round((a.context / b.window) * 100) : 0}% · {fmtTokens(a.usage.input + a.usage.cacheRead + a.usage.cacheWrite + a.usage.output)} · ≈{fmtUsd(a.cost)} · {a.task || a.type}
+        </Text>
+      )
+      if (picture === null) {
+        rows.push(line)
+        if (stats !== null) rows.push(stats)
+        continue
       }
+      rows.push(
+        <Box key={`act-${a.id}`} flexDirection="row" gap={1}>
+          {picture}
+          <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+            {line}
+            {stats}
+          </Box>
+        </Box>,
+      )
     }
     if (mine.length > shown.length) rows.push(<Text key="more" dimColor>{'   '}+ {mine.length - shown.length} more</Text>)
     if (member !== 'bocchi' && mine.length === 0) rows.push(<Text key="idle" dimColor wrap="truncate-end">no subagent on stage · {m.lines.anxious}</Text>)
+    // A chip on the name line counting her slimes on stage.
+    const onHerStage = mine.filter(isLive).length
+    const chip =
+      slimes && onHerStage > 0
+        ? [
+            ' ',
+            <Text key={`chip-${member}`} color={PALETTE.charcoal} backgroundColor={m.color} bold>
+              {` ${onHerStage} on stage `}
+            </Text>,
+          ]
+        : null
     if (sprite === null) {
       return (
         <Box key={`card-${member}`} flexDirection="column" borderStyle={compact ? 'single' : 'round'} borderColor={color} borderDimColor={mood === 'anxious'} paddingX={1} backgroundColor={bg(true)}>
           <Text wrap="truncate-end">
             <Text color={color} bold>{padFace(m.faces[mood])} {m.name}</Text>
+            {chip}
             <Text dimColor> · {m.instrument} · {m.role}</Text>
           </Text>
           {rows}
@@ -1515,6 +1651,7 @@ function drawPanel($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache,
           <Text wrap="truncate-end">
             <Text color={color} bold>{m.name}</Text>
             <Text color={color}> {mood}</Text>
+            {chip}
             <Text dimColor> · {m.instrument} · {m.role}</Text>
           </Text>
           {rows}
@@ -1557,7 +1694,7 @@ function drawPanel($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache,
  * surface the portraits, one CSS pixel a pixel.
  */
 function stripSpec(b: KessokuBand, members: readonly KessokuMember[], now: number, isTerminal: boolean): SpriteSpec {
-  const view: SpriteView = isTerminal ? 'mini' : 'portrait'
+  const view: MemberView = isTerminal ? 'mini' : 'portrait'
   const { w, h } = viewSize(view)
   const pitch = w + 2
   const parts = members.map((member, i) => ({ id: spriteId(member, memberMood(b, member, now), view), x: i * pitch, y: 0 }))
@@ -1565,40 +1702,78 @@ function stripSpec(b: KessokuBand, members: readonly KessokuMember[], now: numbe
   return { key: 'strip-sprites', parts, w: members.length * pitch - 2, h, mode: 'quad', scale: 1, bg: bg(), alt: `Kessoku Band: ${names}` }
 }
 
-function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: KessokuBand, c: KessokuCache, r: KessokuReplay, now: number, isRoomy: boolean): Draw {
+/**
+ * The strip above the prompt. With art on and the rows to spare, the heads are
+ * one picture with the band's line and the buttons beside it, and the acts on
+ * stage follow as a row of slimes (`stripActs`): beside the heads on a remote
+ * surface, under the minis in a terminal where `slimeRoom` says the band has
+ * the rows for them, as many as the width holds up to STRIP_SLIMES, then
+ * `+n`. Otherwise the one-line strip.
+ */
+function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: KessokuBand, c: KessokuCache, r: KessokuReplay, now: number, isRoomy: boolean, slimeRoom: boolean): Draw {
   const { Box, Text, Button } = $.ui.resolve(e)
   const members: KessokuMember[] = ['bocchi', 'nijika', 'ryo', 'kita']
-  const onStage = b.agents.filter(a => a.id !== 'main' && isLive(a)).length
+  const isTerminal = e.surface === 'terminal'
   const narrow = e.props.bodyColumns < 90
+  const words = stageWords(b)
   // With art on and the rows to spare: the heads as one picture, the band's line and the buttons beside it
   // (a narrow terminal keeps Bocchi alone); otherwise the one-line strip below.
-  const sprite = isRoomy ? drawSprite($, e, stripSpec(b, narrow && e.surface === 'terminal' ? ['bocchi'] : members, now, e.surface === 'terminal'), now) : null
+  const sprite = isRoomy ? drawSprite($, e, stripSpec(b, narrow && isTerminal ? ['bocchi'] : members, now, isTerminal), now) : null
   if (sprite !== null) {
+    const { shown, more, nextTail } = stripActs(b, now)
+    // In a terminal each slime is 10 columns with its gap, and `+n` wants 4 beside them.
+    const fits = isTerminal ? Math.max(0, Math.floor((e.props.bodyColumns - 5) / (slimeCells().columns + 1))) : STRIP_SLIMES
+    const acts = shown.slice(0, fits)
+    const extra = more + shown.length - acts.length
+    const slimePicture = acts.length > 0 && (!isTerminal || slimeRoom) ? drawSprite($, e, stripSlimeSpec(acts, extra, isTerminal), now) : null
+    if (slimePicture !== null) scheduleTail($, nextTail, now)
+    const slimeRow =
+      slimePicture === null ? null : (
+        <Box flexDirection="row" gap={1} alignItems="flex-end">
+          {slimePicture}
+          {extra > 0 ? <Text dimColor>{`+${extra}`}</Text> : null}
+        </Box>
+      )
+    const text = (
+      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+        <Text wrap="truncate-end">
+          <Text color={opts.accent} bold>♪ </Text>
+          {members.map((member, i) => {
+            const mood = memberMood(b, member, now)
+            return (
+              <Text key={`strip-name-${member}`} color={cardColor(mood, MEMBERS[member].color)} bold={mood === 'focused'}>
+                {i > 0 ? ' · ' : ''}
+                {MEMBERS[member].name}
+              </Text>
+            )
+          })}
+        </Text>
+        <Text dimColor wrap="truncate-end">
+          {words} · {fmtUsd(b.sessionUsd)} · {warmth(c, now)}
+        </Text>
+        <Box flexDirection="row" gap={2}>
+          {r.tracks.length > 0 && !r.isOpen ? <Button key="strip-replay" label={`Replay ${r.tracks.length}`} hotkey="r" plain onPress={() => void openReplay($)} /> : null}
+          <Button key="strip-panel" label="Panel" hotkey="k" plain onPress={() => void togglePanel($, true)} />
+          <Button key="strip-hide" label="Hide" hotkey="h" plain dimColor onPress={() => void update($, ui, x => ({ ...x, isStripHidden: true }))} />
+        </Box>
+      </Box>
+    )
+    if (isTerminal && slimeRow !== null) {
+      return (
+        <Box flexDirection="column" paddingX={1} backgroundColor={bg()}>
+          <Box flexDirection="row" gap={1}>
+            {sprite}
+            {text}
+          </Box>
+          {slimeRow}
+        </Box>
+      )
+    }
     return (
       <Box flexDirection="row" gap={1} paddingX={1} backgroundColor={bg()}>
         {sprite}
-        <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-          <Text wrap="truncate-end">
-            <Text color={opts.accent} bold>♪ </Text>
-            {members.map((member, i) => {
-              const mood = memberMood(b, member, now)
-              return (
-                <Text key={`strip-name-${member}`} color={cardColor(mood, MEMBERS[member].color)} bold={mood === 'focused'}>
-                  {i > 0 ? ' · ' : ''}
-                  {MEMBERS[member].name}
-                </Text>
-              )
-            })}
-          </Text>
-          <Text dimColor wrap="truncate-end">
-            {onStage} on stage · {fmtUsd(b.sessionUsd)} · {warmth(c, now)}
-          </Text>
-          <Box flexDirection="row" gap={2}>
-            {r.tracks.length > 0 && !r.isOpen ? <Button key="strip-replay" label={`Replay ${r.tracks.length}`} hotkey="r" plain onPress={() => void openReplay($)} /> : null}
-            <Button key="strip-panel" label="Panel" hotkey="k" plain onPress={() => void togglePanel($, true)} />
-            <Button key="strip-hide" label="Hide" hotkey="h" plain dimColor onPress={() => void update($, ui, x => ({ ...x, isStripHidden: true }))} />
-          </Box>
-        </Box>
+        {slimeRow}
+        {text}
       </Box>
     )
   }
@@ -1615,7 +1790,7 @@ function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: Kessoku
       })}
       <Box flexShrink={1} minWidth={8}>
         <Text dimColor wrap="truncate-end">
-          │ {onStage} on stage · {fmtUsd(b.sessionUsd)} · {warmth(c, now)}
+          │ {words} · {fmtUsd(b.sessionUsd)} · {warmth(c, now)}
         </Text>
       </Box>
       {r.tracks.length > 0 && !r.isOpen ? (
@@ -2007,10 +2182,11 @@ async function demoBand($: EngineInterface, on: boolean): Promise<string> {
   })
   await upsertAgent($, demo('nijika', 'nijika', 'Plan the auth refactor rollout', 'TaskCreate: 5 tasks', 'running', { input: 3000, output: 4200, cacheRead: 38000, cacheWrite: 2000 }, 48_000, null))
   await upsertAgent($, demo('ryo', 'ryo', 'Find every call site of legacyQuery()', 'Grep "legacyQuery"', 'running', { input: 1200, output: 2100, cacheRead: 61000, cacheWrite: 900 }, 17_000, null))
+  await upsertAgent($, demo('ryo2', 'ryo', 'Benchmark the cache warm-up', 'waiting on the build', 'waiting', { input: 400, output: 600, cacheRead: 9000, cacheWrite: 200 }, 26_000, null))
   await upsertAgent($, demo('kita', 'kita', 'Update README for the new CLI flags', 'Edit README.md', 'completed', { input: 900, output: 3800, cacheRead: 22000, cacheWrite: 500 }, 95_000, 4_000))
   await upsertAgent($, demo('kita2', 'kita', 'Polish the settings page styles', 'Edit src/settings.css', 'failed', { input: 700, output: 900, cacheRead: 15000, cacheWrite: 300 }, 160_000, 70_000, true))
   await update($, band, b => ({ ...b, sessionUsd: b.sessionUsd || 0.42, contextPercent: b.contextPercent || 34, window: b.window || 200_000 }))
-  return 'Kessoku Band: three demo acts are on stage (Nijika, Ryo, Kita ×2). `/bocchi demo off` clears them.'
+  return 'Kessoku Band: five demo acts are on stage (Nijika, Ryo ×2, Kita ×2): playing, waiting, done and failed, a slime each. `/bocchi demo off` clears them.'
 }
 
 async function demoMemo($: EngineInterface): Promise<string> {
@@ -2757,10 +2933,12 @@ export const register: Register = (on, options) => {
     if (t.isOpen && t.isBand) return stack(drawTree($, e, t, beat, now))
     if (u.isPanelOpen && u.panelWhere === 'band') return stack(drawPanel($, e, b, c, now, true))
     if (u.isStripHidden) return below
-    // The strip's heads take four rows on a terminal: only where the band has them to spare beside whatever stacks below.
+    // The strip's heads take four rows on a terminal: only where the band has them to spare beside whatever stacks below;
+    // the row of slimes under them three more, so seven in all.
     // The engine answers its own band as a bare engine reference: anything else is another mod's drawing.
     const hasBelow = below.type !== 'engine'
     const isRoomy = e.surface !== 'terminal' || e.props.maxRows >= (hasBelow ? 10 : 6)
-    return stack(drawStrip($, e, b, c, r, now, isRoomy))
+    const slimeRoom = e.surface !== 'terminal' || e.props.maxRows >= (hasBelow ? 11 : 7)
+    return stack(drawStrip($, e, b, c, r, now, isRoomy, slimeRoom))
   })
 }

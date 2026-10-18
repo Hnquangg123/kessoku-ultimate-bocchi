@@ -8,7 +8,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import type { KessokuMood } from '../types'
-import { memberFor, memberForTool, parseDuration, fmtTokens, fmtUsd, priceInfo, cacheWriteUsd, describeCall } from '../hooks/lib/band'
+import { memberFor, memberForTool, parseDuration, fmtTokens, fmtUsd, priceInfo, cacheWriteUsd, describeCall, slimeState } from '../hooks/lib/band'
 import { classify, classifyPowerShell, isGitCommit } from '../hooks/lib/blast'
 import { cutHunks, patchToUnified, unifiedDiff } from '../hooks/lib/diff'
 import { FACE_WIDTH, MEMBERS, SPINNER_WORDS_BY_MODE, THEME_OVERRIDES, TURN_WORDS, padFace, textWidth } from '../hooks/lib/palette'
@@ -885,6 +885,7 @@ test('/bocchi previews put every piece on screen', async ($, on) => {
 
 const SPRITE_MOODS = ['anxious', 'focused', 'happy', 'panic', 'melting', 'hiding'] as const
 const SPRITE_MEMBERS = ['bocchi', 'nijika', 'ryo', 'kita'] as const
+const SLIME_STATES = ['active', 'idle', 'asleep'] as const
 const BOCCHI_ANXIOUS = '(;´Д`)'
 const PALETTE_CHARS = Object.keys(SPRITE_COLORS)
 
@@ -1059,9 +1060,10 @@ test('sprites: every member has every mood whole, as a portrait and as a mini, a
   expect(viewSize('full')).toEqual({ w: 96, h: 96 })
   expect(viewSize('portrait')).toEqual({ w: 32, h: 32 })
   expect(viewSize('mini')).toEqual({ w: 16, h: 16 })
-  expect(Object.keys(SPRITES)).toHaveLength(SPRITE_MEMBERS.length * SPRITE_MOODS.length * 3 + 2)
+  // The figures in three views a mood, the slimes in two a state, and the two crashes.
+  expect(Object.keys(SPRITES)).toHaveLength(SPRITE_MEMBERS.length * SPRITE_MOODS.length * 3 + SPRITE_MEMBERS.length * SLIME_STATES.length * 2 + 2)
   for (const [id, anim] of Object.entries(SPRITES)) {
-    expect(id).toMatch(/^(bocchi|nijika|ryo|kita)-(anxious|focused|happy|panic|melting|hiding)(-portrait|-mini)?$|^fx-crash(-mini)?$/)
+    expect(id).toMatch(/^(bocchi|nijika|ryo|kita)-(anxious|focused|happy|panic|melting|hiding)(-portrait|-mini)?$|^(bocchi|nijika|ryo|kita)-slime-(active|idle|asleep)(-mini)?$|^fx-crash(-mini)?$/)
     expect(anim.frames.length).toBeGreaterThan(0)
     // Every frame holds a whole number of 100 ms beats and is spelled in the palette's characters, `.`, `=` and counts;
     // the first never leans on a frame before it.
@@ -1072,6 +1074,48 @@ test('sprites: every member has every mood whole, as a portrait and as a mini, a
       if (i === 0) expect(rle.includes('=')).toBe(false)
     })
   }
+})
+
+test('slimes: an act sleeps once it ends, breathes while it waits, bounces while it runs', async () => {
+  expect(slimeState('running')).toBe('active')
+  expect(slimeState('pending')).toBe('idle')
+  expect(slimeState('waiting')).toBe('idle')
+  expect(slimeState('idle')).toBe('idle')
+  expect(slimeState('completed')).toBe('asleep')
+  // A failed or killed act sleeps too: its row's words say why.
+  expect(slimeState('failed')).toBe('asleep')
+  expect(slimeState('killed')).toBe('asleep')
+})
+
+test('slimes: every member has every state as a slime and as its mini, the mini the slime halved', async () => {
+  expect(spriteId('ryo', 'active', 'slime')).toBe('ryo-slime-active')
+  expect(spriteId('kita', 'asleep', 'slime-mini')).toBe('kita-slime-asleep-mini')
+  expect(viewSize('slime')).toEqual({ w: 36, h: 24 })
+  expect(viewSize('slime-mini')).toEqual({ w: 18, h: 12 })
+  // The slime mini in quadrants: 9 x 3 cells, exactly.
+  expect(cellsFor(18, 12, 'quad')).toEqual({ columns: 9, rows: 3 })
+  for (const member of SPRITE_MEMBERS) {
+    const loops: number[] = []
+    for (const state of SLIME_STATES) {
+      const slime = animOf(spriteId(member, state, 'slime')) as SpriteAnim
+      const mini = animOf(spriteId(member, state, 'slime-mini')) as SpriteAnim
+      expect(slime).toMatchObject({ w: 36, h: 24 })
+      expect(mini).toMatchObject({ w: slime.w / 2, h: slime.h / 2 })
+      // The same loop, and the mini changes only where the slime does (it is drawn from it).
+      const big = frameStarts(slime)
+      const small = frameStarts(mini)
+      expect(small.total).toBe(big.total)
+      for (const t of small.starts) if (!big.starts.includes(t)) throw new Error(`${member} ${state}: the mini changes at ${t} ms where the slime does not`)
+      // Every state moves: a bounce, a breath, a doze.
+      expect(slime.frames.length).toBeGreaterThan(1)
+      loops.push(big.total)
+    }
+    // Asleep is the slowest, active the quickest.
+    expect(loops[0] as number).toBeLessThan(loops[1] as number)
+    expect(loops[1] as number).toBeLessThan(loops[2] as number)
+  }
+  // Each state's loop is one length for the band (one clock, one beat).
+  for (const state of SLIME_STATES) expect(new Set(SPRITE_MEMBERS.map(m => frameStarts(animOf(spriteId(m, state, 'slime')) as SpriteAnim).total)).size).toBe(1)
 })
 
 test('sprites: = runs copy the frame before, so the frames decode in order', { timeoutMs: 30_000 }, async () => {
@@ -1251,6 +1295,12 @@ test('sprites: every drawing fits the Svg element whole: each sprite, the strip 
     expect(strip.svg.length).toBeLessThanOrEqual(SVG_LIMIT)
     expect(strip.levels).toEqual([0, 0, 0, 0])
   }
+  // The strip's row of slimes at its fullest: six acts 38 apart, the six heaviest slimes the band has.
+  const slimeSize = (id: string) => spritesSvg([{ id, x: 0, y: 0 }], 36, 24, 1).length
+  const heaviestSlimes = SPRITE_MEMBERS.flatMap(m => SLIME_STATES.map(s => spriteId(m, s, 'slime'))).sort((p, q) => slimeSize(q) - slimeSize(p)).slice(0, 6)
+  const slimeRow = drawSvg(heaviestSlimes.map((id, i) => ({ id, x: i * 38, y: 0 })), 6 * 38 - 2, 24, 1)
+  expect(slimeRow.svg.length).toBeLessThanOrEqual(SVG_LIMIT)
+  expect(slimeRow.levels).toEqual([0, 0, 0, 0, 0, 0])
   // The guard screen on a remote surface: her whole figure, the crash tucked in at her feet.
   const blastDrawing = drawSvg([{ id: spriteId('bocchi', 'panic', 'full'), x: 0, y: 0 }, { id: CRASH, x: 84, y: 64 }], 180, 96, 1)
   expect(blastDrawing.svg.length).toBeLessThanOrEqual(SVG_LIMIT)
@@ -1560,21 +1610,222 @@ test('a desktop drawing of the same pane does not stop the terminal sprites, and
   await narrow.unmount()
 })
 
+// ---- The slimes: each act on stage (a subagent) as its member's slime ------------------------------------------
+
+/** The acts `/bocchi demo` seats, each with whose it is and the state its slime shows. */
+const DEMO_ACTS = {
+  'demo-nijika': ['nijika', 'active'],
+  'demo-ryo': ['ryo', 'active'],
+  'demo-ryo2': ['ryo', 'idle'],
+  'demo-kita': ['kita', 'asleep'],
+  'demo-kita2': ['kita', 'asleep'],
+} as const
+
+/** A slime mini as a tall panel's card draws it in a terminal: quadrants on the card's charcoal. */
+function slimeCells(member: (typeof SPRITE_MEMBERS)[number], state: (typeof SLIME_STATES)[number], t: number): string {
+  return encodeCells(composite([{ id: spriteId(member, state, 'slime-mini'), x: 0, y: 0 }], 18, 12, t), 18, 12, 'quad', '#26262c').cells
+}
+
+/** The props of the picture a remote surface's drawing holds under `key`: the Svg in the Box of that key. */
+async function svgUnder(drawing: { find: (q: { type?: string; key?: string }) => Promise<{ children: unknown[] } | undefined> }, key: string): Promise<Record<string, unknown> | undefined> {
+  const box = await drawing.find({ type: 'Box', key })
+  const svg = box?.children.find(c => typeof c === 'object' && c !== null && (c as { type?: unknown }).type === 'Svg') as { props?: Record<string, unknown> } | undefined
+  return svg?.props
+}
+
+test('every act on stage is a slime at the head of its row: an Svg on a remote surface, its mini in a tall terminal panel, a glyph in a short one', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  expect((await $.command.run(cmd('bocchi', 'demo'))).text).toMatch(/five demo acts/)
+  for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
+    const pane = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+    for (const [act, [member, state]] of Object.entries(DEMO_ACTS)) {
+      // At the head of the act's row, keyed by the act: one CSS pixel a pixel, the player's own drawing of her slime
+      // in that state, named for a reader.
+      const row = await pane.find({ type: 'Box', key: `act-${act}` })
+      expect((row?.children[0] as { type?: string; props?: { key?: string } } | undefined)?.props?.key).toBe(`slime-${act}`)
+      const svg = await svgUnder(pane, `slime-${act}`)
+      expect(svg).toMatchObject({ width: 36, height: 24, isInteractive: true, alt: `${MEMBERS[member].name}'s act, ${state}` })
+      expect(svg?.source).toBe(spritesSvg([{ id: spriteId(member, state, 'slime'), x: 0, y: 0 }], 36, 24, 1))
+    }
+    // Her figure is as it was, still the panel's first picture.
+    expect((await pane.find({ type: 'Svg' }))?.props).toMatchObject({ width: 96, height: 96 })
+    // A chip on the name line, in her color, counts her slimes on stage, the live ones: none for Kita, whose acts ended.
+    const chips = await pane.findAll({ type: 'Text', text: /^ \d+ on stage $/ })
+    expect(chips.map(chip => [chip.text, chip.props.backgroundColor])).toEqual([
+      [' 1 on stage ', MEMBERS.nijika.color],
+      [' 2 on stage ', MEMBERS.ryo.color],
+    ])
+    await pane.unmount()
+  }
+  // A tall terminal panel (the heads in half blocks): each act's slime mini in quadrants, 9 x 3 cells beside its lines.
+  const tall = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: { ...PANE_PROPS, scroll: { offset: 0, bodyRows: 50 } } })
+  expect((await tall.find({ type: 'Raster', key: 'sprite-ryo' }))?.props).toMatchObject({ columns: 16, rows: 8 })
+  for (const [act, [member, state]] of Object.entries(DEMO_ACTS)) {
+    const raster = (await tall.find({ type: 'Raster', key: `slime-${act}` }))?.props
+    expect(raster).toMatchObject({ columns: 9, rows: 3 })
+    expect(raster?.cells).toBe(slimeCells(member, state, 1_000_000))
+  }
+  expect(await tall.find({ type: 'Text', text: /legacyQuery/ })).toBeDefined()
+  expect(leaves(await tall.drawn()).some(line => line.startsWith('● '))).toBe(false)
+  expect(await tall.find({ type: 'Text', text: /^ 2 on stage $/ })).toBeDefined()
+  await tall.unmount()
+  // A short one (the heads in quadrants): no slime grows a card; her color as one glyph at the head of each act's line.
+  const short = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect((await short.find({ type: 'Raster', key: 'sprite-ryo' }))?.props).toMatchObject({ columns: 8, rows: 4 })
+  for (const act of Object.keys(DEMO_ACTS)) expect(await short.find({ type: 'Raster', key: `slime-${act}` })).toBeUndefined()
+  const lines = leaves(await short.drawn())
+  expect(lines.filter(line => line.startsWith('● '))).toHaveLength(Object.keys(DEMO_ACTS).length)
+  expect(lines.some(line => /^● \S Find every call site of legacyQuery/.test(line))).toBe(true)
+  expect(lines.some(line => /^● ✖ Polish the settings page/.test(line))).toBe(true)
+  const glyph = await short.find({ type: 'Text', text: /^● $/ })
+  expect(glyph?.props).toMatchObject({ color: MEMBERS.nijika.color })
+  await short.unmount()
+})
+
+test("a running act's slime moves from one beat to the next while a waiting act's holds still, repainted in place", async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.command.run(cmd('bocchi', 'demo'))
+  // Two beats where Ryo's running act has moved on screen and her waiting act has not.
+  const t1 = 1_000_000
+  const t2 = Array.from({ length: 48 }, (_, k) => t1 + 100 * (k + 1)).find(t => slimeCells('ryo', 'active', t) !== slimeCells('ryo', 'active', t1) && slimeCells('ryo', 'idle', t) === slimeCells('ryo', 'idle', t1))
+  expect(t2).toBeDefined()
+  const tall = { ...PANE_PROPS, scroll: { offset: 0, bodyRows: 50 } }
+  const drawn = async () => {
+    const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: tall })
+    const running = (await pane.find({ type: 'Raster', key: 'slime-demo-ryo' }))?.props.cells
+    const waiting = (await pane.find({ type: 'Raster', key: 'slime-demo-ryo2' }))?.props.cells
+    await pane.unmount()
+    return { running, waiting }
+  }
+  const before = await drawn()
+  await clock.advance((t2 as number) - t1)
+  const after = await drawn()
+  expect(after.running).not.toBe(before.running)
+  expect(after.running).toBe(slimeCells('ryo', 'active', t2 as number))
+  expect(after.waiting).toBe(before.waiting)
+  // While the pane shows them, the sprite clock repaints the slimes in place: no redraw.
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: tall })
+  const from = seen.blits.length
+  await clock.advance(3200)
+  expect(seen.blits.slice(from).some(x => x.requestId === 'kessoku-band' && x.key === 'slime-demo-ryo' && x.isTaken)).toBe(true)
+  expect(seen.blits.slice(from).some(x => x.key === 'slime-demo-kita' && x.isTaken)).toBe(true)
+  await pane.unmount()
+})
+
+test('the strip shows the acts on stage as slimes after the heads, a finished act asleep there for half a minute', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.command.run(cmd('bocchi', 'demo'))
+  // In the band's order, each member's oldest first: Nijika's run, Ryo's wait and run, and Kita's README, which ended
+  // 4 s ago (her act that failed 70 s ago has left the strip; it sleeps on her card).
+  const acts = [['nijika', 'active'], ['ryo', 'idle'], ['ryo', 'active'], ['kita', 'asleep']] as const
+  const alt = "Slimes on stage: Nijika's act, active; Ryo's act, idle; Ryo's act, active; Kita's act, asleep"
+  const words = /^3 slimes on stage \(2 playing, 1 waiting\) · \$0\.42 · /
+  const desk = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  // The heads first, then one picture of the slimes, two pixels apart, one CSS pixel a pixel.
+  expect((await desk.find({ type: 'Svg' }))?.props).toMatchObject({ width: 134, height: 32 })
+  const row = await svgUnder(desk, 'strip-slimes')
+  expect(row).toMatchObject({ width: 4 * 38 - 2, height: 24, isInteractive: true, alt })
+  expect(row?.source).toBe(spritesSvg(acts.map(([m, s], i) => ({ id: spriteId(m, s, 'slime'), x: i * 38, y: 0 })), 4 * 38 - 2, 24, 1))
+  expect(await desk.find({ type: 'Text', text: words })).toBeDefined()
+  expect(await desk.find({ type: 'Text', text: /^\+\d+$/ })).toBeUndefined()
+  await desk.unmount()
+  // A terminal: the minis in quadrants in one Raster under the heads (39 x 3 cells), on the strip's charcoal.
+  const term = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect((await term.find({ type: 'Raster', key: 'strip-sprites' }))?.props).toMatchObject({ columns: 35, rows: 4 })
+  const raster = (await term.find({ type: 'Raster', key: 'strip-slimes' }))?.props
+  expect(raster).toMatchObject({ columns: 39, rows: 3 })
+  expect(raster?.cells).toBe(encodeCells(composite(acts.map(([m, s], i) => ({ id: spriteId(m, s, 'slime-mini'), x: i * 20, y: 0 })), 78, 12, 1_000_000), 78, 12, 'quad', '#1b1b1f').cells)
+  // The heads' row first (their picture, the band's line, the buttons), the slimes' row under it.
+  const order = leaves(await term.drawn())
+  expect(order.indexOf('[raster]')).toBe(0)
+  expect(order.lastIndexOf('[raster]')).toBeGreaterThan(order.indexOf('[button:strip-hide]'))
+  expect(await term.find({ type: 'Text', text: words })).toBeDefined()
+  // Half a minute after it ended Kita's act leaves the strip, though nothing on stage changed: the strip redraws itself.
+  await clock.advance(25_000)
+  expect((await term.find({ type: 'Raster', key: 'strip-slimes' }))?.props).toMatchObject({ columns: 39 })
+  await clock.advance(1_200)
+  expect((await term.find({ type: 'Raster', key: 'strip-slimes' }))?.props).toMatchObject({ columns: 29, rows: 3 })
+  await term.unmount()
+  const later = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect((await svgUnder(later, 'strip-slimes'))?.alt).toBe("Slimes on stage: Nijika's act, active; Ryo's act, idle; Ryo's act, active")
+  await later.unmount()
+  // Her card keeps the act, asleep, as long as it lists it.
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect((await svgUnder(pane, 'slime-demo-kita'))?.alt).toBe("Kita's act, asleep")
+  await pane.unmount()
+  // A short band has no rows for the slimes under the heads: the count stays, in words.
+  const low = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: { ...BAND_PROPS, maxRows: 6, scroll: { offset: 0, bodyRows: 5 } } })
+  expect((await low.find({ type: 'Raster', key: 'strip-sprites' }))?.props).toMatchObject({ rows: 4 })
+  expect(await low.find({ type: 'Raster', key: 'strip-slimes' })).toBeUndefined()
+  expect(await low.find({ type: 'Text', text: words })).toBeDefined()
+  await low.unmount()
+  const oneLine = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: { ...BAND_PROPS, maxRows: 4, scroll: { offset: 0, bodyRows: 3 } } })
+  expect(await oneLine.find({ type: 'Raster' })).toBeUndefined()
+  expect(await oneLine.find({ type: 'Text', text: /^│ 3 slimes on stage \(2 playing, 1 waiting\) · / })).toBeDefined()
+  await oneLine.unmount()
+})
+
+test('the strip draws six slimes at most and counts the rest', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  on('classic.SubagentStart', () => ({}))
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // Eight searches at once: eight of Ryo's acts on stage.
+  for (let i = 1; i <= 8; i += 1) await $.classic.SubagentStart({ agent_id: `agent-${i}`, agent_type: 'Explore' })
+  const six = Array.from({ length: 6 }, (_, i) => ({ id: spriteId('ryo', 'active', 'slime'), x: i * 38, y: 0 }))
+  for (const surface of SURFACES) {
+    const strip = await $.ui.mount({ plugin: PLUGIN, surface, component: 'AbovePrompt', props: BAND_PROPS })
+    if (surface === 'terminal') {
+      expect((await strip.find({ type: 'Raster', key: 'strip-slimes' }))?.props).toMatchObject({ columns: 59, rows: 3 })
+    } else {
+      const picture = await svgUnder(strip, 'strip-slimes')
+      expect(picture).toMatchObject({ width: 6 * 38 - 2, height: 24 })
+      expect(picture?.source).toBe(spritesSvg(six, 6 * 38 - 2, 24, 1))
+      expect(String(picture?.alt)).toMatch(/Ryo's act, active; and 2 more$/)
+    }
+    expect(await strip.find({ type: 'Text', text: /^\+2$/ })).toBeDefined()
+    expect(await strip.find({ type: 'Text', text: /^8 slimes on stage \(8 playing, 0 waiting\) · / })).toBeDefined()
+    await strip.unmount()
+  }
+  // The panel's card lists four of them, each a slime, and counts the rest; the chip counts all eight.
+  const panel = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect((await panel.findAll({ type: 'Box' })).filter(box => box.key?.startsWith('slime-'))).toHaveLength(4)
+  expect(await panel.find({ type: 'Text', text: /\+ 4 more/ })).toBeDefined()
+  expect(await panel.find({ type: 'Text', text: /^ 8 on stage $/ })).toBeDefined()
+  await panel.unmount()
+})
+
 test('characterArt kaomoji keeps the text faces and draws no pictures', { options: { characterArt: 'kaomoji', applyTheme: false } }, async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
   bottoms(on, clock, seen)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // Acts on stage in every state, and still no slime anywhere: the rows and the count read as they always did.
+  await $.command.run(cmd('bocchi', 'demo'))
   for (const surface of SURFACES) {
     const panel = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
     expect(await panel.find({ type: 'Raster' })).toBeUndefined()
     expect(await panel.find({ type: 'Svg' })).toBeUndefined()
     expect(await panel.find({ type: 'Text', text: BOCCHI_ANXIOUS })).toBeDefined()
+    expect(await panel.find({ type: 'Text', text: /legacyQuery/ })).toBeDefined()
+    expect(leaves(await panel.drawn()).some(line => line.startsWith('● '))).toBe(false)
+    expect(await panel.find({ type: 'Text', text: /^ \d+ on stage $/ })).toBeUndefined()
     await panel.unmount()
     const strip = await $.ui.mount({ plugin: PLUGIN, surface, component: 'AbovePrompt', props: BAND_PROPS })
     expect(await strip.find({ type: 'Raster' })).toBeUndefined()
     expect(await strip.find({ type: 'Svg' })).toBeUndefined()
     expect(await strip.find({ type: 'Text', text: BOCCHI_ANXIOUS })).toBeDefined()
+    expect(await strip.find({ type: 'Text', text: /^│ 3 on stage · / })).toBeDefined()
     await strip.unmount()
   }
   // The guard screen keeps its ASCII guitar.

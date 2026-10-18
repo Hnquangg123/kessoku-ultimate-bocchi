@@ -20,14 +20,19 @@
 //             element loses frames (neighbours merged into longer holds), at
 //             worst down to a still of the first.
 
-import type { KessokuMember, KessokuMood } from '../../types'
+import type { KessokuMember, KessokuMood, KessokuSlimeState } from '../../types'
 import { SPRITES, SPRITE_COLORS } from './sprites.gen'
 import type { SpriteAnim } from './sprites.gen'
 
 export type { SpriteAnim }
 
-/** The whole figure (96x96), the window over the head (32x32), or the hand-drawn head the terminal shows (16x16). */
-export type SpriteView = 'full' | 'portrait' | 'mini'
+/** A member's figure, played by mood: the whole figure (96x96), the window over the head (32x32), or the hand-drawn head the terminal shows (16x16). */
+export type MemberView = 'full' | 'portrait' | 'mini'
+
+/** A member's slime, one an act on stage, played by state: the slime (36x24), or the slime halved (18x12) for the terminal's quadrants. */
+export type SlimeView = 'slime' | 'slime-mini'
+
+export type SpriteView = MemberView | SlimeView
 
 /**
  * How a terminal packs pixels into cells, a cell being about twice as tall as
@@ -66,16 +71,30 @@ export const SVG_LIMIT = 131_072
 const DEFAULT_COLOR = 0x01000000
 
 /** Each view's size as the studio draws it, for when no frames are there to say. */
-const NOMINAL: Readonly<Record<SpriteView, number>> = { full: 96, portrait: 32, mini: 16 }
-
-export function spriteId(member: KessokuMember, mood: KessokuMood, view: SpriteView = 'full'): string {
-  return view === 'full' ? `${member}-${mood}` : `${member}-${mood}-${view}`
+const NOMINAL: Readonly<Record<SpriteView, { w: number; h: number }>> = {
+  full: { w: 96, h: 96 },
+  portrait: { w: 32, h: 32 },
+  mini: { w: 16, h: 16 },
+  slime: { w: 36, h: 24 },
+  'slime-mini': { w: 18, h: 12 },
 }
 
-/** A view's size in pixels, read off the exported frames (every member's is the same), the studio's own when none are there. */
+export function isSlimeView(view: SpriteView): view is SlimeView {
+  return view === 'slime' || view === 'slime-mini'
+}
+
+/** A sprite's id: a member in a mood in a figure's view (`kita-happy-mini`), or her slime in a state (`ryo-slime-active-mini`). */
+export function spriteId(member: KessokuMember, mood: KessokuMood, view?: MemberView): string
+export function spriteId(member: KessokuMember, state: KessokuSlimeState, view: SlimeView): string
+export function spriteId(member: KessokuMember, moodOrState: KessokuMood | KessokuSlimeState, view: SpriteView = 'full'): string {
+  if (isSlimeView(view)) return view === 'slime' ? `${member}-slime-${moodOrState}` : `${member}-slime-${moodOrState}-mini`
+  return view === 'full' ? `${member}-${moodOrState}` : `${member}-${moodOrState}-${view}`
+}
+
+/** A view's size in pixels, read off the exported frames (every member's, mood's and state's is the same), the studio's own when none are there. */
 export function viewSize(view: SpriteView): { w: number; h: number } {
-  const anim = SPRITES[spriteId('bocchi', 'anxious', view)]
-  return anim === undefined ? { w: NOMINAL[view], h: NOMINAL[view] } : { w: anim.w, h: anim.h }
+  const anim = SPRITES[isSlimeView(view) ? spriteId('bocchi', 'active', view) : spriteId('bocchi', 'anxious', view)]
+  return anim === undefined ? NOMINAL[view] : { w: anim.w, h: anim.h }
 }
 
 export function animOf(id: string): SpriteAnim | undefined {

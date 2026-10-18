@@ -3,14 +3,16 @@
 // cells it would send into a PNG, each cell 8x16 pixels as a terminal draws
 // it, block elements and all. Per mood, frame 0: the full figure in quadrants
 // (48x24 cells), the portrait in quadrants (16x8) and in half blocks (32x16),
-// the mini in quadrants (8x4) and in half blocks (16x8); then the crash.
+// the mini in quadrants (8x4) and in half blocks (16x8); then the crash; then
+// per slime state its frame 0 in half blocks (36x12) and every distinct frame
+// of its mini in quadrants (9x3), as the panel's cards and the strip draw them.
 //
 //   node scripts/terminal.mjs [--gen <sprites.gen.ts>] [member...]   -> out/terminal/<member>.png
 
 import fs from 'node:fs'
 import path from 'node:path'
 import { PNG } from 'pngjs'
-import { MEMBERS, MOODS, OUT } from './studio.mjs'
+import { MEMBERS, MOODS, OUT, SLIME_STATES } from './studio.mjs'
 import { genArg, loadModSprites } from './mod.mjs'
 
 const { gen, rest } = genArg(process.argv.slice(2))
@@ -54,19 +56,22 @@ function paint(png, cells, columns, rows, ox, oy) {
     }
 }
 
-/** Draws sprite `id`'s frame 0 in `mode` at cell (col, row); returns the cells it took. */
-function draw(png, id, mode, col, row) {
+/** Draws sprite `id`'s frame `frame` (0 unless given) in `mode` at cell (col, row); returns the cells it took. */
+function draw(png, id, mode, col, row, frame = 0) {
   const anim = S.animOf(id)
   if (!anim || !ids.includes(id)) return { columns: 0, rows: 0 }
-  const e = S.encodeCells(S.framePixels(id, 0), anim.w, anim.h, mode)
+  const e = S.encodeCells(S.framePixels(id, frame), anim.w, anim.h, mode)
   paint(png, e.cells, e.columns, e.rows, col * CW, row * CH)
   return e
 }
 
+/** The slime rows: 12 for the half blocks, one between. */
+const SLIME_ROW = 13
+
 fs.mkdirSync(path.join(OUT, 'terminal'), { recursive: true })
 for (const member of members) {
   const width = (48 + 2 + 16 + 2 + 32 + 2 + 8 + 2 + 16) * CW
-  const height = (MOODS.length * 25 + 8 + 1) * CH
+  const height = (MOODS.length * 25 + 8 + 1 + SLIME_STATES.length * SLIME_ROW) * CH
   const png = new PNG({ width, height })
   for (let i = 0; i < png.data.length; i += 4) {
     png.data[i] = TERM_BG[0]
@@ -87,6 +92,14 @@ for (const member of members) {
   draw(png, 'fx-crash', 'quad', 0, crashRow)
   draw(png, 'fx-crash-mini', 'quad', 50, crashRow)
   draw(png, 'fx-crash-mini', 'half', 68, crashRow)
+  SLIME_STATES.forEach((state, k) => {
+    const row = crashRow + 9 + k * SLIME_ROW
+    const id = `${member}-slime-${state}`
+    draw(png, id, 'half', 0, row)
+    const mini = S.animOf(`${id}-mini`)
+    // Each distinct frame of the mini, ten columns apart: what the cards and the strip blit in turn.
+    for (let f = 0; mini !== undefined && f < Math.min(mini.frames.length, 8); f += 1) draw(png, `${id}-mini`, 'quad', 38 + f * 10, row, f)
+  })
   const file = path.join(OUT, 'terminal', `${member}.png`)
   fs.writeFileSync(file, PNG.sync.write(png))
   console.log(`wrote ${file}`)

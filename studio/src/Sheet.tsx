@@ -4,19 +4,24 @@ import type { CalculateMetadataFunction } from 'remotion'
 import { POSES, blank, checkArt, isPatched, resolvePose, stamp } from './art/compose'
 import type { Pixels } from './art/compose'
 import { ART } from './art/members'
-import type { FaceName, MemberArt, MemberId, PeekName, PoseDef } from './art/types'
+import type { FaceName, MemberArt, MemberId, PeekName, PoseDef, SlimeFace } from './art/types'
+import { SLIME_H, SLIME_W } from './art/types'
 import { MOODS, expand, sceneAt, tagFor } from './anim/moods'
 import type { Scene } from './anim/moods'
 import { drawScene } from './anim/scene'
+import { SLIME_MINI_H, SLIME_MINI_W, SLIME_STATES, drawSlimeScene, slimeFramesOf, slimeSceneAt } from './anim/slimes'
+import type { SlimeScene } from './anim/slimes'
 import { PixelCanvas } from './PixelCanvas'
 
 /**
  * A member's contact sheet, one still: every pose (3x), every face and peek on
  * the head (the 32x32 portrait window at 6x, its 16x16 mini beside it), the
  * mini rig's bare heads, the secondary motion (sway, squash, head offsets,
- * 2x), and every distinct frame of every mood (the full figure at 2x, the
- * portrait and the mini at 3x beside it) with how long it holds. checkArt's
- * problems head it, in red.
+ * 2x), every distinct frame of every mood (the full figure at 2x, the
+ * portrait and the mini at 3x beside it) with how long it holds, and her
+ * slime: its faces, squash, stretch and hop (6x, the mini beside), then every
+ * distinct frame of each state (4x, the mini beside). checkArt's problems
+ * head it, in red.
  * What an artist looks at while drawing: `node scripts/sheet.mjs <member>`.
  */
 
@@ -118,6 +123,37 @@ export function sheetSections(member: MemberId): Section[] {
       last = views
     }
     sections.push({ title: `${mood} · ${total} frames · ${total * 100} ms loop · ${cells.length} distinct`, cells })
+  }
+  if (art.slime !== undefined) {
+    const still = (face: SlimeFace, more: Partial<SlimeScene> = {}): SlimeScene => ({ face, squash: 0, stretch: 0, dy: 0, z: null, ...more })
+    const pair = (label: string, s: SlimeScene, scale: number): Cell => ({ label, main: { px: drawSlimeScene(art, s, 'slime'), scale }, side: [{ px: drawSlimeScene(art, s, 'slime-mini'), scale }] })
+    const faces: SlimeFace[] = art.slime.awake === undefined ? ['content'] : ['content', 'awake']
+    sections.push({
+      title: `the slime · ${SLIME_W}x${SLIME_H} at 6x, its mini (${SLIME_MINI_W}x${SLIME_MINI_H}, the slime halved) beside it at 6x`,
+      cells: faces.flatMap(face => [
+        pair(face, still(face), 6),
+        pair(`${face} · squash 1`, still(face, { squash: 1 }), 6),
+        pair(`${face} · stretch 1`, still(face, { stretch: 1 }), 6),
+        pair(`${face} · hop`, still(face, { dy: -1 }), 6),
+      ]),
+    })
+    for (const state of SLIME_STATES) {
+      const total = slimeFramesOf(art, state)
+      const cells: Cell[] = []
+      let last: { slime: Pixels; mini: Pixels } | null = null
+      let start = 0
+      for (let f = 0; f <= total; f += 1) {
+        const s = f < total ? slimeSceneAt(art, state, f) : null
+        const views = s === null ? null : { slime: drawSlimeScene(art, s, 'slime'), mini: drawSlimeScene(art, s, 'slime-mini') }
+        if (last !== null && (views === null || !same(views.slime, last.slime) || !same(views.mini, last.mini))) {
+          cells.push({ label: `f${start} ${(f - start) * 100}ms`, main: { px: last.slime, scale: 4 }, side: [{ px: last.mini, scale: 4 }] })
+          start = f
+        }
+        if (last === null) start = f
+        last = views
+      }
+      sections.push({ title: `slime ${state} · ${total} frames · ${total * 100} ms loop · ${cells.length} distinct`, cells })
+    }
   }
   return sections
 }

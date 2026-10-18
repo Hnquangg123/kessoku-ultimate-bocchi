@@ -13,6 +13,7 @@
 //   faces.ts    face                         the face overlays
 //   sway.ts     sway                         the hair's free ends a step left and right
 //   mini.ts     mini                         the 16x16 head for the terminal
+//   slime.ts    slime                        her blob form, one an act on stage (a subagent)
 //   extras.ts   guitarFlat, guitarTilt       Bocchi only: her guitar for the crash
 //
 // Any part may also export `colors`: palette entries of its own (a color the
