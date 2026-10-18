@@ -243,6 +243,8 @@ let keepWarmTimer: Timer | null = null
 let moodTimer: Timer | null = null
 let memoTimer: Timer | null = null
 let pendingTracks: KessokuTrack[] = []
+/** The main conversation is being compacted: Bocchi melts, and nothing pings the cache meanwhile. */
+let isCompacting = false
 
 /**
  * A sprite a terminal drawing holds as a Raster, repainted by the sprite
@@ -664,7 +666,7 @@ async function keepWarmTick($: EngineInterface): Promise<void> {
   const c = await read($, cache)
   const b = await read($, band)
   const now = await $.clock.now()
-  if (c.keepWarmUntil <= now || b.isWorking || c.lastWarmAt === 0 || c.contextTokens < 1000) return
+  if (c.keepWarmUntil <= now || b.isWorking || isCompacting || c.lastWarmAt === 0 || c.contextTokens < 1000) return
   const age = now - c.lastWarmAt
   const ttl = ttlMs()
   if (age < ttl - 90_000) return
@@ -704,6 +706,25 @@ function cacheTaxReason(c: KessokuCache, now: number): string {
     `(a warm turn would have cost ≈ ${fmtUsd(c.warmUsd)}). ` +
     `Your prompt is back in the box: press Enter again to pay it and send, or /clear and start from a note.`
   )
+}
+
+// ---- Compaction --------------------------------------------------------------
+
+/**
+ * A compaction of the main conversation stood: the band's context figure and
+ * the main agent's tokens are the compacted set's (0 when the engine did not
+ * count it, so no stale figure survives; the next turn measures afresh), the
+ * cache has no entry for the new transcript yet (nothing warm, the compacted
+ * size to price the next write, no held prompt, no engine estimate for a
+ * prefix that is gone), and Bocchi comes back to her real face.
+ */
+async function settleCompaction($: EngineInterface, before: number | undefined, after: number | undefined): Promise<void> {
+  const tokens = after ?? 0
+  await update($, band, b => patchAgent({ ...b, contextPercent: after !== undefined && b.window > 0 ? Math.round((after / b.window) * 100) : 0 }, 'main', a => ({ ...a, context: tokens })))
+  await update($, cache, c => ({ ...c, lastWarmAt: 0, contextTokens: tokens, isArmed: false, heldAt: 0, heldText: '', heldUsd: 0, warmUsd: 0, engineWriteUsd: 0, engineModel: '' }))
+  await revertMood($)
+  const shrank = before !== undefined && after !== undefined ? `: ${fmtTokens(before)} → ${fmtTokens(after)} tokens` : ''
+  toast($, `${MEMBERS.nijika.faces.happy} Nijika: the set is compacted${shrank}`, 'chatter')
 }
 
 // ---- Blast Radius ------------------------------------------------------------
@@ -2513,6 +2534,28 @@ export const register: Register = (on, options) => {
     await applyUsage($, e).catch(() => undefined)
     return next(e)
   })
+
+  // -- compaction: Bocchi melts while the set is compacted; afterwards the figures are the compacted set's ----
+  on('session.compact', async ($, e, next) => {
+    // A subagent's transcript, or the engine's precompute pass (it installs nothing): not the band's business.
+    if (e.agentId !== undefined || e.trigger === 'precompute') return next(e)
+    isCompacting = true
+    await setMood($, 'melting', 'compacting the set…').catch(() => undefined)
+    const r = await next(e).catch(async (error: unknown) => {
+      // The compaction failed: the engine says so; Bocchi only comes back.
+      isCompacting = false
+      await revertMood($).catch(() => undefined)
+      throw error
+    })
+    isCompacting = false
+    try {
+      if (r.skip === undefined) await settleCompaction($, r.tokensBefore, r.tokensAfter)
+      else await revertMood($)
+    } catch {
+      // the figures could not be reset here; the next measurement sets them
+    }
+    return r
+  }).catch(($, e, next) => next(e))
 
   on('classic.PostModelSwitch', async ($, e, next) => {
     // The engine's TTL wins only while the person kept the default; a configured TTL is theirs.

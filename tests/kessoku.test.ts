@@ -34,7 +34,7 @@ const BAND_PROPS = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumn
 type Entry = { name: string; kind: 'file' | 'dir'; size: number; mtimeMs: number; isLink: boolean }
 type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[] }
 /** What a test may vary in the engine beneath: one bottom per event, so the knobs live here. */
-type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean }
+type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string }
 const THEME_OPTION_LIGHT = 'Kessoku Bocchi Light (kessoku-ultimate-bocchi)'
 
 /** `C:\proj\x` and `/proj/x` are the same file to the engine's fs; the tests key by the forward-slash spelling. */
@@ -176,6 +176,12 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
   on('turn.complete', ($, e) => ({ text: e.answer }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.measure', ($, e) => ({ changed: e.changed }))
+  // The engine's own compaction: a summary that takes a while (on this clock), 180k tokens down to 12k, or a veto.
+  on('session.compact', async ($, e) => {
+    if (a.compactMs) await clock.sleep(a.compactMs)
+    if (a.compactSkip !== undefined) return { skip: a.compactSkip }
+    return { messages: [{ role: 'user' as const, text: `summary of ${e.messages.length} messages`, toolUses: [] }], tokensBefore: 180_000, tokensAfter: 12_000 }
+  })
 }
 
 function fresh(): Seen {
@@ -1837,4 +1843,63 @@ test('characterArt kaomoji keeps the text faces and draws no pictures', { option
   await blastT.unmount()
   await clock.advance(3000)
   expect(seen.blits).toHaveLength(0)
+})
+
+// ---- The v0.5.0 polish ---------------------------------------------------------------
+
+/** A conversation to compact: the engine refuses an empty one. */
+const TRANSCRIPT = [
+  { role: 'user' as const, text: 'where were we?', toolUses: [] },
+  { role: 'assistant' as const, text: 'renaming greet to welcome', toolUses: [] },
+]
+
+test('a compaction melts Bocchi in the strip, then the panel and Cache Tax read the compacted set', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const knobs: Answers = { compactMs: 3000 }
+  bottoms(on, clock, seen, knobs)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // A warm turn of 300k tokens, as Cache Tax books it; the panel reads the engine's 12%.
+  await $.turn.start({ text: 'warm up', turnId: 't1' })
+  const step = $.turn.step({ turnId: 't1', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })
+  for await (const chunk of step) void chunk
+  await $.turn.complete({ turnId: 't1', answer: 'ok', durationMs: 900, isAborted: false, reason: 'answer' })
+  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/cache warm/)
+  // /compact: while the engine summarizes (three seconds here), Bocchi melts in the strip and the status line.
+  const compacting = $.session.compact({ trigger: 'manual', messages: TRANSCRIPT })
+  await clock.settle()
+  expect(seen.status.at(-1)).toMatch(/compacting the set/)
+  const strip = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(moodsIn(String((await strip.find({ type: 'Svg' }))?.props.alt)).bocchi).toBe('melting')
+  await strip.unmount()
+  await clock.advance(3000)
+  const stood = await compacting
+  expect(stood.skip).toBeUndefined()
+  expect(seen.toasts.some(t => /the set is compacted: 180k → 12\.0k tokens/.test(t))).toBe(true)
+  expect(seen.status.at(-1)).not.toMatch(/compacting/)
+  // The panel's ctx is the compacted set over the window (12k of 200k), not the 12% the engine measured before (the
+  // desktop's drawing: a terminal's would start the sprite clock, which the hour below would have to tick through).
+  const panel = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect(await panel.find({ type: 'Text', text: /ctx .*6% · session/ })).toBeDefined()
+  await panel.unmount()
+  // Cache Tax: nothing is cached for the new transcript, and the next write is priced at the compacted size.
+  const report = (await $.command.run(cmd('cache-tax'))).text
+  expect(report).toMatch(/nothing cached yet/)
+  expect(report).toMatch(/12\.0k tokens/)
+  // An hour on, the send is not held: there is no cache entry to pay for (before the compaction it would have been).
+  await clock.advance(61 * 60_000)
+  const sent = await $.prompt.submit(typed('where were we?'))
+  expect(sent.drop).toBeUndefined()
+  expect(sent.text).toBe('where were we?')
+  // The precompute pass and a subagent's compaction leave the band alone; a vetoed one only brings Bocchi back.
+  knobs.compactMs = 0
+  const lines = seen.status.length
+  await $.session.compact({ trigger: 'precompute', messages: TRANSCRIPT })
+  await $.session.compact({ trigger: 'auto', agentId: 'agent-1', messages: TRANSCRIPT })
+  expect(seen.status.length).toBe(lines)
+  knobs.compactSkip = 'off'
+  const vetoed = await $.session.compact({ trigger: 'auto', messages: TRANSCRIPT })
+  expect(vetoed.skip).toBe('off')
+  expect(seen.status.at(-1)).not.toMatch(/compacting/)
 })
