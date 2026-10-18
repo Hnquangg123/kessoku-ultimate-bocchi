@@ -111,13 +111,24 @@ export type KessokuTree = {
   builtAt: number
 }
 
-/** Reflect: the band-manager memo Nijika drafts from a correction. */
+/** Reflect: the band-manager memo Nijika drafts from a correction, or holds for a rule Claude proposed through the memo tool. */
 export type KessokuMemo = {
   rule: string
+  /** The correction it was drafted from, or the proposal's own why. */
   original: string
   at: number
   status: 'drafting' | 'open' | 'editing' | 'saved' | 'skipped'
   savedTo: string
+  /** Who proposed the rule through the memo tool (Bocchi for the main loop); absent on a memo drafted from a correction. */
+  by?: KessokuMember
+}
+
+/** A rule proposed through the memo tool while another memo was up, waiting its turn on Nijika's card. */
+export type KessokuProposal = {
+  rule: string
+  why: string
+  by: KessokuMember
+  at: number
 }
 
 /** One track of the Replay Theater setlist: one file edit as a unified diff. */
@@ -157,6 +168,8 @@ declare module 'claude-code' {
       /** The shimmer's beat while a file is being edited: its own value, so only the tree pane redraws with it. */
       frame: number
       memo: KessokuMemo | null
+      /** Proposed rules queued behind the memo on screen, oldest first. */
+      proposals: KessokuProposal[]
       replay: KessokuReplay
       ui: KessokuUi
     }

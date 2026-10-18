@@ -30,7 +30,8 @@
 //   tree      Filetree (`/filetree`): the project's files, lit pink while
 //             Claude edits them, neon green once a git commit lands.
 //   reflect   a correction becomes a band memo from Nijika offering to save
-//             the rule to CLAUDE.md (project or global).
+//             the rule to CLAUDE.md (project or global); Claude can propose a
+//             rule itself through the memo tool, and the person still saves it.
 //   replay    Replay Theater (`/replay`): the last turn's edits as a setlist,
 //             one unified diff at a time, with the file's real line numbers.
 //   bocchi    `/bocchi theme|demo|memo|tax|crash|mood <m>|strip|help` previews
@@ -48,6 +49,7 @@ import type {
   KessokuMember,
   KessokuMemo,
   KessokuMood,
+  KessokuProposal,
   KessokuReplay,
   KessokuTrack,
   KessokuTree,
@@ -97,7 +99,7 @@ import { cutHunks, patchToUnified, unifiedDiff } from './lib/diff'
 import type { Unified } from './lib/diff'
 import { offLine, versionLine } from './lib/engine'
 import type { FeatureKey } from './lib/engine'
-import { appendRule, cleanRule, looksLikeCorrection, rulePrompt } from './lib/reflect'
+import { MEMO_QUEUE_MAX, MEMO_TOOL, MEMO_TOOL_SPEC, appendRule, checkRule, cleanRule, looksLikeCorrection, memoAnswer, rulePrompt } from './lib/reflect'
 import { completions } from './lib/typeahead'
 import { CRASH, CRASH_MINI, animOf, cellsFor, composite, encodeCells, frameSignature, isAnimated, spriteId, spritesSvg, viewSize } from './lib/sprite'
 import type { CellMode, MemberView, SlimeView, SpritePart } from './lib/sprite'
@@ -189,6 +191,7 @@ const blast = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'blast' } as const,
 const tree = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'tree' } as const, INITIAL_TREE)
 const frame = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'frame' } as const, 0)
 const memo = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'memo' } as const, null)
+const proposals = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'proposals' } as const, [] as KessokuProposal[])
 const replay = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'replay' } as const, INITIAL_REPLAY)
 const ui = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'ui' } as const, INITIAL_UI)
 
@@ -272,7 +275,7 @@ let modVersion = ''
  * (`session.compact`, `prompt.autocomplete`) cannot be gated: an engine that
  * does not know an event refuses the whole module at load.
  */
-const features: Record<FeatureKey, boolean> = { suggest: true, notify: true, version: true, agents: true }
+const features: Record<FeatureKey, boolean> = { suggest: true, notify: true, version: true, agents: true, memo: true }
 /** The band's agent types as the engine named them (`kessoku-ultimate-bocchi:ryo`), by member; filled at each session.start. */
 const bandTypes = new Map<string, string>()
 
@@ -522,6 +525,16 @@ async function registerBand($: EngineInterface): Promise<void> {
       }
       bandTypes.delete(spec.name)
     }
+  }
+}
+
+/** At each session.start, while reflect is on: the memo tool Claude proposes a rule through. A feature off when the engine has no `$.tool.register`. */
+async function registerMemoTool($: EngineInterface): Promise<void> {
+  if (!features.memo || !opts.reflect) return
+  try {
+    await $.tool.register(MEMO_TOOL_SPEC)
+  } catch (error) {
+    if (isMissingApi(error)) features.memo = false
   }
 }
 
@@ -1277,10 +1290,53 @@ async function draftMemo($: EngineInterface, original: string): Promise<void> {
   }
   if (rule === '') {
     await update($, memo, () => null)
+    await showNextProposal($)
     return
   }
   const now = await $.clock.now()
   await update($, memo, () => ({ rule, original, at: now, status: 'open' as const, savedTo: '' }))
+}
+
+/**
+ * The memo tool's call: Claude (or a band member, by her act) proposes a rule.
+ * Checked, then put on Nijika's card as an open memo with a byline, or queued
+ * behind the memo already up; nothing is written until the person presses
+ * Save. A refusal says why, and so does a session nobody can answer.
+ */
+async function proposeRule($: EngineInterface, input: Record<string, unknown>, agentId: string | undefined): Promise<{ result: string } | { deny: string }> {
+  if (!opts.reflect) return { deny: 'Kessoku memos are off (the reflect option in /config), so nothing was proposed. Say the rule in your reply if it matters.' }
+  const checked = checkRule(input.rule)
+  if ('why' in checked) return { deny: `Kessoku memo refused: ${checked.why}. Nothing was proposed.` }
+  if (!canDraw()) {
+    if ((await $.session.surfaces().catch(() => [])).length === 0) return { deny: 'Kessoku memo: nobody is at a screen to press Save in this session, so nothing was proposed. Say the rule in your reply instead.' }
+    hasSurface = true
+  }
+  const rule = checked.rule
+  const why = typeof input.why === 'string' ? input.why.replace(/\s+/g, ' ').trim().slice(0, 300) : ''
+  const by: KessokuMember = agentId === undefined ? 'bocchi' : ((await read($, band)).agents.find(a => a.id === agentId)?.member ?? 'bocchi')
+  const now = await $.clock.now()
+  const isSame = (other: string) => other.toLowerCase() === rule.toLowerCase()
+  const shown = await read($, memo)
+  if ((shown !== null && shown.status !== 'skipped' && isSame(shown.rule)) || (await read($, proposals)).some(p => isSame(p.rule))) return { result: memoAnswer('duplicate') }
+  const card: KessokuMemo = { rule, original: why, at: now, status: 'open', savedTo: '', by }
+  const up = await update($, memo, x => (x === null ? card : x))
+  if (up !== null && up.rule === card.rule && up.at === card.at && up.by === card.by) return { result: memoAnswer('open') }
+  if ((await read($, proposals)).length >= MEMO_QUEUE_MAX) return { deny: `Kessoku memo: ${MEMO_QUEUE_MAX} proposals already wait behind the memo on screen, so this one was not queued. Let the user catch up first.` }
+  const queue = await update($, proposals, x => [...x, { rule, why, by, at: now }])
+  return { result: memoAnswer('queued', queue.length) }
+}
+
+/** The oldest queued proposal onto Nijika's card, once the card is free. */
+async function showNextProposal($: EngineInterface): Promise<void> {
+  if ((await read($, memo)) !== null) return
+  const next = (await read($, proposals))[0]
+  if (next === undefined) return
+  await update($, proposals, x => x.filter(p => !(p.at === next.at && p.rule === next.rule)))
+  const now = await $.clock.now()
+  const card: KessokuMemo = { rule: next.rule, original: next.why, at: now, status: 'open', savedTo: '', by: next.by }
+  const up = await update($, memo, x => (x === null ? card : x))
+  // A memo got there first: the proposal goes back to the head of the queue.
+  if (up === null || up.rule !== card.rule || up.at !== card.at) await update($, proposals, x => [next, ...x])
 }
 
 async function saveRule($: EngineInterface, where: 'project' | 'global'): Promise<void> {
@@ -1318,7 +1374,10 @@ function scheduleMemoClear($: EngineInterface, ms: number): void {
   if (memoTimer !== null) memoTimer.cancel()
   memoTimer = $.clock.after(ms, () => {
     memoTimer = null
-    void update($, memo, () => null)
+    void (async () => {
+      await update($, memo, () => null)
+      await showNextProposal($)
+    })().catch(() => undefined)
   })
 }
 
@@ -2148,10 +2207,20 @@ function drawMemo($: EngineInterface, e: RenderInput<'AbovePrompt'>, m: KessokuM
     <Box flexDirection="row" gap={1} borderStyle="round" borderColor={n.color} paddingX={1} backgroundColor={bg()}>
       {sprite}
       <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-        <Text wrap="truncate-end">
-          <Text color={n.color} bold>{face(n.faces.focused)}NIJIKA · band memo</Text>
-          <Text dimColor> · "no, in this band we do it like this"</Text>
-        </Text>
+        {m.by === undefined ? (
+          <Text wrap="truncate-end">
+            <Text color={n.color} bold>{face(n.faces.focused)}NIJIKA · band memo</Text>
+            <Text dimColor> · "no, in this band we do it like this"</Text>
+          </Text>
+        ) : (
+          // A rule Claude proposed through the memo tool: the same card, signed by who proposed it.
+          <Text wrap="truncate-end">
+            <Text color={n.color} bold>{face(n.faces.focused)}NIJIKA · band memo</Text>
+            <Text dimColor> · proposed by </Text>
+            <Text color={MEMBERS[m.by].color}>{MEMBERS[m.by].name}</Text>
+            <Text dimColor> mid-set</Text>
+          </Text>
+        )}
         {m.status === 'editing' && Input !== null ? (
           <Input key="memo-rule" label="rule " value={m.rule} submitLabel="keep" autoFocus onSubmit={keep} />
         ) : (
@@ -2348,8 +2417,12 @@ async function demoBand($: EngineInterface, on: boolean): Promise<string> {
   return 'Kessoku Band: five demo acts are on stage (Nijika, Ryo ×2, Kita ×2): playing, waiting, done and failed, a slime each. `/bocchi demo off` clears them.'
 }
 
-async function demoMemo($: EngineInterface): Promise<string> {
+async function demoMemo($: EngineInterface, proposed: boolean): Promise<string> {
   const now = await $.clock.now()
+  if (proposed) {
+    await update($, memo, () => ({ rule: 'Use pnpm, not npm, for every script in this repository.', original: 'ran npm twice this session; package.json has a pnpm lockfile', at: now, status: 'open' as const, savedTo: '', by: 'bocchi' as const }))
+    return 'Reflect: a sample memo Claude proposed through the memo tool is above the prompt (Save writes a real line to CLAUDE.md).'
+  }
   await update($, memo, () => ({ rule: 'Always use pnpm instead of npm in this repository.', original: 'no — in this repo we always use pnpm, not npm', at: now, status: 'open', savedTo: '' }))
   return 'Reflect: a sample band memo is above the prompt (Save writes a real line to CLAUDE.md).'
 }
@@ -2427,8 +2500,8 @@ const HELP_LINES = [
   '/bocchi theme [on|off|status]   switch Claude Code\'s own theme to Kessoku Bocchi (the light twin on a light theme), or back',
   '/bocchi strip     hide or show the band strip above the prompt',
   '/bocchi mood <anxious|focused|happy|panic|melting|hiding>   try a face in the status line',
-  '/bocchi demo [off]   put sample acts on the panel · /bocchi memo · /bocchi tax · /bocchi crash · /bocchi setlist   previews',
-  'Blast Radius and Reflect need no command: a risky command or a correction brings them up.',
+  '/bocchi demo [off]   put sample acts on the panel · /bocchi memo [proposed] · /bocchi tax · /bocchi crash · /bocchi setlist   previews',
+  'Blast Radius and Reflect need no command: a risky command or a correction brings them up, and Claude can propose a rule itself with the memo tool (you still press Save).',
   "Band agent types: Claude can delegate to kessoku-ultimate-bocchi:nijika (plans, reviews, triage), :ryo (searches, shells, tests) and :kita (edits to named files); each act sits on its member's card by name.",
   'Config: /config → kessoku-ultimate-bocchi (engine theme, transcript skin, restyle other mods, toasts, accent, backgrounds, tool cards, spinner words, cache TTL, keepwarm, reflect, panel on start).',
 ]
@@ -2474,6 +2547,7 @@ async function startUi($: EngineInterface): Promise<void> {
   // A memo already answered, or a face set with a timer, does not survive the reload that lost the timer.
   const m = await read($, memo)
   if (m !== null && (m.status === 'saved' || m.status === 'skipped')) await update($, memo, () => null)
+  await showNextProposal($)
   const b = await read($, band)
   if (b.isWorking) ensureTick($)
 
@@ -2509,10 +2583,11 @@ export const register: Register = (on, options) => {
     await $.command.register({ name: 'replay', description: 'Replay Theater: step through the last turn\'s edits as a setlist' })
     await $.command.register({ name: 'keepwarm', description: 'Cache Tax: keep the prompt cache warm (e.g. /keepwarm 90m, /keepwarm off)', argumentHint: '[duration|off]' })
     await $.command.register({ name: 'cache-tax', description: 'Cache Tax: is the cache warm, and what would a cold send cost?' })
-    await $.command.register({ name: 'bocchi', description: 'Kessoku theme: help, the engine theme, previews, moods, the strip', argumentHint: '[help|theme on|off|strip|mood <m>|demo|memo|tax|crash|setlist]' })
+    await $.command.register({ name: 'bocchi', description: 'Kessoku theme: help, the engine theme, previews, moods, the strip', argumentHint: '[help|theme on|off|strip|mood <m>|demo|memo [proposed]|tax|crash|setlist]' })
     await readEngine($).catch(() => undefined)
-    // What the model can do with the band: delegate to a member by name.
+    // What the model can do with the band: delegate to a member by name, and propose a rule for Nijika's card.
     await registerBand($).catch(() => undefined)
+    await registerMemoTool($).catch(() => undefined)
     // The REPL has its screen now; a host like the desktop app attaches its client a moment later (session.attach);
     // a bare `claude -p` or SDK run never does, and the commands are enough for it.
     if (canDraw()) await startUi($)
@@ -2535,6 +2610,7 @@ export const register: Register = (on, options) => {
       await update($, replay, x => ({ ...INITIAL_REPLAY, setlist: x.setlist }))
       await update($, tree, x => ({ ...x, lights: [] }))
       await update($, memo, () => null)
+      await update($, proposals, () => [])
     }
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -2604,7 +2680,7 @@ export const register: Register = (on, options) => {
       case 'demo':
         return { text: await demoBand($, arg !== 'off') }
       case 'memo':
-        return { text: await demoMemo($) }
+        return { text: await demoMemo($, arg === 'proposed') }
       case 'tax':
         return { text: await demoTax($) }
       case 'crash':
@@ -2824,6 +2900,12 @@ export const register: Register = (on, options) => {
     return risky ? { deny: 'Kessoku Blast Radius: its guard failed while holding this risky command, so it did not run. Do not retry it unless the user asks you to.' } : next(e)
   })
 
+  // -- the memo tool: the mod's own tool, answered here (beneath the bookkeeping above); no Haiku call, the rule arrives written --
+  // The matcher is spelled out (it is MEMO_TOOL) so the host reads it off the source.
+  on('tool.call', { tool: 'mcp__kessoku-ultimate-bocchi__memo' }, async ($, e) => proposeRule($, e as unknown as Record<string, unknown>, e.agentId)).catch(() => ({
+    deny: 'Kessoku memo: Nijika dropped her pen, so nothing was proposed. Say the rule in your reply instead.',
+  }))
+
   // -- prompts: Cache Tax and Reflect --------------------------------------------
   on('prompt.submit', async ($, e, next) => {
     if (!isPersonPrompt(e.origin.kind)) return next(e)
@@ -2903,8 +2985,23 @@ export const register: Register = (on, options) => {
     const inner = await next(e)
     const tool = e.props.tool
     const isEdit = EDIT_TOOLS.has(tool)
-    if (opts.toolCards === 'none' || (opts.toolCards === 'edits' && !isEdit)) return inner
+    const isMemo = tool === MEMO_TOOL
+    if (opts.toolCards === 'none' || (opts.toolCards === 'edits' && !isEdit && !isMemo)) return inner
     const { Box, Text } = $.ui.resolve(e)
+    // The memo tool's row is Nijika's card title: a rule proposed, held for the person's Save.
+    if (isMemo) {
+      const n = MEMBERS.nijika
+      const tint = e.props.isErrored ? 'error' : n.color
+      return (
+        <Box flexDirection="column" borderStyle="round" borderColor={tint} borderDimColor={!e.props.isRunning && !e.props.isErrored} paddingX={1}>
+          <Text wrap="truncate-end">
+            <Text color={tint} bold>♪ kessoku memo · {e.props.isErrored ? 'sent back' : e.props.isRunning ? 'proposing a rule' : 'proposed a rule'}</Text>
+            <Text dimColor> · {e.props.isErrored ? `${n.faces.panic} Nijika could not take it` : `${n.faces.focused} Nijika holds it for Save`}</Text>
+          </Text>
+          {inner}
+        </Box>
+      )
+    }
     const m = MEMBERS[memberForTool(tool)]
     const color = e.props.isErrored ? 'error' : e.props.isRunning ? opts.accent : PALETTE.rose
     const state = e.props.isErrored ? 'wrong note' : e.props.isInterrupted ? 'cut off' : e.props.isRunning ? 'playing' : '♪'

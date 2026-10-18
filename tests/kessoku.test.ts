@@ -12,7 +12,7 @@ import { BAND_AGENTS, memberFor, memberForTool, parseDuration, fmtTokens, fmtUsd
 import { classify, classifyPowerShell, isGitCommit } from '../hooks/lib/blast'
 import { cutHunks, patchToUnified, unifiedDiff } from '../hooks/lib/diff'
 import { FACE_WIDTH, MEMBERS, SPINNER_WORDS_BY_MODE, THEME_OVERRIDES, TURN_WORDS, padFace, textWidth } from '../hooks/lib/palette'
-import { appendRule, cleanRule, looksLikeCorrection } from '../hooks/lib/reflect'
+import { MEMO_TOOL, MEMO_TOOL_SPEC, RULE_MAX, appendRule, checkRule, cleanRule, looksLikeCorrection, memoAnswer } from '../hooks/lib/reflect'
 import { completions } from '../hooks/lib/typeahead'
 import { isAtLeast, offLine, parseVersion } from '../hooks/lib/engine'
 import { CRASH, CRASH_MINI, SVG_LIMIT, animOf, base64, cellsFor, colorOf, composite, decodeCodes, decodeFrames, drawSvg, encodeCells, frameAt, framePixels, layerFrames, mergeTimeline, pixelsOf, spriteId, spritesSvg, viewSize } from '../hooks/lib/sprite'
@@ -34,8 +34,8 @@ const PANE_PROPS = { title: 'x', isFocused: false, bodyColumns: 80, placement: '
 const BAND_PROPS = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 18 }, view: {} }
 
 type Entry = { name: string; kind: 'file' | 'dir'; size: number; mtimeMs: number; isLink: boolean }
-type Registered = { name: string; description: string; prompt?: string; tools?: readonly string[] }
-type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[]; suggested: string[]; notified: { text: string; title: string | undefined }[]; agents: Registered[] }
+type Registered = { name: string; description: string; prompt?: string; tools?: readonly string[]; inputSchema?: Record<string, unknown>; isDeferred?: boolean }
+type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[]; suggested: string[]; notified: { text: string; title: string | undefined }[]; agents: Registered[]; tools: Registered[]; drafts: number }
 /** What a test may vary in the engine beneath: one bottom per event, so the knobs live here. */
 type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string; notifyReason?: 'disabled' | 'no-channel' | 'no-surface' | 'refused'; engineVersion?: string; noVersion?: boolean; refuseRegister?: boolean }
 const THEME_OPTION_LIGHT = 'Kessoku Bocchi Light (kessoku-ultimate-bocchi)'
@@ -112,11 +112,16 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
     seen.commands.push(e.name)
     return { value: { command: e.name } }
   })
-  // The band's agent types, named as the engine names a plugin's own; or (a knob) refused.
+  // The band's agent types and the memo tool, named as the engine names a plugin's own; or (a knob) refused.
   on('agent.register', ($, e) => {
     if (a.refuseRegister) throw new Error('refused by another plugin')
     seen.agents.push(e)
     return { value: { agent: `${PLUGIN}:${e.name}` } }
+  })
+  on('tool.register', ($, e) => {
+    if (a.refuseRegister) throw new Error('refused by another plugin')
+    seen.tools.push(e)
+    return { value: { tool: `mcp__${PLUGIN}__${e.name}` } }
   })
   on('config.list', () => ({
     value: [{ key: 'theme', label: 'Theme', kind: 'choice' as const, value: seen.theme, options: ['dark', 'light', THEME_OPTION, THEME_OPTION_LIGHT], provider: { plugin: 'engine', tier: 'core' as const }, isLocked: false }],
@@ -158,9 +163,10 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
     seen.filled.push(e.text)
     return { isFilled: true }
   })
-  on('model.complete', () => ({
-    value: { isAnswered: true as const, text: 'Always use pnpm instead of npm in this repository.', usage: { input_tokens: 100, output_tokens: 12, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
-  }))
+  on('model.complete', () => {
+    seen.drafts += 1
+    return { value: { isAnswered: true as const, text: 'Always use pnpm instead of npm in this repository.', usage: { input_tokens: 100, output_tokens: 12, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }
+  })
   on('process.run', async ($, e) => {
     const argv = e.argv
     const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
@@ -211,7 +217,7 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
 }
 
 function fresh(): Seen {
-  return { commands: [], status: [], toasts: [], opened: [], closed: [], filled: [], written: {}, sleeps: 0, sleepers: [], forks: 0, configSets: [], theme: 'dark', asks: [], askAnswer: 'Not now', rendered: {}, blits: [], suggested: [], notified: [], agents: [] }
+  return { commands: [], status: [], toasts: [], opened: [], closed: [], filled: [], written: {}, sleeps: 0, sleepers: [], forks: 0, configSets: [], theme: 'dark', asks: [], askAnswer: 'Not now', rendered: {}, blits: [], suggested: [], notified: [], agents: [], tools: [], drafts: 0 }
 }
 
 /** One warm main-thread turn, as the engine would report it: 300k tokens read from the cache. */
@@ -340,6 +346,7 @@ test('memberFor: the band takes the work by its kind', async () => {
   expect(memberForTool('Skill')).toBe('nijika')
   expect(memberForTool('mcp__github__create_issue')).toBe('ryo')
   expect(memberForTool('Edit')).toBe('kita')
+  expect(memberForTool(MEMO_TOOL)).toBe('nijika')
 })
 
 test('memberFor: a band agent type seats by name before any keyword runs; other types keep the tables', async () => {
@@ -386,6 +393,41 @@ test('the band agent types: three specs, each with a when-to-delegate line, a wh
   expect(ryo?.prompt).toMatch(/short lines/)
   expect(kita?.tools).toEqual(['Read', 'Edit', 'Write'])
   expect(kita?.prompt).toMatch(/every file you touched/)
+})
+
+test('the memo tool: its spec, the check a proposed rule passes, and what the call answers', async () => {
+  expect(MEMO_TOOL).toBe(`mcp__${PLUGIN}__${MEMO_TOOL_SPEC.name}`)
+  expect(MEMO_TOOL_SPEC.description).toMatch(/press Save/)
+  expect(MEMO_TOOL_SPEC.inputSchema.required).toEqual(['rule'])
+  expect(Object.keys(MEMO_TOOL_SPEC.inputSchema.properties)).toEqual(['rule', 'why'])
+  // Cleaned as it would be saved: spaces collapsed, a list marker or a matched pair of quotes dropped, a full stop added.
+  expect(checkRule('Use pnpm, not npm, for every script in this repository.')).toEqual({ rule: 'Use pnpm, not npm, for every script in this repository.' })
+  expect(checkRule('  - "Use   pnpm, not npm"  ')).toEqual({ rule: 'Use pnpm, not npm.' })
+  expect(checkRule('Name test files *.test.ts, e.g. Foo.test.ts.')).toEqual({ rule: 'Name test files *.test.ts, e.g. Foo.test.ts.' })
+  expect(checkRule('Run the build with v1.2. Never with v1.1.')).toHaveProperty('why')
+  expect(checkRule('Say "done."')).toEqual({ rule: 'Say "done."' })
+  // Refused, each with why.
+  const why = (input: unknown) => {
+    const r = checkRule(input)
+    return 'why' in r ? r.why : ''
+  }
+  expect(why('')).toMatch(/empty/)
+  expect(why(42)).toMatch(/empty/)
+  expect(why(undefined)).toMatch(/empty/)
+  expect(why('Use pnpm.\nNever npm.')).toMatch(/several lines/)
+  expect(why('Use pnpm. Never use npm.')).toMatch(/2 sentences/)
+  expect(why('Use pnpm! Then lint? Then test.')).toMatch(/3 sentences/)
+  expect(why('!!! ???')).toMatch(/no words/)
+  expect(why(`Always ${'x'.repeat(RULE_MAX)}`)).toMatch(new RegExp(`keep it under ${RULE_MAX}`))
+  expect('rule' in checkRule(`${'a'.repeat(RULE_MAX - 2)}.`)).toBe(true)
+  expect('rule' in checkRule(`${'a'.repeat(RULE_MAX - 1)}.`)).toBe(false)
+  // The answers say the rule is held, never written.
+  for (const kind of ['open', 'queued', 'duplicate'] as const) {
+    expect(memoAnswer(kind, 2)).toMatch(/^(Held|Already held) for the user/)
+    expect(memoAnswer(kind, 2)).toMatch(/Nothing is written until the user presses Save/)
+  }
+  expect(memoAnswer('queued', 2)).toMatch(/2 waiting/)
+  expect(describeCall(MEMO_TOOL, { rule: 'Use pnpm, not npm.' }, '/proj')).toBe('memo "Use pnpm, not npm."')
 })
 
 test('reflect: corrections are spotted, questions and chatter are not, rules cleaned and appended once', async () => {
@@ -457,10 +499,26 @@ test('session.start registers the commands, opens the panel and seats Bocchi in 
   expect(seen.commands.sort()).toEqual(['bocchi', 'cache-tax', 'filetree', 'keepwarm', 'kessoku', 'replay'])
   expect(seen.opened).toContain('kessoku-band')
   expect(seen.status.at(-1)).toMatch(/bocchi/)
-  // The band's agent types, for the model from the next turn on.
+  // The band's agent types and the memo tool, for the model from the next turn on.
   expect(seen.agents.map(a => a.name)).toEqual(['nijika', 'ryo', 'kita'])
   expect(seen.agents.map(a => a.tools)).toEqual(BAND_AGENTS.map(a => a.tools))
   expect(seen.agents.every(a => (a.prompt ?? '').length > 200)).toBe(true)
+  expect(seen.tools.map(t => t.name)).toEqual(['memo'])
+  expect(seen.tools[0]?.isDeferred).toBe(false)
+  expect(seen.tools[0]?.inputSchema).toMatchObject({ type: 'object', required: ['rule'] })
+})
+
+test('a headless run registers the band types and the memo tool too; reflect off leaves the tool out', { options: { reflect: false, applyTheme: false } }, async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: null, isInteractive: false })
+  expect(seen.agents.map(a => a.name)).toEqual(['nijika', 'ryo', 'kita'])
+  expect(seen.tools).toEqual([])
+  // Called anyway (a tool registered before the option changed): refused, nothing drafted, no card.
+  const call = await $.tool.call({ tool: MEMO_TOOL, rule: 'Use pnpm, not npm.' })
+  expect(call.deny).toMatch(/memos are off/)
+  expect(seen.drafts).toBe(0)
 })
 
 test('the engine theme is offered once, switched on when accepted, and restored by /bocchi theme off', async ($, on) => {
@@ -669,6 +727,95 @@ test('a correction becomes a band memo that Save writes to CLAUDE.md', async ($,
   expect(seen.written['/proj/CLAUDE.md']).toContain('- Always use pnpm instead of npm in this repository.')
   expect(seen.toasts.some(t => /Nijika wrote it down/.test(t))).toBe(true)
   await band.unmount()
+})
+
+test('the memo tool puts a proposed rule on Nijika\'s card with its byline, queues the next, and Save still writes', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'agent-kita' }))
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: 'run the checks', turnId: 't1' })
+  const proposed = await $.tool.call({ tool: MEMO_TOOL, rule: 'Use pnpm, not npm, for every script in this repository', why: 'ran npm twice; package.json has a pnpm lockfile' })
+  expect(proposed.deny).toBeUndefined()
+  expect(String(proposed.result)).toMatch(/^Held for the user: Nijika's memo card is up/)
+  expect(String(proposed.result)).toMatch(/Nothing is written until the user presses Save/)
+  // The rule arrived written: no Haiku call, and nothing on disk yet.
+  expect(seen.drafts).toBe(0)
+  expect(seen.written['/proj/CLAUDE.md']).toBeUndefined()
+  for (const surface of SURFACES) {
+    const band = await $.ui.mount({ plugin: PLUGIN, surface, component: 'AbovePrompt', props: BAND_PROPS })
+    expect(await band.find({ type: 'Text', text: /NIJIKA · band memo/ })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: /^ · proposed by $/ })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: /^Bocchi$/ })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: /^ mid-set$/ })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: /"Use pnpm, not npm, for every script in this repository\."/ })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: /no, in this band/ })).toBeUndefined()
+    await band.unmount()
+  }
+  // While the card is up: a second proposal (from Kita's act) waits, the same rule again is already held, a ramble is refused.
+  await $.agent.spawn({ tool_use_id: 'tu-kita', prompt: 'Fix the README typo.', description: 'Fix the README typo', subagentType: 'kessoku:kita', provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-sonnet-5-5', background: false, fork: false })
+  const queued = await $.tool.call({ tool: MEMO_TOOL, rule: 'Keep README headings in sentence case.', agentId: 'agent-kita' })
+  expect(String(queued.result)).toMatch(/queued behind the memo already on screen \(1 waiting\)/)
+  expect(String((await $.tool.call({ tool: MEMO_TOOL, rule: 'use pnpm, not npm, for every script in this repository.' })).result)).toMatch(/^Already held/)
+  expect((await $.tool.call({ tool: MEMO_TOOL, rule: 'Use pnpm. Never use npm.' })).deny).toMatch(/refused: the rule reads as 2 sentences/)
+  expect((await $.tool.call({ tool: MEMO_TOOL, rule: `Always ${'x'.repeat(150)}` })).deny).toMatch(/keep it under 140/)
+  expect((await $.tool.call({ tool: MEMO_TOOL })).deny).toMatch(/the rule is empty/)
+  // Save writes the proposed rule as Reflect's own would be written.
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  await band.press({ key: 'memo-save' })
+  await clock.settle()
+  expect(seen.written['/proj/CLAUDE.md']).toContain('## Band notes (from Reflect)\n- Use pnpm, not npm, for every script in this repository.')
+  expect(seen.toasts.some(t => /Nijika wrote it down/.test(t))).toBe(true)
+  await band.unmount()
+  // Once the saved card clears, the queued proposal takes the card, signed by Kita.
+  await clock.advance(7000)
+  const next = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await next.find({ type: 'Text', text: /Keep README headings in sentence case/ })).toBeDefined()
+  expect(await next.find({ type: 'Text', text: /^Kita$/ })).toBeDefined()
+  await next.press({ key: 'memo-skip' })
+  await clock.advance(100)
+  expect(seen.written['/proj/CLAUDE.md']).not.toContain('sentence case')
+  await next.unmount()
+  // The tool row carries Nijika's card title.
+  for (const surface of SURFACES) {
+    const row = await $.ui.mount({ plugin: PLUGIN, surface, component: 'ToolUse', requestId: 'tu-memo', props: { tool_use_id: 'tu-memo', tool: MEMO_TOOL, input: { rule: 'Use pnpm.' }, isRunning: false, isErrored: false, isInterrupted: false } })
+    expect(await row.find({ type: 'Text', text: /♪ kessoku memo · proposed a rule/ })).toBeDefined()
+    expect(await row.find({ type: 'Text', text: /Nijika holds it for Save/ })).toBeDefined()
+    expect((await row.drawn()).type).toBe('Box')
+    await row.unmount()
+    const refused = await $.ui.mount({ plugin: PLUGIN, surface, component: 'ToolUse', requestId: 'tu-memo2', props: { tool_use_id: 'tu-memo2', tool: MEMO_TOOL, input: { rule: 'x' }, isRunning: false, isErrored: true, isInterrupted: false } })
+    expect(await refused.find({ type: 'Text', text: /kessoku memo · sent back/ })).toBeDefined()
+    await refused.unmount()
+  }
+  // /bocchi memo proposed previews the signed card.
+  expect((await $.command.run(cmd('bocchi', 'memo proposed'))).text).toMatch(/proposed through the memo tool/)
+  const preview = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await preview.find({ type: 'Text', text: /^ · proposed by $/ })).toBeDefined()
+  await preview.unmount()
+})
+
+test('a memo nobody can answer is refused; once a client attaches, it opens', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  on('session.attach', ($, e) => ({ clientId: e.clientId }))
+  await $.session.start({ cwd: '/proj', surface: null, isInteractive: false })
+  expect(seen.tools.map(t => t.name)).toEqual(['memo'])
+  const alone = await $.tool.call({ tool: MEMO_TOOL, rule: 'Use pnpm, not npm.' })
+  expect(alone.deny).toMatch(/nobody is at a screen to press Save/)
+  await $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+  const seen2 = await $.tool.call({ tool: MEMO_TOOL, rule: 'Use pnpm, not npm.' })
+  expect(String(seen2.result)).toMatch(/memo card is up/)
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await band.find({ type: 'Text', text: /"Use pnpm, not npm\."/ })).toBeDefined()
+  await band.unmount()
+  // /clear forgets the card and the queue.
+  await $.tool.call({ tool: MEMO_TOOL, rule: 'Keep commits small.' })
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  const after = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await after.find({ type: 'Text', text: /band memo/ })).toBeUndefined()
+  await after.unmount()
 })
 
 test('edits land on the Replay Theater setlist with the tool\'s own line numbers, and light the file tree', async ($, on) => {
@@ -2030,6 +2177,8 @@ test('typeahead: /bocchi and /keepwarm complete their next word, and nothing els
   expect(texts('/bocchi theme o')).toEqual(['on', 'off'])
   expect(texts('/bocchi mood h')).toEqual(['happy', 'hiding'])
   expect(texts('/bocchi demo o')).toEqual(['off'])
+  expect(texts('/bocchi memo p')).toEqual(['proposed'])
+  expect(texts('/bocchi memo proposed x')).toEqual([])
   expect(texts('/bocchi tax x')).toEqual([])
   expect(texts('/bocchi theme on x')).toEqual([])
   expect(texts('/keepwarm')).toEqual(['/keepwarm 30m', '/keepwarm 1h', '/keepwarm 2h', '/keepwarm off'])
@@ -2187,13 +2336,15 @@ test('/bocchi help opens with the mod and engine versions, and names what this e
   expect(isAtLeast('3.0.0', '2.1.287')).toBe(true)
   expect(isAtLeast('2.10.0', '2.9.9')).toBe(true)
   expect(isAtLeast('', '2.1.287')).toBe(false)
-  const allOn = { suggest: true, notify: true, version: true, agents: true }
+  const allOn = { suggest: true, notify: true, version: true, agents: true, memo: true }
   expect(offLine(allOn)).toBe('')
   expect(offLine({ ...allOn, notify: false })).toBe('off on this engine: native notifications (no $.ui.notify)')
   expect(offLine({ ...allOn, suggest: false, version: false })).toBe('off on this engine: the Replay suggestion (no $.prompt.suggest), the engine version (no $.session.version)')
-  expect(offLine({ ...allOn, agents: false })).toBe('off on this engine: the band agent types (no $.agent.register)')
-  // Help names the band types.
+  expect(offLine({ ...allOn, agents: false, memo: false })).toBe('off on this engine: the band agent types (no $.agent.register), the memo tool (no $.tool.register)')
+  // Help names the band types and the memo tool, and every /bocchi word the typeahead offers.
   expect(lines.some(l => l.startsWith('Band agent types:') && l.includes('kessoku-ultimate-bocchi:nijika'))).toBe(true)
+  expect(lines.some(l => /memo tool/.test(l))).toBe(true)
+  expect(lines.some(l => l.includes('/bocchi memo [proposed]'))).toBe(true)
 })
 
 test('a refused registration breaks nothing: the session starts, help names no missing call, band types still seat by name', { options: { applyTheme: false } }, async ($, on) => {
@@ -2207,6 +2358,7 @@ test('a refused registration breaks nothing: the session starts, help names no m
   })
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   expect(seen.agents).toEqual([])
+  expect(seen.tools).toEqual([])
   expect(seen.opened).toContain('kessoku-band')
   // A refusal is not a missing call: nothing is named off (that line is for an engine without $.agent.register or $.tool.register).
   const lines = ((await $.command.run(cmd('bocchi', 'help'))).text ?? '').split('\n')

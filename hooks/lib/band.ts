@@ -5,6 +5,7 @@
 // the cost estimates come from, and the formatters the panel draws with.
 
 import type { KessokuAgent, KessokuMember, KessokuSlimeState, KessokuUsage } from '../../types'
+import { MEMO_TOOL } from './reflect'
 import { relPath } from './tree'
 
 /** What `memberFor` reads of a spawn. */
@@ -155,7 +156,7 @@ const KITA_TOOLS = /^(Write|Edit|NotebookEdit|Artifact\w*|SendUserFile|DesignSyn
 
 /** Which member a tool belongs to, for the tool-row cards. */
 export function memberForTool(tool: string): KessokuMember {
-  if (NIJIKA_TOOLS.test(tool)) return 'nijika'
+  if (NIJIKA_TOOLS.test(tool) || tool === MEMO_TOOL) return 'nijika'
   if (RYO_TOOLS.test(tool) || tool.startsWith('mcp__')) return 'ryo'
   if (KITA_TOOLS.test(tool)) return 'kita'
   return 'bocchi'
@@ -301,6 +302,8 @@ export function describeCall(tool: string, input: Record<string, unknown>, cwd: 
       return `WebSearch "${str('query').slice(0, 40)}"`
     case 'WebFetch':
       return `WebFetch ${str('url').slice(0, 50)}`
+    case MEMO_TOOL:
+      return `memo "${oneLine(str('rule')).slice(0, 50)}"`
     default: {
       const mcp = /^mcp__([^_]+(?:_[^_]+)*?)__(.+)$/.exec(tool)
       return mcp ? `${mcp[1]}: ${mcp[2]}`.slice(0, 60) : tool
