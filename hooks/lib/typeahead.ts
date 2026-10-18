@@ -20,7 +20,7 @@ export const BOCCHI_VERBS: readonly Word[] = [
   ['demo', 'put sample acts on the panel (demo off clears them)'],
   ['tax', 'preview the Cache Tax warning'],
   ['crash', 'preview the dropped-guitar screen'],
-  ['memo', "preview Nijika's band memo"],
+  ['memo', "preview Nijika's band memo (memo proposed: one Claude proposed itself)"],
   ['setlist', 'preview Replay Theater with a sample setlist'],
   ['strip', 'hide or show the band strip above the prompt'],
   ['help', 'the commands, the versions, the config'],
@@ -43,6 +43,8 @@ export const MOOD_ARGS: readonly Word[] = [
 
 export const DEMO_ARGS: readonly Word[] = [['off', 'clear the sample acts']]
 
+export const MEMO_ARGS: readonly Word[] = [['proposed', 'a memo Claude proposed through the memo tool, with its byline']]
+
 /** /keepwarm's durations (any `90m`, `1h30`, `2h` works; these are the ones offered). */
 export const KEEPWARM_ARGS: readonly Word[] = [
   ['30m', 'keep the prompt cache warm for half an hour'],
@@ -55,7 +57,7 @@ const BOCCHI = '/bocchi'
 const KEEPWARM = '/keepwarm'
 
 /** What /bocchi's sub-commands take, by sub-command; one not listed takes nothing. */
-const BOCCHI_ARGS: Readonly<Record<string, readonly Word[]>> = { theme: THEME_ARGS, mood: MOOD_ARGS, demo: DEMO_ARGS }
+const BOCCHI_ARGS: Readonly<Record<string, readonly Word[]>> = { theme: THEME_ARGS, mood: MOOD_ARGS, demo: DEMO_ARGS, memo: MEMO_ARGS }
 
 /** The words the token begins (ignoring case), each a row; a word the token spells whole is no completion. */
 function rows(words: readonly Word[], token: string): Completion[] {
@@ -68,7 +70,7 @@ function rows(words: readonly Word[], token: string): Completion[] {
  * `/keepwarm`: every next word, written out whole (`/bocchi theme`; the
  * engine's own row already completes a command's name, so a prefix of it adds
  * nothing). `/bocchi <word>`: the sub-commands the word begins. `/bocchi
- * theme|mood|demo <word>` and `/keepwarm <word>`: the arguments it begins.
+ * theme|mood|demo|memo <word>` and `/keepwarm <word>`: the arguments it begins.
  * Anything else: nothing.
  */
 export function completions(d: Draft): Completion[] {
