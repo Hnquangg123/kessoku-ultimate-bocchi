@@ -7,7 +7,9 @@
 // the expression on the head without redrawing the body, peek overlays do the
 // same for the cardboard box, and sway overlays move the hair's free ends.
 // A hand-drawn 16x16 mini rig stands in for the head where the terminal has
-// no room for the hi-res art. Each member lives in its own folder,
+// no room for the hi-res art, and a slime (her blob form, on a 36x24 canvas
+// of its own) stands for each of her acts on stage, a subagent, animated by
+// the slime timelines in ../anim/slimes.ts. Each member lives in its own folder,
 // ./members/<member>/, one part file a pose or overlay set (see its index.ts).
 // The mood timelines in ../anim/moods.ts decide which pose, face, sway and
 // squash each frame shows and where it sits; Remotion renders the result and
@@ -22,6 +24,14 @@ export const PW = 32
 export const PH = 32
 /** The mini: a hand-drawn 16x16 head (`MemberArt.mini`) for the terminal's smallest spots; the portrait halved where a member has none. */
 export const MINI = 16
+/**
+ * The slime canvas (`MemberArt.slime`), one size for the band: wide enough for
+ * Bocchi's awake drawing, tall enough for Nijika's ahoge with a row above it
+ * for the bounce. Both even (a multiple of 4 across, of 8 down), so the slime
+ * halves exactly into its mini (18x12) and that into quadrant cells (9x3).
+ */
+export const SLIME_W = 36
+export const SLIME_H = 24
 
 /**
  * Rows of palette characters, top to bottom. `.` is transparent (in an
@@ -40,6 +50,16 @@ export type Palette = Readonly<Record<string, string>>
 export type MemberId = 'bocchi' | 'nijika' | 'ryo' | 'kita'
 
 export type Mood = 'anxious' | 'focused' | 'happy' | 'panic' | 'melting' | 'hiding'
+
+/**
+ * What a slime (one act on stage: a subagent) is doing: `active` the act runs
+ * (a bounce), `idle` it is pending or waiting (a breath), `asleep` it is done,
+ * failed or killed (a slow breath, a z drifting up). See ../anim/slimes.ts.
+ */
+export type SlimeState = 'active' | 'idle' | 'asleep'
+
+/** A slime's face: the smiling shut eyes of the bead patterns (`content`), or Bocchi's open ones (`awake`). */
+export type SlimeFace = 'content' | 'awake'
 
 /**
  * The poses. The head is pixel-identical in every pose but the box, at the
@@ -100,6 +120,22 @@ export type MiniArt = {
   peek: Overlay<PeekName>
 }
 
+/**
+ * The member as a slime, her chibi blob form, drawn from the user's bead
+ * patterns in her own palette: the body in her hair's ramp, the outline the
+ * band's near-black. The grids are whole (`.` transparent, never `_`), no
+ * larger than the slime canvas less its top row (the bounce's), and laid on
+ * it bottom-aligned and centred, so a squash or a stretch keeps her planted.
+ * `content` is her smiling shut eyes; `awake` (Bocchi only) the same body
+ * with her eyes open, different from `content` only inside `face`.
+ */
+export type SlimeArt = {
+  content: Grid
+  awake?: Grid
+  /** Where `awake` may differ from `content`: the eyes' box, in the grid's own pixels. */
+  face?: { x: number; y: number; w: number; h: number }
+}
+
 export type MemberArt = {
   id: MemberId
   name: string
@@ -125,6 +161,8 @@ export type MemberArt = {
   extras?: Readonly<Record<string, Grid>>
   /** The hand-drawn 16x16 head for the terminal; without it the mini is the portrait halved (`downscale2`). */
   mini?: MiniArt
+  /** Her slime: what each of her acts on stage (a subagent) is drawn as, on the slime canvas. */
+  slime?: SlimeArt
   /**
    * Where the instrument strikes on a pose, in canvas pixels: Nijika's stick
    * tip on playA and playB. The focused mood centres its impact star there.

@@ -4,7 +4,7 @@
 // to, the price table the cost estimates come from, and the formatters the
 // panel draws with.
 
-import type { KessokuMember, KessokuUsage } from '../../types'
+import type { KessokuAgent, KessokuMember, KessokuSlimeState, KessokuUsage } from '../../types'
 import { relPath } from './tree'
 
 /** What `memberFor` reads of a spawn. */
@@ -40,6 +40,18 @@ export function memberFor(facts: SpawnFacts): KessokuMember {
   if (nijika === best) return 'nijika'
   if (kita === best) return 'kita'
   return 'ryo'
+}
+
+/**
+ * What an act's slime shows for its status: bouncing while it runs a turn,
+ * breathing while it is pending, waiting or idle between turns, asleep once it
+ * ended, whichever way (a failed or killed act sleeps too; its row's words say
+ * why, in red).
+ */
+export function slimeState(status: KessokuAgent['status']): KessokuSlimeState {
+  if (status === 'running') return 'active'
+  if (status === 'completed' || status === 'failed' || status === 'killed') return 'asleep'
+  return 'idle'
 }
 
 const NIJIKA_TOOLS = /^(Agent|Workflow|Task\w*|TodoWrite|AskUserQuestion|Skill|EnterPlanMode|ExitPlanMode|ScheduleWakeup|SendMessage|ListAgents)$/

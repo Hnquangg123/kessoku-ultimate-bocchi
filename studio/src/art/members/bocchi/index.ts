@@ -34,10 +34,11 @@ import * as mini from './mini'
 import * as palette from './palette'
 import * as panic from './panic'
 import * as play from './play'
+import * as slime from './slime'
 import * as stand from './stand'
 import * as sway from './sway'
 
-const { palette: merged, colorSources } = memberPalette({ palette, stand, play, crouch, cheer, panic, box, faces, sway, mini, extras })
+const { palette: merged, colorSources } = memberPalette({ palette, stand, play, crouch, cheer, panic, box, faces, sway, mini, extras, slime })
 
 export const bocchi: MemberArt = {
   id: 'bocchi',
@@ -62,5 +63,6 @@ export const bocchi: MemberArt = {
   head: stand.head,
   boxHead: box.boxHead,
   mini: mini.mini,
+  slime: slime.slime,
   extras: { guitarFlat: extras.guitarFlat, guitarTilt: extras.guitarTilt },
 }

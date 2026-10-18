@@ -41,10 +41,11 @@ import * as mini from './mini'
 import * as palette from './palette'
 import * as panic from './panic'
 import * as play from './play'
+import * as slime from './slime'
 import * as stand from './stand'
 import * as sway from './sway'
 
-const { palette: merged, colorSources } = memberPalette({ palette, stand, play, crouch, cheer, panic, box, faces, sway, mini })
+const { palette: merged, colorSources } = memberPalette({ palette, stand, play, crouch, cheer, panic, box, faces, sway, mini, slime })
 
 export const ryo: MemberArt = {
   id: 'ryo',
@@ -69,4 +70,5 @@ export const ryo: MemberArt = {
   head: stand.head,
   boxHead: box.boxHead,
   mini: mini.mini,
+  slime: slime.slime,
 }
