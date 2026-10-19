@@ -71,9 +71,24 @@ capped by headroom: the effects and the ahoge must stay on the canvas.
 in small then big), then a shake: dx -2, +2, -1, +1, -2, +2 a frame each, a hop (dy -2) mid-shake,
 sweat drops flying off both sides in arcs, a settle frame.
 
-**melting** (about 3 s). The `melt` face 3 frames, sinking into a puddle over ~9 frames
-(`melt` 0.1 -> 1, easing in: slow first, fast at the end), drops falling beside her, a long hold
-in the puddle (8 frames), oozing back up over 3 frames, a `half` then an `idle` blink.
+**melting** (Bocchi's: 5 s, 50 frames). Only Bocchi melts in the mod, while the context is
+85% full or more and while a compaction runs, so it can hold for hours: a sustained melt, never a
+collapse. She stays about half melted all loop (`melt` 0.72 at rest: legs and skirt pooled in a
+soft puddle, her upper body and the `melt` face above it, the guitar sunk to its neck, her hair
+dripping), never whole and never flat. Long holds, steps of two rows (her levels 0.75, 0.72,
+0.68, 0.64, 0.60 sit two rows apart), few distinct frames (11 in the full figure, 10 in the
+portrait and the mini). A drop gathers at the tip of her hair (3 frames), falls and lands in the
+puddle with a splat and a quiver (down to 0.75 for a frame); a blink; she sags (0.75, 6 frames),
+then pulls herself together, two rows every two frames, to 0.60 (the guitar back in her hands, the
+`focus` face for 4 frames), fails, slumps back a step a frame and glances aside, and the `melt`
+face comes back through a second blink, the last 3 frames of the loop (her blinks 2.8 and 2.2 s
+apart; no still over 0.7 s, 0.8 in the mini). Frame 0, the still, is her resting melt. Rest and
+sag keep the mini's melt eyes (between 0.56 and 0.71 its half-scale melt drops their row). Her
+loop is her own length; the other three share a 28-frame clock between them.
+- Nijika, Ryo, Kita (2.8 s, 28 frames; the studio's sheets and the showcase): the first take.
+  The `melt` face 3 frames, sinking into a puddle over ~9 frames (`melt` 0.1 -> 1, easing in:
+  slow first, fast at the end), drops falling beside her, a long hold in the puddle (8 frames),
+  oozing back up over 3 frames, a `half` then an `idle` blink, each her own way (moods.ts).
 
 **hiding** (about 3 s). In the box: `peekL` held, a blink, `peekL`, a duck (the whole figure dy 1
 for one frame), `peekR` held, a blink. Ryo dozes instead: `peekBlink`, z's rising one after another.

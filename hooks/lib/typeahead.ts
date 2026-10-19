@@ -22,8 +22,17 @@ export const BOCCHI_VERBS: readonly Word[] = [
   ['crash', 'preview the dropped-guitar screen'],
   ['memo', "preview Nijika's band memo (memo proposed: one Claude proposed itself)"],
   ['setlist', 'preview Replay Theater with a sample setlist'],
+  ['solo', "open one member's channel across the panel's mixer: bocchi | nijika | ryo | kita, or off for the mix"],
   ['strip', 'hide or show the band strip above the prompt'],
   ['help', 'the commands, the versions, the config'],
+]
+
+export const SOLO_ARGS: readonly Word[] = [
+  ['bocchi', 'the main loop, alone on the mixer'],
+  ['nijika', 'her acts in full'],
+  ['ryo', 'her acts in full'],
+  ['kita', 'her acts in full'],
+  ['off', 'back to the mix'],
 ]
 
 export const THEME_ARGS: readonly Word[] = [
@@ -38,7 +47,7 @@ export const MOOD_ARGS: readonly Word[] = [
   ['happy', 'a turn landed'],
   ['panic', 'a wrong note'],
   ['melting', 'the context is full'],
-  ['hiding', 'interrupted'],
+  ['hiding', 'interrupted, told no, or the cache gone cold'],
 ]
 
 export const DEMO_ARGS: readonly Word[] = [['off', 'clear the sample acts']]
@@ -57,7 +66,7 @@ const BOCCHI = '/bocchi'
 const KEEPWARM = '/keepwarm'
 
 /** What /bocchi's sub-commands take, by sub-command; one not listed takes nothing. */
-const BOCCHI_ARGS: Readonly<Record<string, readonly Word[]>> = { theme: THEME_ARGS, mood: MOOD_ARGS, demo: DEMO_ARGS, memo: MEMO_ARGS }
+const BOCCHI_ARGS: Readonly<Record<string, readonly Word[]>> = { theme: THEME_ARGS, mood: MOOD_ARGS, demo: DEMO_ARGS, memo: MEMO_ARGS, solo: SOLO_ARGS }
 
 /** The words the token begins (ignoring case), each a row; a word the token spells whole is no completion. */
 function rows(words: readonly Word[], token: string): Completion[] {

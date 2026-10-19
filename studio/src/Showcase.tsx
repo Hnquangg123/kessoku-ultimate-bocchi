@@ -4,15 +4,17 @@ import { blank, stampText, textWidth } from './art/compose'
 import type { Pixels } from './art/compose'
 import { ART } from './art/members'
 import { W } from './art/types'
+import type { Mood } from './art/types'
 import { MEMBER_IDS, MOODS } from './anim/moods'
 import { drawMood } from './anim/scene'
 import { PixelCanvas } from './PixelCanvas'
 
 /**
  * The band on stage for the README: the four of them side by side under
- * their spotlights, every mood in turn, three seconds each, the band's name
- * and the mood in the 2x pixel font. Drawn in pixels end to end and scaled
- * by whole pixels, so the GIF stays as crisp as the sprites.
+ * their spotlights, every mood in turn, three seconds each (melting five,
+ * for Bocchi's whole melt), the band's name and the mood in the 2x pixel
+ * font. Drawn in pixels end to end and scaled by whole pixels, so the GIF
+ * stays as crisp as the sprites.
  */
 
 const GUTTER = 8
@@ -24,8 +26,22 @@ const RIM_Y = SPRITE_TOP + SOLES + 1
 export const STAGE_W = GUTTER + MEMBER_IDS.length * (W + GUTTER)
 export const STAGE_H = RIM_Y + 12
 export const SHOWCASE_SCALE = 2
-export const MOOD_FRAMES = 30
-export const SHOWCASE_FRAMES = MOOD_FRAMES * MOODS.length
+/**
+ * How long each mood holds the stage: 3 s, and melting 5 s, Bocchi's whole
+ * loop with her try at pulling herself together (the others' 28-frame loops wrap).
+ */
+export const MOOD_FRAMES: Readonly<Record<Mood, number>> = { anxious: 30, focused: 30, happy: 30, panic: 30, melting: 50, hiding: 30 }
+export const SHOWCASE_FRAMES = MOODS.reduce((sum, mood) => sum + MOOD_FRAMES[mood], 0)
+
+/** The mood on stage at `frame` and the frame within its own segment. */
+function moodAt(frame: number): { mood: Mood; local: number } {
+  let f = ((frame % SHOWCASE_FRAMES) + SHOWCASE_FRAMES) % SHOWCASE_FRAMES
+  for (const mood of MOODS) {
+    if (f < MOOD_FRAMES[mood]) return { mood, local: f }
+    f -= MOOD_FRAMES[mood]
+  }
+  return { mood: 'anxious', local: 0 }
+}
 
 const BG = '#1b1b1f'
 const FLOOR = '#26262c'
@@ -45,8 +61,7 @@ function fade(hex: string, amount: number): string {
 export function drawStage(frame: number): Pixels {
   const px = blank(STAGE_W, STAGE_H)
   px.forEach(row => row.fill(BG))
-  const mood = MOODS[Math.floor(frame / MOOD_FRAMES) % MOODS.length] ?? 'anxious'
-  const local = frame % MOOD_FRAMES
+  const { mood, local } = moodAt(frame)
   // The floor, its rim and a few boards.
   for (let y = RIM_Y; y < STAGE_H; y += 1) (px[y] as (string | null)[]).fill(y === RIM_Y ? RIM : (y - RIM_Y) % 4 === 0 ? FLOOR_LINE : FLOOR)
   MEMBER_IDS.forEach((id, i) => {

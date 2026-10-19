@@ -101,8 +101,12 @@ import { offLine, versionLine } from './lib/engine'
 import type { FeatureKey } from './lib/engine'
 import { MEMO_QUEUE_MAX, MEMO_TOOL, MEMO_TOOL_SPEC, appendRule, checkRule, cleanRule, looksLikeCorrection, memoAnswer, rulePrompt } from './lib/reflect'
 import { completions } from './lib/typeahead'
+import { boardFootSvg, boardHeadSvg, boardLayout, boardPlan, layoutFor, platesSvg, SCENE_COLORS, songDetailSvg, songLook, songSvg, stageSvg, stripSvg } from './lib/scene'
+import type { SceneSvg } from './lib/scene'
+import type { ActView, PanelView } from './lib/stage'
+import { BAND_ORDER, panelView, ENCORE_MS, SLIME_TAIL_MS, SOLO_KEYS, actsInOrder, actsOf, bandOf, channelState, isEncore, isLive, liveCount, memberMood, nowPlaying, pitActs, setLength, slotContext, soloNow, uiOf, vuLevel } from './lib/stage'
 import { CRASH, CRASH_MINI, animOf, cellsFor, composite, encodeCells, frameSignature, isAnimated, spriteId, spritesSvg, viewSize } from './lib/sprite'
-import type { CellMode, MemberView, SlimeView, SpritePart } from './lib/sprite'
+import type { CellMode, MemberView, SlimeView, SpritePart, StageLayer } from './lib/sprite'
 import { ALWAYS_IGNORED, IGNORED_DIRS, MAX_PATHS, baseName, isAnyHot, isGlowing, isInside, isLit, relPath, treeRows, windowRows } from './lib/tree'
 
 // ---- Names, atoms, options --------------------------------------------------
@@ -132,6 +136,11 @@ const SET_AWAY_MS = 30_000
 const COLD_NOTICE_MS = 5 * 60_000
 /** What heads every native notification. */
 const NOTIFY_TITLE = 'Kessoku Band'
+/** How long an automatic solo (the autoSolo option) stays up. */
+const AUTO_SOLO_MS = 10_000
+/** The acts a channel lists at most (then `+ n more`), and a solo's cards. */
+const CHANNEL_ACTS = 4
+const SOLO_ACTS = 8
 
 function mainAgent(): KessokuAgent {
   return {
@@ -150,6 +159,8 @@ function mainAgent(): KessokuAgent {
     tools: 0,
     cost: 0,
     isError: false,
+    toolTally: {},
+    lastTool: '',
   }
 }
 
@@ -163,6 +174,9 @@ const INITIAL_BAND: KessokuBand = {
   rateLimitPercent: 0,
   isWorking: false,
   lastError: '',
+  set: 0,
+  setStartedAt: 0,
+  setPrompt: '',
 }
 const INITIAL_CACHE: KessokuCache = {
   lastWarmAt: 0,
@@ -183,7 +197,7 @@ const INITIAL_CACHE: KessokuCache = {
 }
 const INITIAL_TREE: KessokuTree = { root: '', paths: [], lights: [], isOpen: false, isBand: false, builtAt: 0 }
 const INITIAL_REPLAY: KessokuReplay = { tracks: [], index: 0, isOpen: false, inBand: false, setlist: 0 }
-const INITIAL_UI: KessokuUi = { isPanelOpen: false, isStripHidden: false, panelWhere: 'none' }
+const INITIAL_UI: KessokuUi = { isPanelOpen: false, isStripHidden: false, panelWhere: 'none', solo: null, soloAct: null, soloUntil: 0, soloChosen: false }
 
 const band = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'band' } as const, INITIAL_BAND)
 const cache = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'cache' } as const, INITIAL_CACHE)
@@ -214,6 +228,7 @@ type Opts = {
   keepWarmMs: number
   reflect: boolean
   openPanel: boolean
+  autoSolo: boolean
 }
 
 function readOptions(options: PluginOptions): Opts {
@@ -237,6 +252,7 @@ function readOptions(options: PluginOptions): Opts {
     keepWarmMs: Math.max(1, Number(options.keepWarmMinutes) || 360) * 60_000,
     reflect: options.reflect !== false,
     openPanel: options.openPanelOnStart !== false,
+    autoSolo: options.autoSolo === true,
   }
 }
 
@@ -261,6 +277,9 @@ let keepWarmTimer: Timer | null = null
 let moodTimer: Timer | null = null
 let memoTimer: Timer | null = null
 let pendingTracks: KessokuTrack[] = []
+/** The set's tool calls by their id: the track number and when each began (for the row's length). Reset at turn.start. */
+const trackNumbers = new Map<string, { n: number; startedAt: number; endedAt?: number }>()
+let trackCount = 0
 /** The main conversation is being compacted: Bocchi melts, and nothing pings the cache meanwhile. */
 let isCompacting = false
 /** The warm period (its `lastWarmAt`) the cold-cache notice went out for, so it goes once per period. */
@@ -300,13 +319,13 @@ const SPRITE_TICK_MS = 100
 const SPRITE_RETRY_MS = 1000
 /** A passing site (a dialog) whose sprite has been refused this long is given up; a pane or the band is tried until it closes or redraws. */
 const SPRITE_GIVE_UP_MS = 60_000
-/** A finished act stays in the strip's row of slimes this long, asleep, then leaves. */
-const SLIME_TAIL_MS = 30_000
 /** The strip's row of slimes holds this many at most; the rest are counted `+n`. */
 const STRIP_SLIMES = 6
 /** The redraw that takes a sleeping act off the strip when its half minute is up (no state changes then), and when it is due. */
 let tailTimer: Timer | null = null
 let tailTimerAt = 0
+/** Every redraw the drawings asked for, soonest first when armed. */
+const tailDues: number[] = []
 
 type Site = RenderInput<'Pane'> | RenderInput<'AbovePrompt'>
 type Draw = JSX.Element
@@ -377,10 +396,6 @@ function patchAgent(b: KessokuBand, id: string, fn: (a: KessokuAgent) => Kessoku
   return { ...b, agents: b.agents.map(a => (a.id === id ? fn(a) : a)) }
 }
 
-function isLive(a: KessokuAgent): boolean {
-  return a.status === 'running' || a.status === 'pending' || a.status === 'waiting'
-}
-
 function trimAgents(agents: KessokuAgent[]): KessokuAgent[] {
   if (agents.length <= MAX_AGENTS + 1) return agents
   const main = agents.filter(a => a.id === 'main')
@@ -388,16 +403,6 @@ function trimAgents(agents: KessokuAgent[]): KessokuAgent[] {
   const live = rest.filter(isLive)
   const done = rest.filter(a => !isLive(a)).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))
   return [...main, ...live, ...done].slice(0, MAX_AGENTS + 1)
-}
-
-/** A member's mood from the agents on their part of the stage. */
-function memberMood(b: KessokuBand, member: KessokuMember, now: number): KessokuMood {
-  if (member === 'bocchi') return b.mood
-  const mine = b.agents.filter(a => a.member === member && a.id !== 'main')
-  if (mine.some(a => isLive(a))) return 'focused'
-  const latest = mine.filter(a => a.endedAt !== null).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))[0]
-  if (latest && latest.endedAt !== null && now - latest.endedAt < 8000) return latest.isError ? 'panic' : latest.status === 'killed' ? 'anxious' : 'happy'
-  return 'anxious'
 }
 
 function statusLine(mood: KessokuMood, detail: string): string {
@@ -562,10 +567,24 @@ async function setMood($: EngineInterface, mood: KessokuMood, detail = '', rever
   }
 }
 
+/** Bocchi's words while she waits out a cold cache in her box. */
+const COLD_HIDING = 'the cache went cold… in the box till your next prompt'
+
+/**
+ * Whether the prompt cache has gone cold since a turn last warmed it. A
+ * keepwarm that works moves `lastWarmAt` with each ping, so it never gets
+ * here; an armed keepwarm never pings a cache that already lapsed.
+ */
+function isColdRoom(c: KessokuCache, now: number): boolean {
+  return c.lastWarmAt > 0 && now - c.lastWarmAt >= ttlMs()
+}
+
+/** Bocchi's mood when nothing is happening to her: melting past 85 % or while a compaction runs, playing while the set runs, in her box while the cache is cold, else waiting. */
 async function revertMood($: EngineInterface): Promise<void> {
   const b = await read($, band)
-  const mood: KessokuMood = b.contextPercent >= 85 ? 'melting' : b.isWorking ? 'focused' : 'anxious'
-  const detail = mood === 'melting' ? `ctx ${b.contextPercent}% full` : mood === 'focused' ? b.mainTask : ''
+  const cold = !b.isWorking && isColdRoom(await read($, cache), await $.clock.now())
+  const mood: KessokuMood = isCompacting || b.contextPercent >= 85 ? 'melting' : b.isWorking ? 'focused' : cold ? 'hiding' : 'anxious'
+  const detail = mood === 'melting' ? (isCompacting ? 'compacting the set…' : `ctx ${b.contextPercent}% full`) : mood === 'focused' ? b.mainTask : mood === 'hiding' ? COLD_HIDING : ''
   await update($, band, x => ({ ...x, mood }))
   setStatus($, statusLine(mood, detail))
 }
@@ -580,11 +599,11 @@ async function upsertAgent($: EngineInterface, agent: KessokuAgent): Promise<voi
   })
 }
 
-async function noteTask($: EngineInterface, agentId: string | undefined, task: string): Promise<void> {
+async function noteTask($: EngineInterface, agentId: string | undefined, task: string, tool = ''): Promise<void> {
   const id = agentId ?? 'main'
   const b = await update($, band, x => {
     if (!x.agents.some(a => a.id === id)) return x
-    const next = patchAgent(x, id, a => ({ ...a, task, tools: a.tools + 1 }))
+    const next = patchAgent(x, id, a => ({ ...a, task, tools: a.tools + 1, lastTool: task, toolTally: tool === '' ? (a.toolTally ?? {}) : { ...(a.toolTally ?? {}), [tool]: ((a.toolTally ?? {})[tool] ?? 0) + 1 } }))
     return id === 'main' ? { ...next, mainTask: task } : next
   })
   if (agentId === undefined && b.mood === 'focused') setStatus($, statusLine('focused', task))
@@ -828,6 +847,15 @@ async function coldWatch($: EngineInterface): Promise<void> {
   const c = await read($, cache)
   const b = await read($, band)
   const now = await $.clock.now()
+  // The cache went cold between turns: Bocchi waits it out in her box until the next prompt brings her out. The write
+  // takes her only from waiting, so a turn that started meanwhile keeps her playing.
+  if (b.mood === 'anxious' && !b.isWorking && !isCompacting && isColdRoom(c, now)) {
+    const hid = await update($, band, x => (x.mood === 'anxious' && !x.isWorking ? { ...x, mood: 'hiding' as const } : x))
+    if (hid.mood === 'hiding') setStatus($, statusLine('hiding', COLD_HIDING))
+  }
+  // Warm again without a turn (the TTL changed with the model): she comes out. A timed hiding, an interruption's or a
+  // refusal's, ends on its own.
+  else if (b.mood === 'hiding' && moodTimer === null && !b.isWorking && !isColdRoom(c, now)) await revertMood($)
   if (c.lastWarmAt === 0 || c.lastWarmAt === coldNoticeFor || b.isWorking || isCompacting || c.keepWarmUntil > now || c.contextTokens < TAX_MIN_TOKENS) return
   const ttl = ttlMs()
   const left = ttl - (now - c.lastWarmAt)
@@ -1472,6 +1500,48 @@ function suggestReplay($: EngineInterface, tracks: number): void {
 
 // ---- The panel ---------------------------------------------------------------
 
+// `$.state` outlives a hot reload (`/reload-plugins`, an update), so a value written by an older version of the mod
+// lacks the fields added since: these fill them in wherever the drawings and the bookkeeping read them.
+
+/**
+ * A solo ends by itself once the member's last act has ended and nothing of
+ * hers is on stage: after the encore, whether it was chosen or automatic.
+ */
+async function settleSolo($: EngineInterface, b: KessokuBand, member: KessokuMember, now: number): Promise<void> {
+  const u = uiOf(await read($, ui))
+  // Bocchi's own act is the main loop: her solo holds while a set plays.
+  if (u.solo !== member || actsOf(b, member).some(isLive) || (member === 'bocchi' && b.isWorking)) return
+  const until = now + ENCORE_MS
+  await update($, ui, raw => {
+    const x = uiOf(raw)
+    return x.solo === member && (x.soloUntil === 0 || x.soloUntil > until) ? { ...x, soloUntil: until } : x
+  })
+  scheduleTail($, until, now)
+}
+
+/** Press her name: her solo, or (hers again, as drawn: a solo past its due is the mix) the mix. A pressed solo is a chosen one. */
+async function pressSolo($: EngineInterface, member: KessokuMember, act: string | null): Promise<void> {
+  const now = await $.clock.now()
+  await update($, ui, raw => {
+    const x = soloNow(raw, now)
+    return x.solo === member && act === null ? { ...x, solo: null, soloAct: null, soloUntil: 0, soloChosen: false } : { ...x, solo: member, soloAct: act, soloUntil: 0, soloChosen: true }
+  })
+}
+
+/**
+ * When the panel must redraw by itself next: an act's encore ending, a sleeping
+ * slime leaving the pit, a solo ending. 0 when nothing is due.
+ */
+function nextDue(b: KessokuBand, u: KessokuUi, now: number): number {
+  let due = Infinity
+  for (const a of b.agents) {
+    if (a.id === 'main' || isLive(a) || a.endedAt === null) continue
+    for (const at of [a.endedAt + ENCORE_MS, a.endedAt + SLIME_TAIL_MS]) if (at > now && at < due) due = at
+  }
+  if (u.solo !== null && u.soloUntil > now && u.soloUntil < due) due = u.soloUntil
+  return due === Infinity ? 0 : due
+}
+
 async function togglePanel($: EngineInterface, isAsked: boolean): Promise<string> {
   const u = await read($, ui)
   if (u.isPanelOpen && isAsked) {
@@ -1494,7 +1564,7 @@ async function togglePanel($: EngineInterface, isAsked: boolean): Promise<string
  * background a terminal paints under transparent pixels, and the words that
  * stand for it where no picture can be drawn.
  */
-type SpriteSpec = { key: string; parts: SpritePart[]; w: number; h: number; mode: CellMode; scale: number; bg?: string; alt: string }
+type SpriteSpec = { key: string; parts: SpritePart[]; w: number; h: number; mode: CellMode; scale: number; bg?: string; alt: string; stage?: StageLayer }
 
 /** One sprite at the canvas origin. */
 function oneSprite(key: string, id: string, mode: CellMode, scale: number, alt: string, bgColor?: string): SpriteSpec {
@@ -1567,13 +1637,26 @@ function stageWords(b: KessokuBand): string {
  * up, when nothing else changes then: one timer, for the first act due.
  */
 function scheduleTail($: EngineInterface, at: number, now: number): void {
-  if (at <= 0 || (tailTimer !== null && tailTimerAt > now && tailTimerAt <= at)) return
+  if (at <= now) return
+  if (!tailDues.includes(at)) tailDues.push(at)
+  armTail($, now)
+}
+
+/** Arms the one timer for the soonest due still ahead; when it fires, the drawings redraw and the next due is armed. */
+function armTail($: EngineInterface, now: number): void {
+  const ahead = tailDues.filter(d => d > now)
+  tailDues.length = 0
+  tailDues.push(...ahead.slice(0, 64))
+  if (ahead.length === 0) return
+  const next = Math.min(...ahead)
+  if (tailTimer !== null && tailTimerAt > now && tailTimerAt <= next) return
   if (tailTimer !== null) tailTimer.cancel()
-  tailTimerAt = at
-  tailTimer = $.clock.after(Math.max(1, at - now + 1), () => {
+  tailTimerAt = next
+  tailTimer = $.clock.after(Math.max(1, next - now + 1), () => {
     tailTimer = null
     tailTimerAt = 0
     $.ui.invalidate('ui.render')
+    void $.clock.now().then(t => armTail($, t)).catch(() => undefined)
   })
 }
 
@@ -1628,7 +1711,7 @@ function drawSprite($: EngineInterface, e: RenderInput, spec: SpriteSpec, now: n
   const { Box, Svg } = table
   return (
     <Box key={spec.key}>
-      <Svg source={spritesSvg(spec.parts, spec.w, spec.h, spec.scale)} alt={spec.alt} width={spec.w * spec.scale} height={spec.h * spec.scale} isInteractive />
+      <Svg source={spritesSvg(spec.parts, spec.w, spec.h, spec.scale, spec.stage)} alt={spec.alt} width={spec.w * spec.scale} height={spec.h * spec.scale} isInteractive />
     </Box>
   )
 }
@@ -1728,200 +1811,563 @@ function panelSize(): { columns: number; rows: number } {
   return opts.characterArt === 'sprites' ? { columns: 64, rows: 28 } : { columns: 56, rows: 18 }
 }
 
-/**
- * The rows a card's text takes: its header, Bocchi's two lines, a subagent's two (one above the prompt), the more
- * and idle lines. `actRows` is what a subagent's slime takes beside its lines where one is drawn (its rows when
- * taller than the lines).
- */
-function cardTextRows(b: KessokuBand, member: KessokuMember, compact: boolean, actRows = 0): number {
-  const mine = b.agents.filter(a => a.member === member && a.id !== 'main').length
-  const shown = Math.min(mine, compact ? 2 : 4)
-  return 1 + (member === 'bocchi' ? 2 : 0) + shown * Math.max(compact ? 1 : 2, actRows) + (mine > shown ? 1 : 0) + (member !== 'bocchi' && mine === 0 ? 1 : 0)
+/** The spotlight behind her slot: up while she plays (on a solo, only the soloist's), down while she rests. */
+function slotStage(b: KessokuBand, member: KessokuMember, solo: KessokuMember | null, floor: number): StageLayer {
+  const plays = member === 'bocchi' ? b.isWorking : actsOf(b, member).some(isLive)
+  return { color: MEMBERS[member].color, isLit: solo === null ? plays : solo === member, floor }
 }
 
 /**
- * How a terminal's panel cards draw the heads (the minis): in half blocks
- * (16x8 cells) where every card that tall fits the room with a readable
- * column of text beside it, in quadrants (8x4) where they fit (or where the
- * cards scroll anyway, which dropping the heads would not stop), not at all
- * where even the quadrants would squeeze the text or add the scroll.
- * `cardRows` is each drawn card's text rows, `fixedRows` the panel's own
- * lines around them; `tallRows`, where given, the cards' rows in the tall
- * layout, whose acts each have their slime beside their lines.
+ * Her slot's picture on a remote surface: the spotlight, her figure (96x96)
+ * and her pit under it (her slimes two pixels apart, as many as fit her
+ * width), one CSS pixel a pixel; dimmed on another member's solo.
  */
-function panelHead(bodyColumns: number, bodyRows: number, compact: boolean, cardRows: readonly number[], fixedRows: number, tallRows: readonly number[] = cardRows): HeadMode | null {
-  // The panel's own padding, then each card's border and padding.
-  const inner = bodyColumns - (compact ? 0 : 2) - 4
-  const textBeside = (mode: HeadMode) => inner - headCells(mode).columns - 1
-  const height = (spriteRows: number, rows: readonly number[] = cardRows) => fixedRows + rows.reduce((n, r) => n + 2 + Math.max(r, spriteRows), 0)
-  if (!compact && textBeside('half') >= 34 && height(headCells('half').rows, tallRows) <= bodyRows) return 'half'
-  if (textBeside('quad') >= 24 && (height(headCells('quad').rows) <= bodyRows || height(0) > bodyRows)) return 'quad'
-  return null
+function slotSprite(b: KessokuBand, member: KessokuMember, solo: KessokuMember | null, now: number): { spec: SpriteSpec; more: number } {
+  const mood = memberMood(b, member, now)
+  const figure = viewSize('full')
+  const slime = viewSize('slime')
+  const pitch = slime.w + 2
+  const fit = Math.max(1, Math.floor((figure.w + 2) / pitch))
+  const pit = pitActs(b, member, now)
+  const shown = pit.slice(0, fit)
+  const dim = solo !== null && solo !== member
+  const parts: SpritePart[] = [{ id: spriteId(member, mood, 'full'), x: 0, y: 0, ...(dim ? { dim: true } : {}) }]
+  const pitX = Math.floor((figure.w - (shown.length * pitch - 2)) / 2)
+  shown.forEach((a, i) => parts.push({ id: spriteId(a.member, slimeState(a.status), 'slime'), x: pitX + i * pitch, y: figure.h + 2, ...(dim ? { dim: true } : {}) }))
+  const alt = `${MEMBERS[member].name}, ${mood}${shown.length > 0 ? `; in the pit: ${shown.map(slimeAlt).join('; ')}` : ''}`
+  return { spec: { key: `slot-${member}`, parts, w: figure.w, h: figure.h + 2 + slime.h, mode: 'quad', scale: 1, alt, stage: slotStage(b, member, solo, figure.h) }, more: pit.length - shown.length }
 }
 
-function drawPanel($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache, now: number, compact: boolean): Draw {
-  const { Box, Text, Button } = $.ui.resolve(e)
-  const width = Math.max(30, e.props.bodyColumns - 2)
-  const members: KessokuMember[] = ['bocchi', 'nijika', 'ryo', 'kita']
-  const onStage = b.agents.filter(a => a.id !== 'main' && isLive(a)).length
-  const note = noteAt(now)
-  const main = b.agents.find(a => a.id === 'main') ?? mainAgent()
-  // Above the prompt the band is short: idle members step aside.
-  const hasCard = (member: KessokuMember) => !compact || member === 'bocchi' || b.agents.some(a => a.member === member && a.id !== 'main')
-  // The title, the ctx line and the footer, the plan line and the last wrong note when they show.
-  const fixedRows = 3 + (b.rateLimitPercent > 0 ? 1 : 0) + (b.lastError ? 1 : 0)
-  const cardRows = members.filter(hasCard).map(member => cardTextRows(b, member, compact))
-  // Each act is drawn as her slime (character art on): in a terminal's tall layout its mini in quadrants beside
-  // the act's two lines, three rows; where the cards are shorter, one glyph at the line's head.
-  const slimes = opts.characterArt === 'sprites'
-  const tallRows = members.filter(hasCard).map(member => cardTextRows(b, member, compact, slimes ? slimeCells().rows : 0))
-  const head = e.surface === 'terminal' ? panelHead(e.props.bodyColumns, e.props.scroll.bodyRows, compact, cardRows, fixedRows, tallRows) : null
+// ---- The panel at STARRY (a surface that draws Svg) ------------------------------
 
-  const memberBox = (member: KessokuMember) => {
-    const m = MEMBERS[member]
-    const mood = memberMood(b, member, now)
-    const color = cardColor(mood, m.color)
-    const mine = b.agents.filter(a => a.member === member && a.id !== 'main').sort((x, y) => y.startedAt - x.startedAt)
-    if (!hasCard(member)) return null
-    // Her sprite beside the card: on a remote surface her whole figure (her portrait above the prompt), one CSS
-    // pixel a pixel; in a terminal her mini, in half blocks or quadrants.
-    const spec =
-      e.surface !== 'terminal'
-        ? memberSprite(`sprite-${member}`, member, mood, compact ? 'portrait' : 'full', 'quad', 1)
-        : head === null
-          ? null
-          : memberSprite(`sprite-${member}`, member, mood, 'mini', head, 1, bg(true))
-    const sprite = spec === null ? null : drawSprite($, e, spec, now)
-    // The text column beside a terminal's sprite: the card's border and padding, the sprite, the gap.
-    const textCols = width - 4 - (sprite !== null && e.surface === 'terminal' && head !== null ? headCells(head).columns + 1 : 0)
-    const rows: Draw[] = []
-    if (member === 'bocchi') {
-      rows.push(
-        <Text key="main-task" wrap="truncate-end">
-          <Text color="text">{m.lines[mood]}</Text>
-          {b.mainTask ? <Text dimColor> · {b.mainTask}</Text> : null}
-        </Text>,
-      )
-      // The figures that matter first, so a narrow column cuts the token counts, never the cost.
-      rows.push(
-        <Text key="main-stats" dimColor wrap="truncate-end">
-          ctx {b.contextPercent}% · ≈{fmtUsd(main.cost)}
-          {main.startedAt ? ` · ${fmtDuration(now - main.startedAt)}` : ''} · in {fmtTokens(main.usage.input + main.usage.cacheRead + main.usage.cacheWrite)} · out {fmtTokens(main.usage.output)}
-        </Text>,
-      )
-    }
-    const shown = compact ? mine.slice(0, 2) : mine.slice(0, 4)
-    for (const a of shown) {
-      const live = isLive(a)
-      const mark = live ? note : a.isError ? '✖' : a.status === 'killed' ? '◌' : '✓'
-      const age = fmtDuration((a.endedAt ?? now) - a.startedAt)
-      // The act's slime at the head of its row: a picture on a remote surface, and in a terminal where the cards are
-      // tall (the heads in half blocks); elsewhere in a terminal her color as one glyph, so no card grows for it.
-      const state = slimeState(a.status)
-      const picture = slimes && (e.surface !== 'terminal' || head === 'half') ? drawSprite($, e, actSprite(a, e.surface === 'terminal', bg(true)), now) : null
-      const glyph = slimes && picture === null && e.surface === 'terminal'
-      const beside = picture !== null && e.surface === 'terminal' ? slimeCells().columns + 1 : glyph ? 2 : 0
-      // The description takes what the slime, the mark, the status and the age leave.
-      const descMax = sprite === null ? Math.max(10, width - 30 - beside) : Math.max(10, textCols - beside - 2 - textWidth(` ${a.status} ${age}`))
-      const line = (
-        <Text key={`a-${a.id}`} wrap="truncate-end">
-          {glyph ? (
-            <Text color={m.color} bold={state === 'active'} dimColor={state === 'asleep'}>
-              {'● '}
-            </Text>
-          ) : null}
-          <Text color={live ? m.color : a.isError ? 'error' : 'inactive'} bold={live}>
-            {mark} {a.description.slice(0, descMax)}
-          </Text>
-          <Text dimColor> {a.status} {age}</Text>
-        </Text>
-      )
-      // The numbers before the task name: a cut takes the end of the name, never the cost.
-      const stats = compact ? null : (
-        <Text key={`s-${a.id}`} dimColor wrap="truncate-end">
-          {'   '}ctx {b.window > 0 ? Math.round((a.context / b.window) * 100) : 0}% · {fmtTokens(a.usage.input + a.usage.cacheRead + a.usage.cacheWrite + a.usage.output)} · ≈{fmtUsd(a.cost)} · {a.task || a.type}
-        </Text>
-      )
-      if (picture === null) {
-        rows.push(line)
-        if (stats !== null) rows.push(stats)
-        continue
-      }
-      rows.push(
-        <Box key={`act-${a.id}`} flexDirection="row" gap={1}>
-          {picture}
-          <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-            {line}
-            {stats}
-          </Box>
-        </Box>,
-      )
-    }
-    if (mine.length > shown.length) rows.push(<Text key="more" dimColor>{'   '}+ {mine.length - shown.length} more</Text>)
-    if (member !== 'bocchi' && mine.length === 0) rows.push(<Text key="idle" dimColor wrap="truncate-end">no subagent on stage · {m.lines.anxious}</Text>)
-    // A chip on the name line counting her slimes on stage.
-    const onHerStage = mine.filter(isLive).length
-    const chip =
-      slimes && onHerStage > 0
-        ? [
-            ' ',
-            <Text key={`chip-${member}`} color={PALETTE.charcoal} backgroundColor={m.color} bold>
-              {` ${onHerStage} on stage `}
-            </Text>,
-          ]
-        : null
-    if (sprite === null) {
-      return (
-        <Box key={`card-${member}`} flexDirection="column" borderStyle={compact ? 'single' : 'round'} borderColor={color} borderDimColor={mood === 'anxious'} paddingX={1} backgroundColor={bg(true)}>
-          <Text wrap="truncate-end">
-            <Text color={color} bold>{padFace(m.faces[mood])} {m.name}</Text>
-            {chip}
-            <Text dimColor> · {m.instrument} · {m.role}</Text>
-          </Text>
-          {rows}
-        </Box>
-      )
-    }
+/** Whether `e`'s surface draws the panel as the live house: pictures it can draw, and art on. */
+function drawsScene(e: RenderInput): boolean {
+  return e.surface !== 'terminal' && opts.characterArt === 'sprites'
+}
+
+/** What a reader gets for the stage: who plays, who rests, what failed. */
+function stageAlt(view: PanelView): string {
+  const who = view.members.map(m => {
+    const failed = m.acts.filter(a => a.isFailed).length
+    const state = m.isPlaying ? (m.member === 'bocchi' ? 'playing' : `playing ${m.liveCount}`) : 'resting'
+    return `${m.name} ${state} (${m.mood})${failed > 0 ? `, ${failed} failed` : ''}`
+  })
+  return `Kessoku Band on stage${view.onAir ? ', on air' : ', between sets'}${view.solo === null ? '' : `, ${MEMBERS[view.solo].name} on solo`}: ${who.join('; ')}`
+}
+
+/** What a reader gets for a song: whose, its state, the whole description, its figures, the tool in its hands, why it failed. */
+function songAlt(act: ActView): string {
+  const who = act.id === 'main' ? 'Bocchi (main loop)' : MEMBERS[act.member].name
+  const tool = act.tool === '' ? '' : ` · ${act.isLive ? 'now' : 'last'} ${act.tool}`
+  return `${who} · ${act.isEncore ? 'encore' : act.state} · ${act.title} · ${act.age} · ctx ${act.ctxPercent}% · ${act.cost}${tool}${act.reason === '' || act.reason === act.tool ? '' : ` · ${act.reason}`}`
+}
+
+/** What a reader gets for a song's details: the tools it used, its model, steps and tokens. */
+function detailAlt(act: ActView): string {
+  const tools = act.tools.length === 0 ? 'no tool yet' : act.tools.map(t => `${t.name} ${t.count}`).join(' · ')
+  return `${tools} · ${act.model || 'model not known yet'} · ${act.steps} steps · ${act.tokens} tokens · ${act.type}`
+}
+
+/**
+ * The panel as the live house: the stage (the one picture that animates, and
+ * whose source changes only with a mood, a light, a slime or the solo), the
+ * plates, and the chalkboard setlist in its wooden frame (a Box of the wood, one
+ * cell each side), each song a picture in a keyed Box: its hover scope. The
+ * song's picture is a stencil of the board round a hand-drawn chalk box, so
+ * while the pointer is on it the Box's colour (her chalk) shows through as the
+ * box's lines and a wash inside them; it reveals her details under it (the box's
+ * sides and foot, drawn on the board they paint themselves) and, under the
+ * card, the button that opens it on her page. No song Box has a border: a
+ * desktop pads a bordered Box, and the board's slices must meet at one width.
+ * Then the native buttons: a member's solo (her letter), the mix (m), Hide
+ * above the prompt. Above the prompt the stage stays off and the board lists
+ * three songs.
+ */
+function drawScene($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache, u: KessokuUi, now: number, compact: boolean): Draw | null {
+  const table = $.ui.resolve(e)
+  if (!('Svg' in table)) return null
+  const { Box, Button, Svg } = table
+  const view = panelView(b, c, u, now, ttlMs())
+  const layout = layoutFor(e.props.bodyColumns)
+  // the board's pictures are drawn for the room inside its frame
+  const board = boardLayout(layout)
+  const plan = boardPlan(view, compact ? 3 : 8)
+  // Every picture is an image: it scales to the pane's width at any zoom (an interactive frame has no size of its
+  // own, so a desktop would draw it 300 x 150 and crop it), and its SMIL and CSS animations still play.
+  const picture = (key: string, scene: SceneSvg, alt: string) => (
+    <Box key={key} flexDirection="column">
+      <Svg source={scene.svg} alt={alt} />
+    </Box>
+  )
+  const head = boardHeadSvg(view, board)
+  let y = head.height
+  const songs = plan.songs.map(act => {
+    const song = songSvg(view, act, board, y, plan.expanded, plan)
+    const top = y
+    y += song.height
+    // at rest the board's green under the song's stencil (nothing shows); under the pointer her chalk, which the
+    // stencil turns into the card's chalk box and its wash
+    const look = songLook(act)
+    const detail = plan.expanded ? null : songDetailSvg(view, act, board, top + song.height, plan)
     return (
-      <Box key={`card-${member}`} flexDirection="row" gap={1} borderStyle={compact ? 'single' : 'round'} borderColor={color} borderDimColor={mood === 'anxious'} paddingX={1} backgroundColor={bg(true)}>
-        {sprite}
-        <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-          <Text wrap="truncate-end">
-            <Text color={color} bold>{m.name}</Text>
-            <Text color={color}> {mood}</Text>
-            {chip}
-            <Text dimColor> · {m.instrument} · {m.role}</Text>
-          </Text>
-          {rows}
+      <Box key={`song-${act.id}`} flexDirection="column" backgroundColor={look.color} hover={detail === null ? undefined : { backgroundColor: look.hover }}>
+        <Svg source={song.svg} alt={songAlt(act)} />
+        {/* Revealed while the pointer is over the song (its keyed Box above); a hidden Box takes no key of its own. It
+            paints the board itself, so her chalk under the song shows nowhere else. */}
+        {detail === null ? null : (
+          <Box flexDirection="column" display="none" hover={{ display: 'flex' }} backgroundColor={look.ground}>
+            <Svg source={detail.svg} alt={detailAlt(act)} />
+            {act.id === 'main' ? null : (
+              <Box flexDirection="row" justifyContent="flex-end" paddingX="md" paddingBottom="xs">
+                <Button key={`act-solo-${act.id}`} label={`Open on ${MEMBERS[act.member].name}'s page →`} plain hover={{ color: look.chalk }} onPress={() => void pressSolo($, act.member, act.id)} />
+              </Box>
+            )}
+          </Box>
+        )}
+      </Box>
+    )
+  })
+  const foot = boardFootSvg(view, plan, board, y)
+  const footAlt = `${plan.folded > 0 ? `+${plan.folded} earlier songs · ` : ''}set ${view.set}${view.setLength ? ` · ${view.setLength}` : ''} · session ${view.session} · ctx ${view.ctxPercent}%${view.planPercent > 0 ? ` · plan ${view.planPercent}%` : ''} · cache ${view.amp.words}${view.lastError ? ` · last wrong note: ${view.lastError}` : ''}`
+  const solo = view.members.find(m => m.isSolo)
+  const headAlt = solo === undefined ? `Setlist · set ${view.set} · ${view.onAir ? 'on air' : 'between sets'} · session ${view.session}` : `${solo.name}'s page · ${solo.instrument} · ${solo.acts.length} ${solo.acts.length === 1 ? 'act' : 'acts'} · ${solo.spend}`
+  const buttons = (
+    <Box key="scene-buttons" flexDirection="row" flexWrap="wrap" gap="sm" paddingX="sm" paddingY="sm" backgroundColor={SCENE_COLORS.wall}>
+      {view.solo === null ? null : <Button key="solo-mix" label="Back to the mix" hotkey="m" variant="primary" onPress={() => void update($, ui, x => ({ ...uiOf(x), solo: null, soloAct: null, soloUntil: 0, soloChosen: false }))} />}
+      {view.members.map(m => (
+        <Button key={`solo-${m.member}`} label={m.name} hotkey={m.hotkey} variant={m.isSolo ? 'primary' : undefined} onPress={() => void pressSolo($, m.member, null)} />
+      ))}
+      {compact ? <Button key="panel-hide" label="Hide" hotkey="h" plain dimColor onPress={() => void update($, ui, x => ({ ...x, isPanelOpen: false, panelWhere: 'none' as const }))} /> : null}
+    </Box>
+  )
+  return (
+    <Box flexDirection="column" backgroundColor={SCENE_COLORS.wall}>
+      {compact ? null : picture('scene-stage', stageSvg(view, layout), stageAlt(view))}
+      {picture('scene-plates', platesSvg(view, layout), view.members.map(m => `${m.name}: ${m.line} · ${m.spend}`).join('; '))}
+      {/* The board's wooden frame: the wood a cell wide each side, none above or below (a desktop would pad a bordered
+          Box there), its edge rounded; the head draws its top rail, the foot its chalk tray. */}
+      <Box key="scene-board" flexDirection="column" backgroundColor={SCENE_COLORS.wood} borderStyle="round" borderColor={SCENE_COLORS.woodEdge} paddingX={1} paddingY={0}>
+        <Box flexDirection="column" backgroundColor={SCENE_COLORS.board}>
+          {picture('scene-head', head, headAlt)}
+          {songs}
+          {picture('scene-foot', foot, footAlt)}
         </Box>
+      </Box>
+      {buttons}
+    </Box>
+  )
+}
+
+/** The strip above the prompt as the neon now-playing sign, its buttons beside it. */
+function drawStripScene($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: KessokuBand, c: KessokuCache, r: KessokuReplay, u: KessokuUi, now: number): Draw | null {
+  const table = $.ui.resolve(e)
+  if (!('Svg' in table)) return null
+  const { Box, Button, Svg } = table
+  scheduleTail($, nextDue(b, uiOf(u), now), now)
+  const view = panelView(b, c, u, now, ttlMs())
+  const sign = stripSvg(view, layoutFor(e.props.bodyColumns))
+  const failed = view.members.reduce((n, m) => n + m.acts.filter(a => a.isFailed).length, 0)
+  const playing = view.nowPlaying.who === null ? `between sets · ${view.nowPlaying.words}` : `now playing · ${MEMBERS[view.nowPlaying.who].name} · ${view.nowPlaying.words}`
+  const alt = `${view.onAir ? 'On air' : 'Off air'} · ${playing} · ${view.liveCount} on stage · ${view.session}${failed > 0 ? ` · ${failed} failed` : ''}`
+  return (
+    <Box flexDirection="column" backgroundColor={SCENE_COLORS.wall}>
+      <Box key="strip-sign" flexDirection="column">
+        <Svg source={sign.svg} alt={alt} />
+      </Box>
+      <Box flexDirection="row" gap="sm" paddingX="sm" paddingY="xs">
+        {r.tracks.length > 0 && !r.isOpen ? <Button key="strip-replay" label={`Replay ${r.tracks.length}`} hotkey="r" plain onPress={() => void openReplay($)} /> : null}
+        <Button key="strip-panel" label="Panel" hotkey="k" plain onPress={() => void togglePanel($, true)} />
+        <Button key="strip-hide" label="Hide" hotkey="h" plain dimColor onPress={() => void update($, ui, x => ({ ...x, isStripHidden: true }))} />
+      </Box>
+    </Box>
+  )
+}
+
+/**
+ * The panel: the band on stage, then the mixer, then the rail. On a solo,
+ * one member's channel across the console with every act in full and the
+ * others folded to a strip each. Above the prompt (`compact`) the stage is
+ * the heads only and the channels go one a row.
+ */
+function drawPanel($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache, u: KessokuUi, now: number, compact: boolean): Draw {
+  // An encore ending, a slime leaving the pit, a solo ending: the panel redraws then by itself.
+  scheduleTail($, nextDue(b, uiOf(u), now), now)
+  if (drawsScene(e)) {
+    const scene = drawScene($, e, b, c, u, now, compact)
+    if (scene !== null) return scene
+  }
+  const table = $.ui.resolve(e)
+  const { Box, Text, Button } = table
+  const width = Math.max(30, e.props.bodyColumns - 2)
+  const isTerminal = e.surface === 'terminal'
+  const bodyRows = e.surface === 'terminal' ? e.props.scroll.bodyRows : 40
+  const solo = u.solo
+  const sprites = opts.characterArt === 'sprites'
+  const note = noteAt(now)
+  // A member's name on her color: the tag every surface names her by.
+  const tagText = (member: KessokuMember) => (
+    <Text backgroundColor={MEMBERS[member].color} color={PALETTE.charcoal} bold>
+      {` ${MEMBERS[member].name} `}
+    </Text>
+  )
+
+  // ---- the marquee
+  const marquee = (
+    <Box flexDirection="row" justifyContent="space-between" gap={1}>
+      <Text wrap="truncate-end">
+        <Text color={opts.accent} bold>♪ KESSOKU BAND ♪</Text>
+        {b.isWorking ? (
+          <Text backgroundColor={PALETTE.red} color="#ffffff" bold>{' ● ON AIR '}</Text>
+        ) : (
+          <Text dimColor>{' ○ OFF AIR'}</Text>
+        )}
+        <Text dimColor>{b.set > 0 ? `  set ${b.set}${setLength(b, now) ? ` · ${setLength(b, now)}` : ''}` : '  no set yet'}</Text>
+      </Text>
+      {solo !== null ? (
+        <Text wrap="truncate-end">
+          <Text dimColor>solo: </Text>
+          <Text color={MEMBERS[solo].color} bold>{MEMBERS[solo].name}</Text>
+        </Text>
+      ) : (
+        <Text dimColor>{note}</Text>
+      )}
+    </Box>
+  )
+
+  // ---- the stage
+  const ctxLine = (member: KessokuMember, cols: number) => {
+    const pct = slotContext(b, member)
+    if (pct < 0) return <Text dimColor>{' '.repeat(Math.max(1, Math.min(cols, 8)))}</Text>
+    const wide = Math.max(4, Math.min(6, cols - 5))
+    return (
+      <Text wrap="truncate-end">
+        <Text color={MEMBERS[member].color}>{meter(pct, wide)}</Text>
+        <Text dimColor> {pct}%</Text>
+      </Text>
+    )
+  }
+  const tagLine = (member: KessokuMember) => {
+    const live = actsOf(b, member).filter(isLive).length
+    return (
+      <Text wrap="truncate-end">
+        {tagText(member)}
+        {live > 0 ? <Text color={MEMBERS[member].color} bold>{` ×${live}`}</Text> : null}
+      </Text>
+    )
+  }
+  // Under her pit, the number of each act in it: a press solos her with that act first.
+  const actButtons = (member: KessokuMember, acts: readonly KessokuAgent[]) =>
+    acts.length === 0 ? null : (
+      <Box flexDirection="row" gap={1}>
+        {acts.map((a, i) => (
+          <Button key={`act-solo-${a.id}`} label={String(i + 1)} plain dimColor onPress={() => void pressSolo($, member, a.id)} />
+        ))}
+      </Box>
+    )
+
+  // A terminal too narrow for the four minis side by side (35 columns) draws the faces instead.
+  const canStage = sprites && (!isTerminal || width >= 36)
+  let stage: Draw
+  if (!compact && !isTerminal && sprites) {
+    // A remote surface: a slot a member, her picture over her tag, her context and her act numbers.
+    stage = (
+      <Box flexDirection="row" justifyContent="space-around" alignItems="flex-end" gap={1}>
+        {BAND_ORDER.map(member => {
+          const { spec, more } = slotSprite(b, member, solo, now)
+          const picture = drawSprite($, e, spec, now)
+          return (
+            <Box key={`slot-box-${member}`} flexDirection="column" alignItems="center">
+              {picture}
+              {more > 0 ? <Text dimColor>{`+${more}`}</Text> : null}
+              {tagLine(member)}
+              {ctxLine(member, 12)}
+              {actButtons(member, pitActs(b, member, now))}
+            </Box>
+          )
+        })}
+      </Box>
+    )
+  } else if (canStage) {
+    // A terminal (or the band above the prompt): the four heads as one picture over a stage line, the tags and the context
+    // under them a column each, the pit as one row of slimes.
+    const tall = isTerminal && !compact && width >= 74 && bodyRows >= 34
+    const mode: CellMode = tall ? 'half' : 'quad'
+    const headsSpec = stripSpec(b, BAND_ORDER, now, isTerminal, solo, mode, 'stage-heads')
+    const heads = drawSprite($, e, headsSpec, now)
+    const { w: headW } = viewSize(isTerminal ? 'mini' : 'portrait')
+    const pitchCols = isTerminal ? cellsFor(headW + 2, 1, mode).columns : Math.ceil((headW + 2) / 2)
+    const cols = Math.max(8, pitchCols)
+    const pit = BAND_ORDER.flatMap(member => pitActs(b, member, now))
+    const shownPit = pit.slice(0, STRIP_SLIMES)
+    const pitPicture = shownPit.length > 0 ? drawSprite($, e, { ...stripSlimeSpec(shownPit, pit.length - shownPit.length, isTerminal), key: 'stage-pit' }, now) : null
+    stage = (
+      <Box flexDirection="column">
+        {heads}
+        <Text color={opts.accent}>{'▔'.repeat(Math.max(8, Math.min(width, cols * BAND_ORDER.length)))}</Text>
+        <Box flexDirection="row">
+          {BAND_ORDER.map(member => (
+            <Box key={`tag-${member}`} width={cols} flexDirection="column">
+              {tagLine(member)}
+              {ctxLine(member, cols)}
+            </Box>
+          ))}
+        </Box>
+        {pitPicture !== null ? (
+          <Box flexDirection="row" gap={1} alignItems="flex-end">
+            {pitPicture}
+            {pit.length > shownPit.length ? <Text dimColor>{`+${pit.length - shownPit.length}`}</Text> : null}
+          </Box>
+        ) : null}
+        {pit.length > 0 ? (
+          <Box flexDirection="row" gap={2}>
+            {BAND_ORDER.filter(member => pitActs(b, member, now).length > 0).map(member => (
+              <Box key={`acts-${member}`} flexDirection="row" gap={1}>
+                <Text color={MEMBERS[member].color}>{MEMBERS[member].name[0]}</Text>
+                {actButtons(member, pitActs(b, member, now))}
+              </Box>
+            ))}
+          </Box>
+        ) : null}
+      </Box>
+    )
+  } else {
+    // Character art off: her face over her tag, her acts as glyphs.
+    stage = (
+      <Box flexDirection="row" gap={2}>
+        {BAND_ORDER.map(member => {
+          const mood = memberMood(b, member, now)
+          const pit = pitActs(b, member, now)
+          const dim = solo !== null && solo !== member
+          return (
+            <Box key={`face-${member}`} flexDirection="column">
+              <Text color={cardColor(mood, MEMBERS[member].color)} dimColor={dim} bold={!dim && mood === 'focused'}>{padFace(MEMBERS[member].faces[mood])}</Text>
+              {tagLine(member)}
+              {ctxLine(member, 10)}
+              {pit.length > 0 ? <Text color={MEMBERS[member].color}>{pit.map(a => (isLive(a) ? '♪' : a.isError ? '✖' : '✓')).join(' ')}</Text> : <Text dimColor> </Text>}
+              {actButtons(member, pit)}
+            </Box>
+          )
+        })}
       </Box>
     )
   }
 
-  return (
-    <Box flexDirection="column" backgroundColor={bg()} paddingX={compact ? 0 : 1}>
-      <Box flexDirection="row" justifyContent="space-between">
-        <Text color={opts.accent} bold>♪ KESSOKU BAND {note}</Text>
-        <Text color={b.isWorking ? PALETTE.hotPink : 'inactive'}>{b.isWorking ? '● live' : '○ idle'}</Text>
+  // ---- the mixer
+  const actLine = (member: KessokuMember, a: KessokuAgent, key: string) => {
+    const m = MEMBERS[member]
+    const encore = isEncore(a, now)
+    const live = isLive(a)
+    const failed = a.isError || a.status === 'failed'
+    const age = fmtDuration((a.endedAt ?? now) - a.startedAt)
+    const mark = live ? '♪' : failed ? '✖' : a.status === 'killed' ? '◌' : '✓'
+    // The act's name always shows; its encore (or wrong note) is said at the right, beside the length and the cost.
+    const words = `${mark} ${a.description}`
+    const right = encore ? (failed ? `wrong note · ${age}` : `encore! · ${age} · ≈${fmtUsd(a.cost)}`) : `${live ? `${age} · ` : ''}≈${fmtUsd(a.cost)}`
+    const color = failed ? 'error' : live || encore ? m.color : 'inactive'
+    const pct = b.window > 0 ? Math.round((a.context / b.window) * 100) : 0
+    return (
+      <Box key={key} flexDirection="column">
+        <Box flexDirection="row" justifyContent="space-between" gap={1}>
+          <Text color={color} bold={live || encore} dimColor={!live && !encore && !failed} wrap="truncate-end">{words}</Text>
+          <Text color={encore ? color : undefined} bold={encore} dimColor={!encore}>{right}</Text>
+        </Box>
+        <Text wrap="truncate-end">
+          <Text dimColor>ctx </Text>
+          <Text color={live ? m.color : 'inactive'}>{meter(pct, 6)}</Text>
+          <Text dimColor>{` ${pct}%`}</Text>
+        </Text>
       </Box>
-      <Text dimColor wrap="truncate-end">
-        ctx <Text color={b.contextPercent >= 85 ? 'error' : opts.accent}>{meter(b.contextPercent, 10)}</Text> {b.contextPercent}% · session {fmtUsd(b.sessionUsd)} · {onStage} on stage · {warmth(c, now)}
-      </Text>
-      {b.rateLimitPercent > 0 ? (
+    )
+  }
+  const mainLine = () => {
+    const main = b.agents.find(a => a.id === 'main') ?? mainAgent()
+    return (
+      <Box key="main-entry" flexDirection="column">
+        <Box flexDirection="row" justifyContent="space-between" gap={1}>
+          <Text color="text" wrap="truncate-end">{b.mainTask || 'the main conversation'}</Text>
+          <Text dimColor>{`≈${fmtUsd(main.cost)}`}</Text>
+        </Box>
+        <Text wrap="truncate-end">
+          <Text dimColor>ctx </Text>
+          <Text color={b.contextPercent >= 85 ? 'error' : MEMBERS.bocchi.color}>{meter(b.contextPercent, 6)}</Text>
+          <Text dimColor>{` ${b.contextPercent}% · in ${fmtTokens(main.usage.input + main.usage.cacheRead + main.usage.cacheWrite)} · out ${fmtTokens(main.usage.output)}`}</Text>
+        </Text>
+      </Box>
+    )
+  }
+  const vu = (member: KessokuMember, rows: number, isRow = false) => {
+    const level = vuLevel(b, member)
+    const steps = isRow ? 8 : Math.max(2, Math.min(8, rows))
+    const lit = Math.round((level / 8) * steps)
+    const glyphs = Array.from({ length: steps }, (_, i) => {
+      const n = isRow ? i : steps - 1 - i
+      const on = n < lit
+      return (
+        <Text key={`vu-${member}-${i}`} color={on ? (n >= steps - 2 && level >= 7 ? 'error' : MEMBERS[member].color) : undefined} dimColor={!on}>
+          {on ? '▮' : '▯'}
+        </Text>
+      )
+    })
+    return isRow ? <Text>{glyphs}</Text> : <Box flexDirection="column">{glyphs}</Box>
+  }
+  const nameButton = (member: KessokuMember, isSolo: boolean) => (
+    <Button key={`solo-${member}`} hotkey={SOLO_KEYS[member]} plain onPress={() => void pressSolo($, member, null)}>
+      <Text color={MEMBERS[member].color} bold>{MEMBERS[member].name}</Text>
+      {isSolo ? (
+        <Text backgroundColor={MEMBERS[member].color} color={PALETTE.charcoal} bold>{' SOLO '}</Text>
+      ) : null}
+      <Text dimColor>{` ${channelState(b, member, now)}`}</Text>
+    </Button>
+  )
+  const channel = (member: KessokuMember) => {
+    const m = MEMBERS[member]
+    const acts = actsInOrder(b, member, null)
+    // Bocchi's channel is the main loop first, then any act seated with her (a plain subagent no keyword placed).
+    const max = member === 'bocchi' ? (compact ? 1 : CHANNEL_ACTS - 1) : compact ? 2 : CHANNEL_ACTS
+    const shown = acts.slice(0, max)
+    const plays = member === 'bocchi' ? b.isWorking : acts.some(isLive)
+    const entries: Draw[] = [...(member === 'bocchi' ? [mainLine()] : []), ...shown.map(a => actLine(member, a, `entry-${a.id}`))]
+    if (member !== 'bocchi' && acts.length === 0) entries.push(<Text key="none" dimColor>no act on stage</Text>)
+    if (acts.length > shown.length) entries.push(<Text key="more" dimColor>{`+ ${acts.length - shown.length} more`}</Text>)
+    const rows = 1 + (member === 'bocchi' ? 2 : 0) + shown.length * 2 + (member !== 'bocchi' && acts.length === 0 ? 1 : 0) + (acts.length > shown.length ? 1 : 0)
+    return (
+      <Box key={`chan-${member}`} flexDirection="row" gap={1} flexGrow={1} flexShrink={1} borderStyle="single" borderColor={m.color} borderDimColor={!plays} paddingX={1} backgroundColor={bg(true)}>
+        {vu(member, rows)}
+        <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+          {nameButton(member, false)}
+          {entries}
+        </Box>
+      </Box>
+    )
+  }
+  const strip = (member: KessokuMember) => {
+    const m = MEMBERS[member]
+    const live = actsOf(b, member).filter(isLive).length
+    const words = member === 'bocchi' ? `ctx ${b.contextPercent}%` : live > 0 ? `${live} playing` : actsOf(b, member).length > 0 ? 'set done' : 'resting'
+    return (
+      <Box key={`strip-chan-${member}`} flexDirection="row" gap={1} flexGrow={1} flexShrink={1} borderStyle="single" borderColor={m.color} borderDimColor paddingX={1} backgroundColor={bg(true)}>
+        <Button key={`solo-${member}`} hotkey={SOLO_KEYS[member]} plain dimColor onPress={() => void pressSolo($, member, null)}>
+          <Text color={m.color} bold>{m.name}</Text>
+        </Button>
+        {vu(member, 1, true)}
+        <Text dimColor wrap="truncate-end">{words}</Text>
+      </Box>
+    )
+  }
+  const soloCard = (a: KessokuAgent, member: KessokuMember) => {
+    const m = MEMBERS[member]
+    const live = isLive(a)
+    const failed = a.isError || a.status === 'failed'
+    const encore = isEncore(a, now)
+    const age = fmtDuration((a.endedAt ?? now) - a.startedAt)
+    const pct = member === 'bocchi' ? b.contextPercent : b.window > 0 ? Math.round((a.context / b.window) * 100) : 0
+    const tally = Object.entries(a.toolTally)
+      .sort((x, y) => y[1] - x[1])
+      .slice(0, 6)
+      .map(([tool, n]) => `${tool} ×${n}`)
+      .join(' · ')
+    const since = (t: number) => (b.setStartedAt > 0 && t >= b.setStartedAt ? fmtDuration(t - b.setStartedAt) : fmtDuration(Math.max(0, now - t)) + ' ago')
+    return (
+      <Box key={`solo-card-${a.id}`} flexDirection="column" borderStyle="single" borderColor={failed ? 'error' : live || encore ? m.color : 'inactive'} borderDimColor={!live && !encore} paddingX={1}>
+        <Box flexDirection="row" justifyContent="space-between" gap={1}>
+          <Text wrap="truncate-end">
+            <Text color={failed ? 'error' : live || encore ? m.color : 'inactive'} bold>{live ? '♪' : failed ? '✖' : a.status === 'killed' ? '◌' : '✓'}</Text>
+            <Text color="text" bold>{` ${a.id === 'main' ? b.mainTask || 'the main conversation' : a.description}`}</Text>
+            <Text dimColor>{` · ${a.type}${encore ? ' · encore!' : failed ? ` · ${a.task}` : ''}`}</Text>
+          </Text>
+          <Text dimColor>{live ? age : `done · ${age}`}</Text>
+        </Box>
+        <Text wrap="truncate-end">
+          <Text dimColor>ctx </Text>
+          <Text color={live ? m.color : 'inactive'}>{meter(pct, 10)}</Text>
+          <Text color="text">{` ${pct}%`}</Text>
+          <Text dimColor>{' · tokens '}</Text>
+          <Text color="text">{fmtTokens(a.usage.input + a.usage.cacheRead + a.usage.cacheWrite + a.usage.output)}</Text>
+          <Text dimColor>{' · cost '}</Text>
+          <Text color="text">{`≈${fmtUsd(a.cost)}`}</Text>
+          <Text dimColor>{live || a.endedAt === null ? ' · started ' : ' · ended '}</Text>
+          <Text color="text">{since(live || a.endedAt === null ? a.startedAt : a.endedAt)}</Text>
+        </Text>
         <Text dimColor wrap="truncate-end">
-          plan <Text color={b.rateLimitPercent >= 80 ? 'warning' : opts.accent}>{meter(b.rateLimitPercent, 10)}</Text> {b.rateLimitPercent}% of the fullest window
+          {tally === '' ? 'no tool yet' : tally}
+          {a.lastTool ? ` · ${live ? 'now' : 'last'}: ${a.lastTool}` : ''}
+        </Text>
+      </Box>
+    )
+  }
+  const soloConsole = (member: KessokuMember) => {
+    const m = MEMBERS[member]
+    const acts = (member === 'bocchi' ? [b.agents.find(a => a.id === 'main') ?? mainAgent(), ...actsInOrder(b, member, u.soloAct)] : actsInOrder(b, member, u.soloAct)).slice(0, SOLO_ACTS)
+    const figure = sprites ? drawSprite($, e, isTerminal ? memberSprite('solo-figure', member, memberMood(b, member, now), 'mini', 'half', 1, bg(true)) : memberSprite('solo-figure', member, memberMood(b, member, now), 'full', 'quad', 1), now) : null
+    return (
+      <Box flexDirection="column">
+        <Box flexDirection="row" gap={1}>{BAND_ORDER.filter(x => x !== member).map(strip)}</Box>
+        <Box flexDirection="row" gap={1} borderStyle="single" borderColor={m.color} paddingX={1} backgroundColor={bg(true)}>
+          {vu(member, 6)}
+          <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+            <Box flexDirection="row" justifyContent="space-between" gap={1}>
+              {nameButton(member, true)}
+              <Text dimColor wrap="truncate-end">{`${SOLO_KEYS[member]} or m: back to the mix`}</Text>
+            </Box>
+            {acts.length === 0 ? <Text dimColor>no act on stage</Text> : acts.map(a => soloCard(a, member))}
+          </Box>
+          {figure}
+        </Box>
+      </Box>
+    )
+  }
+  const pairs: KessokuMember[][] = compact || width < 60 ? BAND_ORDER.map(m => [m]) : [['bocchi', 'nijika'], ['ryo', 'kita']]
+  const mixer =
+    solo !== null ? (
+      soloConsole(solo)
+    ) : (
+      <Box flexDirection="column">
+        {pairs.map(row => (
+          <Box key={`row-${row.join('-')}`} flexDirection="row" gap={1}>
+            {row.map(channel)}
+          </Box>
+        ))}
+      </Box>
+    )
+
+  // ---- the keys and the rail
+  const keys = (
+    <Box flexDirection="row" gap={2}>
+      <Text dimColor>{`solo ${BAND_ORDER.map(m => SOLO_KEYS[m]).join(' ')}`}</Text>
+      {solo !== null ? <Button key="solo-mix" label="mix" hotkey="m" plain dimColor onPress={() => void update($, ui, x => ({ ...x, solo: null, soloAct: null, soloUntil: 0, soloChosen: false }))} /> : null}
+      {compact ? <Button key="panel-hide" label="Hide" hotkey="h" plain dimColor onPress={() => void update($, ui, x => ({ ...x, isPanelOpen: false, panelWhere: 'none' as const }))} /> : null}
+    </Box>
+  )
+  const amp = c.keepWarmUntil > now ? `● keepwarm ${fmtDuration(c.keepWarmUntil - now)}` : c.lastWarmAt > 0 && now - c.lastWarmAt > ttlMs() ? '❄ cold' : c.lastWarmAt > 0 ? `☀ warm ${fmtDuration(Math.max(0, ttlMs() - (now - c.lastWarmAt)))}` : '○ no cache yet'
+  const rail = (
+    <Text wrap="truncate-end">
+      <Text dimColor>CTX </Text>
+      <Text color={b.contextPercent >= 85 ? 'error' : opts.accent}>{meter(b.contextPercent, 10)}</Text>
+      <Text color="text">{` ${b.contextPercent}%`}</Text>
+      {b.rateLimitPercent > 0 ? (
+        <Text>
+          <Text dimColor>{' · PLAN '}</Text>
+          <Text color={b.rateLimitPercent >= 80 ? 'warning' : opts.accent}>{meter(b.rateLimitPercent, 6)}</Text>
+          <Text color="text">{` ${b.rateLimitPercent}%`}</Text>
         </Text>
       ) : null}
-      {members.map(memberBox)}
+      <Text dimColor>{' · GATE '}</Text>
+      <Text color={opts.accent} bold>{fmtUsd(b.sessionUsd)}</Text>
+      <Text dimColor>{' · AMP '}</Text>
+      <Text color={amp.startsWith('❄') ? 'error' : PALETTE.peach}>{amp}</Text>
+      <Text dimColor>{` · ${liveCount(b)} on stage`}</Text>
+    </Text>
+  )
+
+  return (
+    <Box flexDirection="column" backgroundColor={bg()} paddingX={compact ? 0 : 1}>
+      {marquee}
+      {stage}
+      {mixer}
+      {keys}
+      {rail}
       {b.lastError ? <Text color="error" wrap="truncate-end">✖ last wrong note: {b.lastError}</Text> : null}
-      {compact ? (
-        <Box flexDirection="row" gap={2}>
-          <Button key="panel-hide" label="Hide" hotkey="h" plain dimColor onPress={() => void update($, ui, x => ({ ...x, isPanelOpen: false, panelWhere: 'none' as const }))} />
-          <Text dimColor>/kessoku toggles · estimates from a price table, not your bill</Text>
-        </Box>
-      ) : (
-        <Text dimColor>cost ≈ list prices × tokens, not your bill · /kessoku toggles</Text>
-      )}
+      <Text dimColor>{compact ? '/kessoku toggles · estimates from a price table, not your bill' : 'cost ≈ list prices × tokens, not your bill · /kessoku toggles'}</Text>
     </Box>
   )
 }
@@ -1931,13 +2377,14 @@ function drawPanel($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache,
  * terminal draws the minis in quadrants (35x4 cells for four), a remote
  * surface the portraits, one CSS pixel a pixel.
  */
-function stripSpec(b: KessokuBand, members: readonly KessokuMember[], now: number, isTerminal: boolean): SpriteSpec {
+function stripSpec(b: KessokuBand, members: readonly KessokuMember[], now: number, isTerminal: boolean, dim: KessokuMember | null = null, mode: CellMode = 'quad', key = 'strip-sprites'): SpriteSpec {
   const view: MemberView = isTerminal ? 'mini' : 'portrait'
   const { w, h } = viewSize(view)
   const pitch = w + 2
-  const parts = members.map((member, i) => ({ id: spriteId(member, memberMood(b, member, now), view), x: i * pitch, y: 0 }))
+  // On a solo every head but the soloist's is dimmed.
+  const parts = members.map((member, i) => ({ id: spriteId(member, memberMood(b, member, now), view), x: i * pitch, y: 0, ...(dim !== null && dim !== member ? { dim: true } : {}) }))
   const names = members.map(member => `${MEMBERS[member].name}, ${memberMood(b, member, now)}`).join('; ')
-  return { key: 'strip-sprites', parts, w: members.length * pitch - 2, h, mode: 'quad', scale: 1, bg: bg(), alt: `Kessoku Band: ${names}` }
+  return { key, parts, w: members.length * pitch - 2, h, mode, scale: 1, bg: bg(), alt: `Kessoku Band: ${names}` }
 }
 
 /**
@@ -1948,7 +2395,11 @@ function stripSpec(b: KessokuBand, members: readonly KessokuMember[], now: numbe
  * the rows for them, as many as the width holds up to STRIP_SLIMES, then
  * `+n`. Otherwise the one-line strip.
  */
-function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: KessokuBand, c: KessokuCache, r: KessokuReplay, now: number, isRoomy: boolean, slimeRoom: boolean): Draw {
+function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: KessokuBand, c: KessokuCache, r: KessokuReplay, now: number, isRoomy: boolean, slimeRoom: boolean, u: KessokuUi = INITIAL_UI): Draw {
+  if (drawsScene(e)) {
+    const sign = drawStripScene($, e, b, c, r, u, now)
+    if (sign !== null) return sign
+  }
   const { Box, Text, Button } = $.ui.resolve(e)
   const members: KessokuMember[] = ['bocchi', 'nijika', 'ryo', 'kita']
   const isTerminal = e.surface === 'terminal'
@@ -1972,19 +2423,25 @@ function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: Kessoku
           {extra > 0 ? <Text dimColor>{`+${extra}`}</Text> : null}
         </Box>
       )
+    // ON AIR and what is playing right now, over the acts in words.
+    const playing = nowPlaying(b, now)
     const text = (
       <Box flexDirection="column" flexGrow={1} flexShrink={1}>
         <Text wrap="truncate-end">
-          <Text color={opts.accent} bold>♪ </Text>
-          {members.map((member, i) => {
-            const mood = memberMood(b, member, now)
-            return (
-              <Text key={`strip-name-${member}`} color={cardColor(mood, MEMBERS[member].color)} bold={mood === 'focused'}>
-                {i > 0 ? ' · ' : ''}
-                {MEMBERS[member].name}
-              </Text>
-            )
-          })}
+          {b.isWorking ? (
+            <Text backgroundColor={PALETTE.red} color="#ffffff" bold>{' ● ON AIR '}</Text>
+          ) : (
+            <Text dimColor>○ OFF AIR</Text>
+          )}
+          {playing.who === null ? (
+            <Text dimColor>{` · ${playing.words}`}</Text>
+          ) : (
+            <Text>
+              <Text color={opts.accent} bold>{' · NOW PLAYING · '}</Text>
+              <Text color={MEMBERS[playing.who].color} bold>{MEMBERS[playing.who].name}</Text>
+              <Text color="text">{` · ${playing.words}`}</Text>
+            </Text>
+          )}
         </Text>
         <Text dimColor wrap="truncate-end">
           {words} · {fmtUsd(b.sessionUsd)} · {warmth(c, now)}
@@ -2219,19 +2676,30 @@ function drawMemo($: EngineInterface, e: RenderInput<'AbovePrompt'>, m: KessokuM
   }
   const Input = 'Input' in table ? table.Input : null
   const keep = (value: string) => void update($, memo, x => (x === null ? x : { ...x, rule: value.trim() || x.rule, status: 'open' as const }))
+  // The backstage pass: a stripe in Nijika's yellow down the card's left, and her tag on the title.
+  const pass = (
+    <Text backgroundColor={n.color} color={PALETTE.charcoal} bold>
+      {' BAND MEMO '}
+    </Text>
+  )
   return (
     <Box flexDirection="row" gap={1} borderStyle="round" borderColor={n.color} paddingX={1} backgroundColor={bg()}>
+      <Box width={1} backgroundColor={n.color} flexDirection="column">
+        <Text color={n.color}>{' '}</Text>
+      </Box>
       {sprite}
       <Box flexDirection="column" flexGrow={1} flexShrink={1}>
         {m.by === undefined ? (
           <Text wrap="truncate-end">
-            <Text color={n.color} bold>{face(n.faces.focused)}NIJIKA · band memo</Text>
+            {pass}
+            <Text color={n.color} bold>{` ${face(n.faces.focused)}Nijika`}</Text>
             <Text dimColor> · "no, in this band we do it like this"</Text>
           </Text>
         ) : (
           // A rule Claude proposed through the memo tool: the same card, signed by who proposed it.
           <Text wrap="truncate-end">
-            <Text color={n.color} bold>{face(n.faces.focused)}NIJIKA · band memo</Text>
+            {pass}
+            <Text color={n.color} bold>{` ${face(n.faces.focused)}Nijika`}</Text>
             <Text dimColor> · proposed by </Text>
             <Text color={MEMBERS[m.by].color}>{MEMBERS[m.by].name}</Text>
             <Text dimColor> mid-set</Text>
@@ -2423,6 +2891,8 @@ async function demoBand($: EngineInterface, on: boolean): Promise<string> {
     tools: 12,
     cost: costOf(usage, DEMO_MODEL),
     isError,
+    toolTally: { Read: 5, Grep: 4, Bash: 3 },
+    lastTool: task,
   })
   await upsertAgent($, demo('nijika', 'nijika', 'Plan the auth refactor rollout', 'TaskCreate: 5 tasks', 'running', { input: 3000, output: 4200, cacheRead: 38000, cacheWrite: 2000 }, 48_000, null))
   await upsertAgent($, demo('ryo', 'ryo', 'Find every call site of legacyQuery()', 'Grep "legacyQuery"', 'running', { input: 1200, output: 2100, cacheRead: 61000, cacheWrite: 900 }, 17_000, null))
@@ -2515,6 +2985,7 @@ const HELP_LINES = [
   '/cache-tax        is the cache warm, and what would a cold send cost?',
   '/bocchi theme [on|off|status]   switch Claude Code\'s own theme to Kessoku Bocchi (the light twin on a light theme), or back',
   '/bocchi strip     hide or show the band strip above the prompt',
+  "/bocchi solo <bocchi|nijika|ryo|kita|off>   one member's channel across the panel's mixer, every act in full (on the panel: her hotkey b n r k, m for the mix; an act's number under her slimes solos her with that act first)",
   '/bocchi mood <anxious|focused|happy|panic|melting|hiding>   try a face in the status line',
   '/bocchi demo [off]   put sample acts on the panel · /bocchi memo [proposed] · /bocchi tax · /bocchi crash · /bocchi setlist   previews',
   'Blast Radius and Reflect need no command: a risky command or a correction brings them up, and Claude can propose a rule itself with the memo tool (you still press Save).',
@@ -2599,7 +3070,7 @@ export const register: Register = (on, options) => {
     await $.command.register({ name: 'replay', description: 'Replay Theater: step through the last turn\'s edits as a setlist' })
     await $.command.register({ name: 'keepwarm', description: 'Cache Tax: keep the prompt cache warm (e.g. /keepwarm 90m, /keepwarm off)', argumentHint: '[duration|off]' })
     await $.command.register({ name: 'cache-tax', description: 'Cache Tax: is the cache warm, and what would a cold send cost?' })
-    await $.command.register({ name: 'bocchi', description: 'Kessoku theme: help, the engine theme, previews, moods, the strip', argumentHint: '[help|theme on|off|strip|mood <m>|demo|memo [proposed]|tax|crash|setlist]' })
+    await $.command.register({ name: 'bocchi', description: 'Kessoku theme: help, the engine theme, previews, moods, the strip', argumentHint: '[help|theme on|off|strip|solo <member|off>|mood <m>|demo|memo [proposed]|tax|crash|setlist]' })
     await readEngine($).catch(() => undefined)
     // What the model can do with the band: delegate to a member by name, and propose a rule for Nijika's card.
     await registerBand($).catch(() => undefined)
@@ -2623,6 +3094,9 @@ export const register: Register = (on, options) => {
       pendingTracks = []
       await update($, cache, c => ({ ...INITIAL_CACHE, keepWarmUntil: c.keepWarmUntil, engineWriteUsd: c.engineWriteUsd, engineModel: c.engineModel, model: c.model }))
       await update($, band, () => INITIAL_BAND)
+      // the status line starts over with the band: no box, melt or panic left from the set before
+      await setMood($, 'anxious')
+      await update($, ui, x => ({ ...x, solo: null, soloAct: null, soloUntil: 0, soloChosen: false }))
       await update($, replay, x => ({ ...INITIAL_REPLAY, setlist: x.setlist }))
       await update($, tree, x => ({ ...x, lights: [] }))
       await update($, memo, () => null)
@@ -2690,6 +3164,13 @@ export const register: Register = (on, options) => {
         const u = await update($, ui, x => ({ ...x, isStripHidden: !x.isStripHidden }))
         return { text: u.isStripHidden ? 'Kessoku: the strip is hidden.' : 'Kessoku: the strip is back above the prompt.' }
       }
+      case 'solo': {
+        const members: KessokuMember[] = ['bocchi', 'nijika', 'ryo', 'kita']
+        const member = members.find(m => m === arg)
+        if (member === undefined && arg !== 'off' && arg !== 'mix') return { text: `/bocchi solo <${members.join('|')}|off>: one member's channel across the mixer (her hotkey, b n r k, does the same when the panel has the focus; m is the mix).` }
+        await update($, ui, x => ({ ...x, solo: member ?? null, soloAct: null, soloUntil: 0, soloChosen: member !== undefined }))
+        return { text: member === undefined ? 'Kessoku: back to the mix.' : `Kessoku: ${MEMBERS[member].name} on solo (/bocchi solo off, or m on the panel, for the mix).` }
+      }
       case 'mood': {
         const moods: KessokuMood[] = ['anxious', 'focused', 'happy', 'panic', 'melting', 'hiding']
         const mood = moods.find(m => m === arg)
@@ -2714,12 +3195,21 @@ export const register: Register = (on, options) => {
 
   // -- turns -----------------------------------------------------------------------
   on('turn.start', async ($, e, next) => {
+    // A subagent's run starts a turn of its own: the set, its tracks and the main loop's figures are the main loop's alone.
+    if (e.agentId !== undefined) return next(e)
     pendingTracks = []
+    // Track numbers count from one again; the rows of earlier sets keep theirs.
+    trackCount = 0
     // The session's folder moves with /cd or a worktree change; the labels and the guard follow it.
     cwd = await $.session.cwd().catch(() => cwd)
     const now = await $.clock.now()
     const head = e.text.replace(/\s+/g, ' ').trim().slice(0, 48)
-    await update($, band, b => patchAgent({ ...b, isWorking: true, mainTask: head, lastError: '' }, 'main', a => ({ ...a, status: 'running', startedAt: a.startedAt || now, task: '' })))
+    await update($, band, b => patchAgent({ ...b, isWorking: true, mainTask: head, lastError: '', set: (b.set ?? 0) + 1, setStartedAt: now, setPrompt: head }, 'main', a => ({ ...a, status: 'running', startedAt: now, endedAt: null, task: '', toolTally: {}, lastTool: '', isError: false })))
+    // The main loop is Bocchi's act: a chosen solo of hers holds while it plays.
+    await update($, ui, raw => {
+      const x = uiOf(raw)
+      return x.solo === 'bocchi' && x.soloChosen && x.soloUntil > 0 ? { ...x, soloUntil: 0 } : x
+    })
     await setMood($, 'focused', head ? `"${head}"` : '')
     ensureTick($)
     return next(e)
@@ -2751,15 +3241,18 @@ export const register: Register = (on, options) => {
       const status: KessokuAgent['status'] = ok ? 'completed' : e.reason === 'aborted' ? 'killed' : 'failed'
       const isError = e.reason === 'error' || e.reason === 'refusal'
       await update($, band, b => patchAgent(b, id, a => ({ ...a, status, endedAt: now, isError: a.isError || isError, task: ok ? 'encore!' : `stopped: ${e.reason}` })))
-      const b = await read($, band)
+      const b = bandOf(await read($, band))
       const a = b.agents.find(x => x.id === id)
       if (a !== undefined) {
         const m = MEMBERS[a.member]
         toast($, `${ok ? m.faces.happy : m.faces.panic} ${m.name} ${ok ? 'finished' : 'stopped'}: ${a.description.slice(0, 50)} · ${fmtTokens(a.usage.input + a.usage.cacheRead + a.usage.cacheWrite + a.usage.output)} · ≈${fmtUsd(a.cost)}`, 'chatter')
+        await settleSolo($, b, a.member, now)
       }
+      // The encore holds her line for a moment: a redraw once it is over.
+      scheduleTail($, now + ENCORE_MS, now)
       return r
     }
-    await update($, band, b => patchAgent({ ...b, isWorking: false }, 'main', a => ({ ...a, status: 'idle' })))
+    await update($, band, b => patchAgent({ ...b, isWorking: false }, 'main', a => ({ ...a, status: 'idle', endedAt: now })))
     const edits = pendingTracks.length
     if (edits > 0) {
       const tracks = pendingTracks.slice(-MAX_TRACKS)
@@ -2844,6 +3337,19 @@ export const register: Register = (on, options) => {
     ensureTick($)
     const m = MEMBERS[member]
     toast($, `${m.faces.focused} ${m.name} takes the stage: ${e.description.slice(0, 60)}${isNamed ? ` (seated by name: ${e.subagentType})` : ''}`, 'chatter')
+    // Her new act keeps a chosen solo of hers up: a pending end (her last act's encore) is called off.
+    await update($, ui, raw => {
+      const x = uiOf(raw)
+      return x.solo === member && x.soloChosen && x.soloUntil > 0 ? { ...x, soloUntil: 0 } : x
+    })
+    // Auto solo: her channel opens for a moment, unless a solo someone chose is up.
+    if (opts.autoSolo) {
+      await update($, ui, raw => {
+        const x = uiOf(raw)
+        return x.solo !== null && x.soloChosen ? x : { ...x, solo: member, soloAct: r.agentId ?? null, soloUntil: now + AUTO_SOLO_MS, soloChosen: false }
+      })
+      scheduleTail($, now + AUTO_SOLO_MS, now)
+    }
     return r
   }).catch(($, e, next) => next(e))
 
@@ -2859,7 +3365,10 @@ export const register: Register = (on, options) => {
 
   on('classic.SubagentStop', async ($, e, next) => {
     const now = await $.clock.now()
-    await update($, band, b => patchAgent(b, e.agent_id, a => (isLive(a) ? { ...a, status: 'completed', endedAt: now } : a)))
+    const b = await update($, band, x => patchAgent(x, e.agent_id, a => (isLive(a) ? { ...a, status: 'completed', endedAt: now } : a)))
+    const a = b.agents.find(x => x.id === e.agent_id)
+    if (a !== undefined) await settleSolo($, b, a.member, now)
+    scheduleTail($, now + ENCORE_MS, now)
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -2868,6 +3377,12 @@ export const register: Register = (on, options) => {
     const input = e as unknown as Record<string, unknown>
     const tool = String(e.tool)
     const agentId = e.agentId
+    // The call's track number in the set, for its row in the transcript.
+    if (agentId === undefined && typeof input.tool_use_id === 'string') {
+      trackCount += 1
+      trackNumbers.set(input.tool_use_id, { n: trackCount, startedAt: await $.clock.now() })
+      if (trackNumbers.size > 500) trackNumbers.delete(trackNumbers.keys().next().value as string)
+    }
 
     // The guard, where someone can answer it: a headless run with no screen is the person's own permission settings' business.
     if (SHELL_TOOLS.has(tool)) {
@@ -2885,7 +3400,7 @@ export const register: Register = (on, options) => {
     // The bookkeeping before the call runs alongside it, never ahead of it: the tool is not kept waiting.
     const pre = (async (): Promise<KessokuMember> => {
       const member = agentId === undefined ? 'bocchi' : ((await read($, band)).agents.find(a => a.id === agentId)?.member ?? 'bocchi')
-      await noteTask($, agentId, describeCall(tool, input, cwd))
+      await noteTask($, agentId, describeCall(tool, input, cwd), tool)
       if (isEdit && filePath !== '') await light($, filePath, 'editing', member)
       else if (tool === 'Read' && filePath !== '') await light($, filePath, 'read', member)
       return member
@@ -2895,10 +3410,19 @@ export const register: Register = (on, options) => {
     // resolves before any spawn hook could rename it.
     const alias = tool === 'Agent' ? registeredType(readField(input, 'subagent_type')) : null
     const ran = await next(alias === null ? e : ({ ...e, subagent_type: alias } as typeof e))
+    // When the call ended: its row's length is what it took, not the time since it began.
+    if (agentId === undefined && typeof input.tool_use_id === 'string') {
+      const track = trackNumbers.get(input.tool_use_id)
+      if (track !== undefined) trackNumbers.set(input.tool_use_id, { ...track, endedAt: await $.clock.now() })
+    }
     const member = await pre
 
+    // Told no (the person turned the model's call down, or a hook refused it): Bocchi ducks into her box for a moment.
+    // Only the main loop's own calls (the engine's call site, not a plugin's `$.tool.call`), never the mod's memo
+    // refusals, and never over the guard's panic while its screen holds a command.
+    if (ran.deny !== undefined && agentId === undefined && next.origin.plugin === 'engine' && tool !== MEMO_TOOL && held === null) await setMood($, 'hiding', 'told no… hiding in the box', 6000)
     const failed = ran.deny === undefined && ran.isError === true
-    if (isEdit && filePath !== '') await light($, filePath, failed ? 'read' : 'edited', member)
+    if (isEdit && filePath !== '') await light($, filePath, failed || ran.deny !== undefined ? 'read' : 'edited', member)
     if (isEdit && ran.deny === undefined && !failed) {
       try {
         pendingTracks.push(...tracksFor(tool, input, (ran as { result?: unknown }).result, member))
@@ -3023,14 +3547,27 @@ export const register: Register = (on, options) => {
         </Box>
       )
     }
-    const m = MEMBERS[memberForTool(tool)]
+    const member = memberForTool(tool)
+    const m = MEMBERS[member]
     const color = e.props.isErrored ? 'error' : e.props.isRunning ? opts.accent : PALETTE.rose
-    const state = e.props.isErrored ? 'wrong note' : e.props.isInterrupted ? 'cut off' : e.props.isRunning ? 'playing' : '♪'
+    // The row as a track of the set: its number, the member's tag, the tool, what it touched, and at the right its state or its length.
+    const track = trackNumbers.get(e.props.tool_use_id)
+    const now = await $.clock.now()
+    const described = describeCall(tool, (e.props.input ?? {}) as Record<string, unknown>, cwd)
+    const target = described.startsWith(`${tool} `) ? described.slice(tool.length + 1) : described === tool ? '' : described
+    const state = e.props.isErrored ? 'wrong note' : e.props.isInterrupted ? 'cut off' : e.props.isRunning ? 'playing' : track === undefined || track.endedAt === undefined ? '♪' : fmtDuration(Math.max(0, track.endedAt - track.startedAt))
     const header = (
-      <Text wrap="truncate-end">
-        <Text color={color} bold>{isEdit ? '♫' : '♪'} {tool}</Text>
-        <Text dimColor> · {m.faces[e.props.isErrored ? 'panic' : e.props.isRunning ? 'focused' : 'happy']} {m.name} · {state}</Text>
-      </Text>
+      <Box flexDirection="row" justifyContent="space-between" gap={1}>
+        <Text wrap="truncate-end">
+          <Text color={color} bold>{isEdit ? '♫' : '♪'}</Text>
+          {track === undefined ? null : <Text dimColor>{` ${String(track.n).padStart(2, '0')}`}</Text>}
+          <Text dimColor>{' · '}</Text>
+          <Text backgroundColor={m.color} color={PALETTE.charcoal} bold>{` ${m.name} `}</Text>
+          <Text color="text" bold>{` ${tool}`}</Text>
+          {target === '' ? null : <Text dimColor>{` · ${target}`}</Text>}
+        </Text>
+        <Text color={e.props.isErrored ? 'error' : e.props.isRunning ? opts.accent : undefined} dimColor={!e.props.isErrored && !e.props.isRunning}>{state}</Text>
+      </Box>
     )
     // An edit is a setlist card with a frame; any other call is one header line over the engine's row, so the transcript stays short.
     if (!isEdit) {
@@ -3188,10 +3725,11 @@ export const register: Register = (on, options) => {
   // A drawing that may hold sprites marks its site first (beginSprites), after its reads and before it draws.
   on('ui.render', { component: 'Pane', requestId: PANEL }, async ($, e) => {
     const now = await $.clock.now()
-    const b = await read($, band)
+    const b = bandOf(await read($, band))
     const c = await read($, cache)
+    const u = await read($, ui)
     beginSprites(e)
-    return drawPanel($, e, b, c, now, false)
+    return drawPanel($, e, b, c, soloNow(u, now), now, false)
   })
   on('ui.render', { component: 'Pane', requestId: TREE }, async ($, e) => {
     const now = await $.clock.now()
@@ -3244,7 +3782,7 @@ export const register: Register = (on, options) => {
     const r = await read($, replay)
     const t = await read($, tree)
     const u = await read($, ui)
-    const b = await read($, band)
+    const b = bandOf(await read($, band))
     const beat = t.isOpen && t.isBand ? await read($, frame) : 0
     // Other mods' bands stack under this one's drawing rather than vanishing behind it.
     const { Box } = $.ui.resolve(e)
@@ -3258,7 +3796,7 @@ export const register: Register = (on, options) => {
     beginSprites(e)
     if (r.isOpen && r.inBand) return stack(drawReplay($, e, r, true, now))
     if (t.isOpen && t.isBand) return stack(drawTree($, e, t, beat, now))
-    if (u.isPanelOpen && u.panelWhere === 'band') return stack(drawPanel($, e, b, c, now, true))
+    if (u.isPanelOpen && u.panelWhere === 'band') return stack(drawPanel($, e, b, c, soloNow(u, now), now, true))
     if (u.isStripHidden) return below
     // The strip's heads take four rows on a terminal: only where the band has them to spare beside whatever stacks below;
     // the row of slimes under them three more, so seven in all.
@@ -3266,6 +3804,6 @@ export const register: Register = (on, options) => {
     const hasBelow = below.type !== 'engine'
     const isRoomy = e.surface !== 'terminal' || e.props.maxRows >= (hasBelow ? 10 : 6)
     const slimeRoom = e.surface !== 'terminal' || e.props.maxRows >= (hasBelow ? 11 : 7)
-    return stack(drawStrip($, e, b, c, r, now, isRoomy, slimeRoom))
+    return stack(drawStrip($, e, b, c, r, now, isRoomy, slimeRoom, u))
   })
 }

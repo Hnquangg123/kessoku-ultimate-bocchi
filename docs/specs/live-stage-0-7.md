@@ -246,3 +246,102 @@ it: `Box`, `Text` and `Button` with its `hotkey`, `plain`, children and `hover`;
   declarations pass. The slot pictures were looked at through the mod's own SVG writer in a browser (the mix, and Ryo on
   solo with the others dimmed). Not checked live in a session: the installed copy runs until this branch is installed.
   Durations read as the mod's other figures do (`0:48`, `1:31`), not `48s`.
+
+## Revision: the desktop draws the live house
+
+Written 2026-10-19, after the person saw the first build in the desktop app and found it "not beautiful enough,
+worse than the prototype, with weird padding". The terminal keeps everything above. **A surface that draws `Svg`**
+(desktop, vscode, mobile), with character art on, draws the panel and the strip as **STARRY, the live house**. The
+design was picked from four directions, each built on the real sprites, screenshotted and judged by three lenses
+(the throwaway work is in the git-ignored `studio/out/v08/`).
+
+### What went wrong on the desktop
+
+- The VU was a column of `▯` glyphs, one per text row. The desktop drew it as a strip of empty squares down every
+  card, which read as padding.
+- The `▰▱` meters drew as outlined boxes.
+- Every Text was one size, and the hotkey key-caps cluttered each title.
+
+### The tree
+
+All of it is in `drawScene` and `drawStripScene` (`hooks/register.tsx`), drawn from `panelView`
+(`hooks/lib/stage.ts`) by `hooks/lib/scene.ts`.
+
+- **Stage** (`scene-stage`). An image like every other picture (see *Round 3* below for why it is not interactive):
+  - the neon *Kessoku Band* sign, the string lights and the LIVE/OFF lamp;
+  - the band on a live-house stage, ×2 (×3 from 900 px): Nijika behind her drum kit and Ryo by her bass rig on the
+    drum riser, Bocchi by her amp and Kita at her mic stand on the deck in front, left to right in the band's order;
+  - their slimes in the pit.
+
+  A cone lights a member only while she plays; an encore stays dark, with a sparkle. A red ✗ bubble sits over a
+  failed act's slime. On a solo, the others dim and only her cone is up. The stage carries **no clock, no cost and
+  no tool**, so its source is byte-identical between redraws unless a mood, a light, a slime, a failure mark or the
+  solo changes. It is memoised on exactly those, so its animations never restart on a tick. Sprites are fitted into
+  what the chrome leaves through `fitSprites(parts, budget)` (`hooks/lib/sprite.ts`).
+- **Plates** (`scene-plates`). Under the stage, each member's name, her spend, and her status (chosen by fit, a
+  failure always winning).
+- **Board.** A Box painted the board green, with a wood border, holds:
+  - the **head** (`scene-head`): "Setlist · set N" with the session's cost, or on a solo her page with her ×2
+    polaroid;
+  - one Box per **song** (`song-<act id>`): the act's whole description in chalk, its context bar, cost, time, her
+    name, and `now`/`last` and the tool;
+  - the **foot** (`scene-foot`): the fold line for songs past eight, the main context, the plan's window and the
+    cache, over the chalk tray.
+
+  Each song's Box is keyed, so the surface **reveals its details on hover** (a hidden Box with
+  `hover: { display: 'flex' }`, itself unkeyed, as the engine requires). The details are tools by count, model,
+  steps, tokens, type and when it ran, plus a native "Open on her page" Button. Songs are images, so a redraw swaps
+  them cleanly. The order is the main loop, playing, waiting, failed, then the rest, newest first. A failed act gets
+  a red ✗, a wavy red underline, its reason on its own line and a FAILED stamp. A tool error in an act that carried
+  on is an amber "last error" line, not a failure (`ActView.hadError` against `isFailed`, which follows the status
+  alone).
+- **Buttons.** Native, under the board: each member's solo (`b n r k`), "Back to the mix" (`m`, primary) on a
+  solo, and Hide above the prompt. Above the prompt (compact) the stage stays off and the board lists three songs.
+- **Strip** (`strip-sign`). An image: a neon now-playing sign in the playing member's colour, with her portrait,
+  the act, the tool in her hands, its time, context and cost, who else is on stage, and a red pill naming who
+  failed and why. Between sets it is a warm "Between sets" sign. Replay, Panel and Hide are native Buttons beside it.
+
+Every picture declares a `viewBox` of the layout width (`layoutFor(bodyColumns)`, 340–1080) and a width four times
+it, so the surface scales it to its slot. Each is under the Svg element's 131,072 characters; the largest, a stage
+with the whole band in its happy loop at 340 px, is about 130.8k. The alts are built in the hooks module from the view (stable words for readers and
+tests).
+
+### Round 3: the stage as an image, a real stage, a calm melt, the box
+
+The person reloaded and saw the stage tiny, the melting odd, the band oddly placed, and asked when Bocchi hides.
+
+- **The stage is an image.** On the desktop an interactive Svg is an `<iframe srcdoc>` with no size of its own:
+  the surface drew it 300 x 150 and, since the `<svg>` carries a width four times its viewBox, showed a cropped
+  corner of it. Every picture is now an `<img>` (`display:block; max-width:100%`), so the stage fills the pane's width
+  at any zoom; SMIL and CSS still animate inside an image (checked in Chromium). The click areas and hover CSS the
+  stage had are gone (an image ignores them); the solo Buttons under the board do that job.
+- **A real stage** (`stageGeo`, `drawStage` in `hooks/lib/scene.ts`). One layout at every width: a drum riser
+  (carpeted top, lit edge, pleated face, shadow) carries the back line, Nijika seated behind a pixel-art drum kit
+  (bass drum with the band's star, toms, snare, hi-hat, ride and crash; its cymbals glint only while she plays) and
+  Ryo with her bass rig; the front line stands lower on the deck, Bocchi by her half-stack, Kita at her mic stand.
+  Each figure takes her measured reach in her current mood, so nobody is cut off by the stage's edge; where the
+  stage is narrow they overlap only front over back. On a solo the soloist draws over her own row only, so the kit
+  stays behind the front line. Repeated slimes in a pit are `<use>` copies of the first; motion CSS is emitted only
+  when something moves. The largest stage measured is 130,800 characters.
+- **A calm melt.** Bocchi melts for as long as the context is past 85 %, which can be hours, and her loop used to
+  collapse into a flat puddle and reform every 2.8 s. Her `melting` is now a 5 s sustained melt
+  (`studio/src/anim/moods.ts`): mostly pooled, her face and guitar above the puddle, sagging and dripping, a
+  failed attempt to pull herself up, two blinks; 11 distinct pictures instead of 23, so the stage never has to
+  merge her frames.
+- **The box** (mood `hiding`). It used to come only with an interrupted turn. Now:
+  - an interrupted turn: Bocchi, 8 s;
+  - a refused call (the person turned a model's call down, or a hook refused it; not the mod's own memo, not a
+    plugin's own `$.tool.call`, never over the guard's panic): Bocchi, 6 s;
+  - the prompt cache gone cold between turns (`isColdRoom`: its TTL past since the last warm turn): Bocchi until the
+    next prompt, checked each minute by `coldWatch`; `/clear` starts her over, and `revertMood` keeps her there
+    across a reload;
+  - a member's act stopped (`killed`): that member, through her encore (`memberMood`).
+
+  On the stage her box stands where she stands (Nijika's behind the kit), and her plate reads `in her box`.
+
+### State added with it
+
+- `KessokuBand.setPrompt`: what the set was asked. The main loop's song is titled by it, while `mainTask` follows
+  the tool in hand.
+- `PanelView.soloAct`: the act pressed to open a page, listed first there.
+- `turn.start` clears the main loop's error flag.
