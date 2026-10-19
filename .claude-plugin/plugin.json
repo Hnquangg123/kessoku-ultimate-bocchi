@@ -1,7 +1,7 @@
 {
   "name": "kessoku-ultimate-bocchi",
   "version": "1.0.0",
-  "description": "Kessoku Ultimate Bocchi Theme: a Bocchi the Rock!-inspired charcoal-and-pink skin for all of Claude Code (an engine theme plus every render site), a live Kessoku Band panel with the band on stage as animated pixel-art sprites under spotlights, a mixer of their subagents (solo any member) and band subagent types Claude can delegate to by name, and themed Cache Tax, Blast Radius, Filetree, Reflect and Replay Theater gags.",
+  "description": "Kessoku Ultimate Bocchi Theme: a Bocchi the Rock!-inspired charcoal-and-pink skin for all of Claude Code (an engine theme plus every render site), a live Kessoku Band panel with the band on stage as animated pixel-art sprites under spotlights and their subagents as songs on a setlist (solo any member) and band subagent types Claude can delegate to by name, and themed Cache Tax, Blast Radius, Filetree, Reflect and Replay Theater gags.",
   "author": {
     "name": "Dylan"
   },
@@ -27,7 +27,7 @@
     "characterArt": {
       "type": "string",
       "title": "Character art",
-      "description": "How the band is drawn: sprites (animated pixel art, rendered with Remotion: an SVG in the desktop app, block-character pixels in a terminal) or kaomoji (the text faces). Text-only spots (status line, toasts) keep the kaomoji either way",
+      "description": "How the band is drawn: sprites (animated pixel art, rendered with Remotion: the live-house stage and animated pictures in the desktop app, block-character pixels in a terminal) or kaomoji (the text faces, and the panel's text layout). Text-only spots (status line, toasts) keep the kaomoji either way",
       "options": [
         "sprites",
         "kaomoji"

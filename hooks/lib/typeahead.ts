@@ -22,7 +22,7 @@ export const BOCCHI_VERBS: readonly Word[] = [
   ['crash', 'preview the dropped-guitar screen'],
   ['memo', "preview Nijika's band memo (memo proposed: one Claude proposed itself)"],
   ['setlist', 'preview Replay Theater with a sample setlist'],
-  ['solo', "open one member's channel across the panel's mixer: bocchi | nijika | ryo | kita, or off for the mix"],
+  ['solo', "open one member alone, every act in full: bocchi | nijika | ryo | kita, or off for the mix"],
   ['strip', 'hide or show the band strip above the prompt'],
   ['help', 'the commands, the versions, the config'],
 ]

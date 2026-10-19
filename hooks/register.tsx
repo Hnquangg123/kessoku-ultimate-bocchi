@@ -2985,12 +2985,12 @@ const HELP_LINES = [
   '/cache-tax        is the cache warm, and what would a cold send cost?',
   '/bocchi theme [on|off|status]   switch Claude Code\'s own theme to Kessoku Bocchi (the light twin on a light theme), or back',
   '/bocchi strip     hide or show the band strip above the prompt',
-  "/bocchi solo <bocchi|nijika|ryo|kita|off>   one member's channel across the panel's mixer, every act in full (on the panel: her hotkey b n r k, m for the mix; an act's number under her slimes solos her with that act first)",
+  "/bocchi solo <bocchi|nijika|ryo|kita|off>   one member alone, every act in full: her page on the desktop, her channel in a terminal (on the panel: her hotkey b n r k, m for the mix; in a terminal an act's number under the pit solos her with that act first)",
   '/bocchi mood <anxious|focused|happy|panic|melting|hiding>   try a face in the status line',
   '/bocchi demo [off]   put sample acts on the panel · /bocchi memo [proposed] · /bocchi tax · /bocchi crash · /bocchi setlist   previews',
   'Blast Radius and Reflect need no command: a risky command or a correction brings them up, and Claude can propose a rule itself with the memo tool (you still press Save).',
-  "Band agent types: Claude can delegate to kessoku-ultimate-bocchi:nijika (plans, reviews, triage), :ryo (searches, shells, tests) and :kita (edits to named files); each act sits on its member's card by name.",
-  'Config: /config → kessoku-ultimate-bocchi (engine theme, transcript skin, restyle other mods, toasts, accent, backgrounds, tool cards, spinner words, cache TTL, keepwarm, reflect, panel on start).',
+  "Band agent types: Claude can delegate to kessoku-ultimate-bocchi:nijika (plans, reviews, triage), :ryo (searches, shells, tests) and :kita (edits to named files); each act is seated with its member by name.",
+  'Config: /config → kessoku-ultimate-bocchi (engine theme, transcript skin, character art, restyle other mods, toasts, accent, backgrounds, tool cards, spinner words, cache TTL, keepwarm, reflect, panel on start, auto solo).',
 ]
 
 /** `/bocchi help`: the mod's and the engine's versions first, then every command, then what is off on this engine (only when something is). */
@@ -3167,7 +3167,7 @@ export const register: Register = (on, options) => {
       case 'solo': {
         const members: KessokuMember[] = ['bocchi', 'nijika', 'ryo', 'kita']
         const member = members.find(m => m === arg)
-        if (member === undefined && arg !== 'off' && arg !== 'mix') return { text: `/bocchi solo <${members.join('|')}|off>: one member's channel across the mixer (her hotkey, b n r k, does the same when the panel has the focus; m is the mix).` }
+        if (member === undefined && arg !== 'off' && arg !== 'mix') return { text: `/bocchi solo <${members.join('|')}|off>: one member alone, every act in full (her hotkey, b n r k, does the same when the panel has the focus; m is the mix).` }
         await update($, ui, x => ({ ...x, solo: member ?? null, soloAct: null, soloUntil: 0, soloChosen: member !== undefined }))
         return { text: member === undefined ? 'Kessoku: back to the mix.' : `Kessoku: ${MEMBERS[member].name} on solo (/bocchi solo off, or m on the panel, for the mix).` }
       }
