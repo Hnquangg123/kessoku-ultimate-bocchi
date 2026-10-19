@@ -48,7 +48,32 @@ export type CellMode = 'half' | 'quad'
  * even column and a row a multiple of four, in quadrants, is the mini in half
  * blocks: each cell its pixel on top and the one below at the bottom.
  */
-export type SpritePart = { id: string; x: number; y: number; zoom?: number }
+export type SpritePart = { id: string; x: number; y: number; zoom?: number; dim?: boolean }
+
+/**
+ * A spotlight behind a drawing: a cone in `color` from the top's middle
+ * sixth to the canvas's full width at the floor (`floor` pixels down; the
+ * canvas's bottom when absent) and its pool on the floor, strong while
+ * `isLit`, faint at rest. Only the SVG draws it; a terminal lights the floor
+ * with its own glyphs.
+ */
+export type StageLayer = { color: string; isLit: boolean; floor?: number }
+
+/** The background a dimmed part's pixels are shaded toward in a terminal (the charcoal). */
+const DIM_TOWARD = '#1b1b1f'
+
+/** A color mixed `amount` of the way toward another: `shade('#ffffff', '#000000', 0.5)` is `#808080`. */
+export function shade(color: string, toward: string, amount: number): string {
+  const c = parseInt(color.slice(1), 16)
+  const t = parseInt(toward.slice(1), 16)
+  if (!Number.isFinite(c) || !Number.isFinite(t)) return color
+  const mix = (shift: number) => {
+    const a = (c >> shift) & 0xff
+    const b = (t >> shift) & 0xff
+    return Math.round(a + (b - a) * amount)
+  }
+  return `#${((mix(16) << 16) | (mix(8) << 8) | mix(0)).toString(16).padStart(6, '0')}`
+}
 
 /** A part's zoom: a whole number, at least 1. */
 function zoomOf(part: SpritePart): number {
@@ -233,7 +258,21 @@ export function framePixels(id: string, index: number): readonly (string | null)
   return frame === undefined ? [] : pixelsOf(frame)
 }
 
-/** Several sprites, each at its own frame for `now` and drawn at its zoom, laid on one canvas of `w` x `h` pixels. */
+const shadeCache = new Map<string, string>()
+
+/** A part's pixel as drawn: its color, or (a `dim` part) that color two thirds of the way to the charcoal. */
+function paintOf(code: number, isDim: boolean): string | null {
+  const color = COLOR_OF[code] ?? null
+  if (color === null || !isDim) return color
+  let hit = shadeCache.get(color)
+  if (hit === undefined) {
+    hit = shade(color, DIM_TOWARD, 2 / 3)
+    shadeCache.set(color, hit)
+  }
+  return hit
+}
+
+/** Several sprites, each at its own frame for `now` and drawn at its zoom (a `dim` one shaded), laid on one canvas of `w` x `h` pixels. */
 export function composite(parts: readonly SpritePart[], w: number, h: number, now: number): (string | null)[] {
   const px: (string | null)[] = Array.from({ length: w * h }, () => null)
   for (const part of parts) {
@@ -241,6 +280,7 @@ export function composite(parts: readonly SpritePart[], w: number, h: number, no
     const frame = decodedOf(part.id)?.frames[anim === undefined ? 0 : frameAt(anim, now)]
     if (anim === undefined || frame === undefined) continue
     const z = zoomOf(part)
+    const isDim = part.dim === true
     for (let y = 0; y < anim.h * z; y += 1) {
       const ty = part.y + y
       if (ty < 0 || ty >= h) continue
@@ -249,7 +289,7 @@ export function composite(parts: readonly SpritePart[], w: number, h: number, no
         const tx = part.x + x
         if (tx < 0 || tx >= w) continue
         const code = frame[row + Math.floor(x / z)] as number
-        if (code !== 0) px[ty * w + tx] = COLOR_OF[code] ?? null
+        if (code !== 0) px[ty * w + tx] = paintOf(code, isDim)
       }
     }
   }
@@ -806,20 +846,23 @@ const svgCache = new Map<string, SvgDrawing>()
  * and past a still of every part the largest part is left out. The ids are
  * looked up in `table` (the exported sprites, unless a test brings its own).
  */
-export function drawSvg(parts: readonly SpritePart[], w: number, h: number, scale: number, table: SpriteTable = SPRITES): SvgDrawing {
-  const key = `${w}x${h}@${scale}:${parts.map(p => `${p.id}+${p.x}+${p.y}*${zoomOf(p)}`).join('|')}`
+export function drawSvg(parts: readonly SpritePart[], w: number, h: number, scale: number, table: SpriteTable = SPRITES, stage?: StageLayer): SvgDrawing {
+  const stageKey = stage === undefined ? '' : `~${stage.color}${stage.isLit ? '+' : '-'}${stage.floor ?? h}`
+  const key = `${w}x${h}@${scale}${stageKey}:${parts.map(p => `${p.id}+${p.x}+${p.y}*${zoomOf(p)}${p.dim === true ? '~' : ''}`).join('|')}`
   const hit = table === SPRITES ? svgCache.get(key) : undefined
   if (hit !== undefined) return hit
   const present = parts.filter(p => table[p.id] !== undefined)
   const levels = present.map(() => 0)
   const most = present.map(p => levelsOf(table[p.id] as SpriteAnim))
-  const wrap = (body: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w * scale}" height="${h * scale}" shape-rendering="crispEdges" fill="none" stroke-width="1">${body}</svg>`
+  const defs = present.some(p => p.dim === true) ? `<defs><filter id="${DIM_FILTER}"><feColorMatrix type="saturate" values="0.2"/></filter></defs>` : ''
+  const back = (stage === undefined ? '' : stageMarkup(stage, w, h)) + defs
+  const wrap = (body: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w * scale}" height="${h * scale}" shape-rendering="crispEdges" fill="none" stroke-width="1">${back}${body}</svg>`
   const placed = (p: SpritePart, level: number) => {
     if (level < 0) return ''
     const inner = spriteMarkup(table, p.id, level)
     const z = zoomOf(p)
-    if (inner === '' || (p.x === 0 && p.y === 0 && z === 1)) return inner
-    return `<g transform="translate(${p.x} ${p.y})${z === 1 ? '' : ` scale(${z})`}">${inner}</g>`
+    const moved = inner === '' || (p.x === 0 && p.y === 0 && z === 1) ? inner : `<g transform="translate(${p.x} ${p.y})${z === 1 ? '' : ` scale(${z})`}">${inner}</g>`
+    return p.dim === true && moved !== '' ? `<g opacity="0.35" filter="url(#${DIM_FILTER})">${moved}</g>` : moved
   }
   for (;;) {
     const bodies = present.map((p, i) => placed(p, levels[i] as number))
@@ -851,7 +894,90 @@ export function drawSvg(parts: readonly SpritePart[], w: number, h: number, scal
   }
 }
 
-/** Sprites laid on one `w` x `h` pixel canvas as one SVG document, each `scale` CSS pixels a pixel (see drawSvg). */
-export function spritesSvg(parts: readonly SpritePart[], w: number, h: number, scale: number): string {
-  return drawSvg(parts, w, h, scale).svg
+/** Sprites laid on one `w` x `h` pixel canvas as one SVG document, each `scale` CSS pixels a pixel, over a spotlight when given (see drawSvg). */
+export function spritesSvg(parts: readonly SpritePart[], w: number, h: number, scale: number, stage?: StageLayer): string {
+  return drawSvg(parts, w, h, scale, SPRITES, stage).svg
+}
+
+/** Sprites fitted into a budget: their markup for a larger document, and how far each part gave (as drawSvg's levels). */
+export type FittedSprites = { markup: string; levels: number[] }
+
+const fitCache = new Map<string, FittedSprites>()
+
+/**
+ * Sprites as markup to place inside a larger SVG document (a scene with its
+ * own chrome), in one group carrying what the sprites' paths need (crisp
+ * edges, strokes, no fill), at most `budget` characters: while longer, the
+ * largest part that can still lose frames loses half of them, and past a
+ * still of every part the largest part is left out, as drawSvg does. A
+ * `dim` part brings its filter's definition with it. The scene places the
+ * group (a translate or a scale); the parts' x and y are pixels inside it.
+ */
+export function fitSprites(parts: readonly SpritePart[], budget: number, table: SpriteTable = SPRITES): FittedSprites {
+  const key = `${budget}:${parts.map(p => `${p.id}+${p.x}+${p.y}*${zoomOf(p)}${p.dim === true ? '~' : ''}`).join('|')}`
+  const hit = table === SPRITES ? fitCache.get(key) : undefined
+  if (hit !== undefined) return hit
+  const present = parts.filter(p => table[p.id] !== undefined)
+  const levels = present.map(() => 0)
+  const most = present.map(p => levelsOf(table[p.id] as SpriteAnim))
+  const defs = present.some(p => p.dim === true) ? `<defs><filter id="${DIM_FILTER}"><feColorMatrix type="saturate" values="0.2"/></filter></defs>` : ''
+  const wrap = (body: string) => `<g shape-rendering="crispEdges" fill="none" stroke-width="1">${defs}${body}</g>`
+  const placed = (p: SpritePart, level: number) => {
+    if (level < 0) return ''
+    const inner = spriteMarkup(table, p.id, level)
+    const z = zoomOf(p)
+    const moved = inner === '' || (p.x === 0 && p.y === 0 && z === 1) ? inner : `<g transform="translate(${p.x} ${p.y})${z === 1 ? '' : ` scale(${z})`}">${inner}</g>`
+    return p.dim === true && moved !== '' ? `<g opacity="0.35" filter="url(#${DIM_FILTER})">${moved}</g>` : moved
+  }
+  for (;;) {
+    const bodies = present.map((p, i) => placed(p, levels[i] as number))
+    const markup = wrap(bodies.join(''))
+    if (markup.length <= budget) {
+      const fitted = { markup, levels }
+      if (table === SPRITES) {
+        if (fitCache.size > 200) fitCache.clear()
+        fitCache.set(key, fitted)
+      }
+      return fitted
+    }
+    const largest = (canGive: (i: number) => boolean) => {
+      let pick = -1
+      bodies.forEach((body, i) => {
+        if (canGive(i) && (pick < 0 || body.length > (bodies[pick] as string).length)) pick = i
+      })
+      return pick
+    }
+    const merge = largest(i => (levels[i] as number) >= 0 && (levels[i] as number) < (most[i] as number))
+    if (merge >= 0) {
+      levels[merge] = (levels[merge] as number) + 1
+      continue
+    }
+    const drop = largest(i => (levels[i] as number) >= 0)
+    if (drop < 0) return { markup: wrap(''), levels }
+    levels[drop] = -1
+  }
+}
+
+const DIM_FILTER = 'kessoku-dim'
+
+/** The gradient's id for a stage layer: its color and whether it is lit, so two slots in one document never share one. */
+export function stageGradientId(stage: StageLayer): string {
+  return `kessoku-stage-${stage.color.replace(/[^0-9a-z]/gi, '')}-${stage.isLit ? 'lit' : 'rest'}`
+}
+
+/**
+ * The spotlight's markup, drawn before the sprites: the cone from the top's
+ * middle sixth to the full width at the floor, filled with a vertical gradient
+ * of the color (0.55 to 0.10 lit, 0.12 to 0.02 at rest), and the pool on the
+ * floor (0.35 lit, 0.08 at rest).
+ */
+export function stageMarkup(stage: StageLayer, w: number, h: number): string {
+  const floor = Math.max(1, Math.min(h, stage.floor ?? h))
+  const id = stageGradientId(stage)
+  const [top, bottom, pool] = stage.isLit ? [0.55, 0.1, 0.35] : [0.12, 0.02, 0.08]
+  const fmt = (n: number) => String(Math.round(n * 100) / 100)
+  const gradient = `<linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${stage.color}" stop-opacity="${top}"/><stop offset="1" stop-color="${stage.color}" stop-opacity="${bottom}"/></linearGradient>`
+  const cone = `<polygon points="${fmt((w * 5) / 12)},0 ${fmt((w * 7) / 12)},0 ${w},${floor} 0,${floor}" fill="url(#${id})"/>`
+  const ellipse = `<ellipse cx="${fmt(w / 2)}" cy="${floor}" rx="${fmt(w / 2)}" ry="${fmt(Math.max(2, floor / 16))}" fill="${stage.color}" opacity="${pool}"/>`
+  return `<defs>${gradient}</defs>${cone}${ellipse}`
 }

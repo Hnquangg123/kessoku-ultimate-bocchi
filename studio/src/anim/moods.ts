@@ -15,7 +15,9 @@
 // same zero), so a mood's loops are the same length for all four and the beats
 // are placed member by member: no two blink, glance, breathe, bob or jump on
 // the same frame, and the neighbours in the band's row (Bocchi and Nijika,
-// Nijika and Ryo, Ryo and Kita) keep two frames between their body beats. Each
+// Nijika and Ryo, Ryo and Kita) keep two frames between their body beats.
+// (Melting aside: only Bocchi melts in the mod, so her sustained melt is a
+// loop of its own length, and the other three share a clock of their own.) Each
 // loop is drawn to cost few distinct frames (the mod layers a sprite's frames
 // into one SVG): the tracks change together where they can, and long holds sit
 // between.
@@ -24,7 +26,8 @@
 // head (a breath or a beat's squash keeps the face still in it) and the hair's
 // sway mostly falls outside it; the mini ignores squash and sway altogether.
 // So the faces and the effects carry the life there, and every loop keeps
-// something changing in every view at least every half second or so.
+// something changing in every view at least every half second or so (except
+// Bocchi's melt, a state that holds for hours: it rests up to 0.8 s).
 //
 // Effects keep to each member's open side. Where the full figure's place would
 // land on what identifies her in the portrait or the mini (Bocchi's cubes and
@@ -936,17 +939,41 @@ function panic(art: MemberArt): Tag {
   }
 }
 
-// ---- melting: 2.8 s (28 frames) ------------------------------------------------------------------------------
+// ---- melting: Bocchi 5 s (50 frames), the others 2.8 s (28 frames) ---------------------------------------------
 //
-// The brief's beats (Bocchi's): the melt face 3 frames, sinking into a puddle over about 9 frames (easing in:
-// barely at first, a long slow start, then faster and faster), drops falling beside her, a long hold in the
-// puddle that still lives, oozing back up over 3 frames, a half, a blink, open. At the puddle the face is too
-// flat for a blink to read, so the puddle lives by what falls into it and by its own quiver (a row or two, a
-// frame: 0.97, with 0.99 on the way back). The melt itself (compose.ts `melt`, given her colors by scene.ts)
-// keeps her face above a soft puddle of her hair and clothing, drips only her hair, skin and clothing, and lets
-// her instrument slip from her hands and sink into the puddle whole. Each member melts her own way:
-//   bocchi  the fastest: she crumbles (pink crumbs falling off her) and runs; a drip falls into the puddle with a
-//           splash that sets it quivering; she pulls herself back up and blinks.
+// The melt itself (compose.ts `melt`, given her colors by scene.ts; 0 whole, 1 a puddle) keeps her face above a
+// soft puddle of her hair and clothing, drips only her hair, skin and clothing, and lets her instrument slip from
+// her hands and sink into the puddle whole.
+//
+// Only Bocchi melts in the mod: while the context is 85% full or more, and while a compaction runs. That can hold
+// for hours, so hers is a sustained melt, not a collapse: about half melted all loop (her legs and skirt pooled in
+// the puddle, her upper body and the melt face above it, the guitar sunk to its neck, her hair dripping), never
+// whole and never flat. Long holds and steps of two rows (one row reads as jitter), on few distinct frames (the
+// stage and the strips pay for each: 11 in the full figure, 10 in the portrait and in the mini, the rest of the
+// loop revisits them); a still holds up to 0.7 s here (0.8 in the mini, where her sag is her rest), where the other
+// moods change every half second.
+// Her levels (BOCCHI_MELT) sit two rows apart: rest 0.72, sag 0.75, and her attempt's 0.68, 0.64, 0.60. Rest and
+// sag are where the mini's melt face keeps its eyes: from 0.56 to 0.71 its half-scale melt drops their row and she
+// looks asleep (her other faces keep theirs there). Her beats, on her own clock:
+//   0-6     resting in the melt face (frame 0, the still the desktop shows on mount and a degraded drawing's one
+//           frame, reads as melting on its own)
+//   7-11    a drop gathers at the tip of her hair (3 frames), falls, and lands in the puddle with a splat that
+//           sets it quivering: down two rows for a frame (the portrait's drop falls beside her hair on the right
+//           and is gone by the splat, the puddle lying below the window; the mini's runs down its right side and
+//           splats on the puddle's rim)
+//   19-21   a blink (half, shut, half)
+//   22-27   she sags two rows,
+//   28-39   then pulls herself together: up two rows every two frames, still in the melt face (the mini's eyes
+//           squeezed shut), until her guitar is back in her hands and her face sets (focus, 4 frames); it does not
+//           take, and she slumps back a step a frame
+//   40-46   to rest, glancing aside (did anyone see?),
+//   47-49   and back to the melt face through a blink, as frame 0 has it (her blinks come 2.8 and 2.2 s apart; the
+//           seam falls in the blink, so no still runs across it).
+//
+// The other three keep the first take, for the studio's sheets and the showcase: the melt face 3 frames, sinking
+// into a puddle over about 9 frames (easing in), drops falling beside her, a hold in the puddle that lives by
+// what falls into it and by its own quiver (a row or two, a frame: 0.97, with 0.99 on the way back; at the puddle
+// the face is too flat for a blink to read), oozing back up, a blink. Each her own way:
 //   nijika  sags first, slumps down evenly, quivers in the puddle on the beat (every third frame), and snaps
 //           back up in two frames into a bounce and a short giggle.
 //   ryo     lazy: she never quite goes, sinking slowly to half, lying there half melted (a drip running off
@@ -954,23 +981,15 @@ function panic(art: MemberArt): Tag {
 //   kita    a swoon: her aura goes out first, she wilts and hangs there (a long hold at the start of the sink)
 //           with a last drip, then drops all at once; she quivers in the puddle on her beat (twice), oozes up,
 //           blinks, and the sparkle comes back.
-// On the shared clock they give way in turn: Bocchi at 3, Ryo 11, Kita 19, Nijika 23; their puddles come in
-// turn (Nijika 3-11, Bocchi 12-19, Ryo's half-melt 21-0, Kita 27-4), they come back on their own frames
-// (Ryo 6, Kita 8, Nijika 13, Bocchi 23), and no two have their eyes shut at once (Kita 8-10, Nijika 13-16 with
-// her giggle, Bocchi 23-25, Ryo 26-1). Frame 0 (the still the desktop shows on mount, and a degraded drawing's
-// one frame) has nobody coming back: Bocchi whole in the melt face, Nijika sinking, Ryo lying half melted, Kita
-// in her puddle.
+// Their three loops share one 28-frame clock (Bocchi's is her own length; she melts alone): they give way in turn,
+// Ryo at 11, Kita 19, Nijika 23; their puddles come in turn (Nijika 3-11, Ryo's half-melt 21-0, Kita 27-4), they
+// come back on their own frames (Ryo 6, Kita 8, Nijika 13), and no two have their eyes shut at once (Kita 8-10,
+// Nijika 13-16 with her giggle, Ryo 26-1; Bocchi's blinks keep clear of them too where the showcase plays the four
+// from one zero: 19-21, and 47-49, their 19-21). Frame 0 has nobody coming back: Nijika sinking, Ryo lying half
+// melted, Kita in her puddle.
 
-/** Bocchi's sink: barely (two rows), then faster and faster to the puddle (9 frames). */
-const SINK: readonly Run<number>[] = [
-  [0.04, 2],
-  [0.1, 2],
-  [0.2, 1],
-  [0.33, 1],
-  [0.5, 1],
-  [0.72, 1],
-  [1, 1],
-]
+/** Bocchi's sustained melt: her loop's length, and her `melt` levels (two rows apart): at rest, sagging, and her attempt's three steps up. */
+const BOCCHI_MELT: { frames: number; rest: number; sag: number; up: readonly [number, number, number] } = { frames: 50, rest: 0.72, sag: 0.75, up: [0.68, 0.64, 0.6] }
 /** Oozing back up over 3 frames. */
 const OOZE: readonly Run<number>[] = [
   [0.7, 1],
@@ -980,38 +999,51 @@ const OOZE: readonly Run<number>[] = [
 /** The puddle's quiver: up two rows for a frame (any more and it reads as a hiccup, the puddle re-forming). */
 const QUIVER = 0.97
 
+/**
+ * Bocchi's sustained melt (the beats above). The drop and its splat keep to her open side in each view: in the
+ * full figure under the outermost lock of her hair on the left, where it falls clear into the puddle (on the
+ * ground, so the sag under the splat leaves it in place); in the portrait and the mini beside her hair on the
+ * right, the portrait's whole inside the window and off her face, the mini's a drip down its free columns.
+ */
+function bocchiMelting(art: MemberArt): Tag {
+  const { frames: n, rest, sag, up } = BOCCHI_MELT
+  const [hi, mid, top] = up
+  const ink = art.accent
+  return loop(
+    frames(
+      n,
+      {
+        pose: 'stand',
+        face: spans<FaceName>(n, 'melt', [
+          [19, 19, 'half'],
+          [20, 20, 'blink'],
+          [21, 21, 'half'],
+          [34, 37, 'focus'],
+          [40, 46, 'glance'],
+          [47, 47, 'half'],
+          [48, 48, 'blink'],
+          [49, 49, 'half'],
+        ]),
+        melt: track([rest, 11], [sag, 1], [rest, 10], [sag, 6], [rest, 2], [hi, 2], [mid, 2], [top, 4], [mid, 1], [hi, 1], [rest, 10]),
+      },
+      [
+        // The drop: held at the lock's tip three frames, falling, then (the frame she quivers) the splat.
+        { at: 7, path: only(FULL, [-12, -12, -12, -8].map(y => fxAt('drop', -17, y, ink, { on: 'ground' }))) },
+        { at: 11, path: only(FULL, [fxAt('dust', -19, -8, ink, { on: 'ground' })]) },
+        { at: 7, path: only(PORTRAIT, [12, 12, 12, 18].map(y => fxAt('drop', 25, y, ink))) },
+        { at: 7, path: only(MINI, [16, 16, 16, 22].map(y => fxAt('drop', 28, y, ink))) },
+        { at: 11, path: only(MINI, [fxAt('dust', 26, 26, ink)]) },
+      ],
+    ),
+  )
+}
+
 function melting(art: MemberArt): Tag {
+  if (art.id === 'bocchi') return bocchiMelting(art)
   const n = 28
   // A drop falling `k` frames, 3 rows a frame, from (x, y).
   const drop = (x: number, y: number, k: number, color = art.accent): (Fx | null)[] => Array.from({ length: k }, (_, i) => fxAt('drop', x, y + 3 * i, color))
   switch (art.id) {
-    case 'bocchi': {
-      // Crumbs (her pink) fall off her right side as she gives way, drops run off her into the puddle; in the
-      // puddle a drip falls from above into it with a little splash, and the splash sets the puddle quivering (up
-      // two rows, back by one, flat); she oozes back up, a half, a blink, open.
-      const crumb = (x: number, y: number): (Fx | null)[] => [fxAt('twinkle', x, y, art.accent), fxAt('drop', x + 1, y + 4, art.accent), fxAt('drop', x + 1, y + 8, art.accent)]
-      return loop(
-        frames(
-          n,
-          {
-            pose: 'stand',
-            face: spans<FaceName>(n, 'melt', [
-              [23, 23, 'half'],
-              [24, 24, 'blink'],
-              [25, 25, 'half'],
-              [26, 27, 'idle'],
-            ]),
-            melt: track([0, 3], ...SINK, [1, 5], [QUIVER, 1], [0.99, 1], [1, 1], ...OOZE, [0, 5]),
-          },
-          [
-            { at: 7, path: crumb(25, 8) },
-            { at: 9, path: crumb(27, 12) },
-            { at: 9, path: drop(22, 18, 3) },
-            { at: 13, path: [fxAt('drop', 27, 4, art.accent), fxAt('drop', 27, 9, art.accent), fxAt('drop', 27, 14, art.accent), fxAt('twinkle', 25, 17, art.accent)] },
-          ],
-        ),
-      )
-    }
     case 'nijika':
       // She sags first (a squash as the melt face comes), then slumps down evenly; in the puddle she quivers on the
       // beat, twice; she snaps back in two frames into a bounce (squash 2, eyes squeezed), bounces again with a

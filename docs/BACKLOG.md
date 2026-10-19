@@ -17,6 +17,7 @@ was, and the page's guess at the effort (S a day or two, M a week).
 | Themes from the palette | v0.5.0 · `npm run themes` |
 | Band agent types | v0.6.0 · `docs/specs/band-routing-0-6.md` (the engine names them `kessoku-ultimate-bocchi:nijika` / `:ryo` / `:kita`; the short `kessoku:ryo` works through the Agent tool) |
 | A memo tool the model can call | v0.6.0 · `docs/specs/band-routing-0-6.md` (`mcp__kessoku-ultimate-bocchi__memo`) |
+| Live Stage: the panel as a stage, a two-column mixer, solo, encore, tracks (prototype variant A) | v0.7.0 · `docs/specs/live-stage-0-7.md` |
 
 ## Open
 
@@ -31,4 +32,7 @@ was, and the page's guess at the effort (S a day or two, M a week).
 | Feature | Tour stats | `/bocchi stats`: per project, across sessions: cost, turns, commits, blasts stopped, memos saved, longest set. | A reason to open the panel after the novelty wears off. | Today `$.store` holds only the theme-before value. | S |
 | Feature | Clickable filetree | Each row is a Link: a click opens the file in the editor. | The tree becomes navigation, not only a light show. | Today rows are Text. | S |
 | Feature | Cheaper Reflect | A label call (correction / question / chatter) via `$.model.classify` runs before the Haiku draft. | Fewer Haiku calls on chatter that merely looked like a correction. | Today one completion per candidate; classify is unused. | S |
+| Polish | Press a slime | A click on a slime in the pit solos its act directly. | The slime is the thing you watch; it should be the thing you press. | Today the act's number under the pit stands in: `Svg` and `Raster` take no `onPress` on 2.1.299. | S |
+| Polish | Setlist Timeline (prototype variant B) | The set so far as a gantt of tool calls and acts with their cost; finished sets collapsed to a line. | "What happened, what is running, what did it cost" in one view. | Not chosen for v0.7.0; the tracks it needs are counted now (`trackNumbers`), not kept. | M |
+| Polish | Dressing Room (prototype variant C) | A hero of gauges, four tiles with big numbers, a backstage feed of the last toasts. | A glanceable dashboard; a missed toast stays. | Not chosen for v0.7.0. | S |
 | Maybe | Band voice, sound | An opt-in `prompt.compose` section that lets Claude sign off tool-free replies with a ♪; a guitar sting on commit via `$.audio.play`. | Fun, nothing more. | Both off by default; audio plays on macOS only (Windows has no player). | S |

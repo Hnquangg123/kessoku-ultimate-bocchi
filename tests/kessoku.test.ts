@@ -7,15 +7,18 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import type { KessokuMood } from '../types'
+import type { KessokuAgent, KessokuBand, KessokuMember, KessokuMood, KessokuUi } from '../types'
 import { BAND_AGENTS, memberFor, memberForTool, parseDuration, fmtTokens, fmtUsd, priceInfo, cacheWriteUsd, describeCall, seatOf, slimeState } from '../hooks/lib/band'
 import { classify, classifyPowerShell, isGitCommit } from '../hooks/lib/blast'
 import { cutHunks, patchToUnified, unifiedDiff } from '../hooks/lib/diff'
 import { FACE_WIDTH, MEMBERS, SPINNER_WORDS_BY_MODE, THEME_OVERRIDES, TURN_WORDS, padFace, textWidth } from '../hooks/lib/palette'
 import { MEMO_TOOL, MEMO_TOOL_SPEC, RULE_MAX, appendRule, checkRule, cleanRule, looksLikeCorrection, memoAnswer } from '../hooks/lib/reflect'
 import { completions } from '../hooks/lib/typeahead'
+import { panelView } from '../hooks/lib/stage'
+import { SCENE_COLORS } from '../hooks/lib/scene'
+import type { MemberView } from '../hooks/lib/stage'
 import { isAtLeast, offLine, parseVersion } from '../hooks/lib/engine'
-import { CRASH, CRASH_MINI, SVG_LIMIT, animOf, base64, cellsFor, colorOf, composite, decodeCodes, decodeFrames, drawSvg, encodeCells, frameAt, framePixels, layerFrames, mergeTimeline, pixelsOf, spriteId, spritesSvg, viewSize } from '../hooks/lib/sprite'
+import { CRASH, CRASH_MINI, SVG_LIMIT, animOf, base64, cellsFor, colorOf, composite, decodeCodes, decodeFrames, drawSvg, encodeCells, frameAt, framePixels, layerFrames, mergeTimeline, pixelsOf, shade, spriteId, spritesSvg, stageGradientId, stageMarkup, viewSize } from '../hooks/lib/sprite'
 import type { SpriteAnim, SpriteTable } from '../hooks/lib/sprite'
 import { SPRITES, SPRITE_COLORS } from '../hooks/lib/sprites.gen'
 import { isInside, relPath, treeRows } from '../hooks/lib/tree'
@@ -615,18 +618,34 @@ test('the strip and the panel draw on the terminal and the desktop', async ($, o
   bottoms(on, clock, seen)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await $.command.run(cmd('bocchi', 'demo'))
-  for (const surface of SURFACES) {
-    const strip = await $.ui.mount({ plugin: PLUGIN, surface, component: 'AbovePrompt', props: BAND_PROPS })
-    expect(await strip.find({ type: 'Button', key: 'strip-panel' })).toBeDefined()
-    expect(await strip.find({ type: 'Text', text: /Nijika/ })).toBeDefined()
-    await strip.unmount()
-    const panel = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
-    expect(await panel.find({ type: 'Text', text: /KESSOKU BAND/ })).toBeDefined()
-    expect(await panel.find({ type: 'Text', text: /legacyQuery/ })).toBeDefined()
-    expect(await panel.find({ type: 'Text', text: /README/ })).toBeDefined()
-    expect(await panel.find({ type: 'Text', text: /plan .*42%/ })).toBeDefined()
-    await panel.unmount()
-  }
+  // A terminal: cells and text.
+  const strip = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await strip.find({ type: 'Button', key: 'strip-panel' })).toBeDefined()
+  // Between turns: OFF AIR, backstage; the newest running act is what plays.
+  expect(await strip.find({ type: 'Text', text: /OFF AIR/ })).toBeDefined()
+  expect(await strip.find({ type: 'Text', text: /^ · NOW PLAYING · $/ })).toBeDefined()
+  expect(await strip.find({ type: 'Text', text: /^Ryo$/ })).toBeDefined()
+  expect(await strip.find({ type: 'Text', text: /Find every call site of legacyQuery/ })).toBeDefined()
+  await strip.unmount()
+  const panel = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect(await panel.find({ type: 'Text', text: /KESSOKU BAND/ })).toBeDefined()
+  expect(await panel.find({ type: 'Text', text: /legacyQuery/ })).toBeDefined()
+  expect(await panel.find({ type: 'Text', text: /README/ })).toBeDefined()
+  // The rail: the session's figures behind labels.
+  expect(await panel.find({ type: 'Text', text: /^CTX .* · PLAN .*42% · GATE \$0\.42 · AMP / })).toBeDefined()
+  await panel.unmount()
+  // The desktop: the live house, pictures whose words say the same.
+  const sign = await sceneOf(await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS }))
+  expect(sign['strip-sign']?.alt).toMatch(/^Off air · now playing · Ryo · Find every call site of legacyQuery\(\) · 0:17 · 3 on stage · \$0\.42 · 1 failed$/)
+  const desk = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  const scene = await sceneOf(desk)
+  expect(scene['scene-stage']?.alt).toBe('Kessoku Band on stage, between sets: Bocchi resting (anxious); Nijika playing 1 (focused); Ryo playing 2 (focused); Kita resting (happy), 1 failed')
+  expect(scene['scene-stage']?.isInteractive).toBe(false)
+  expect(Object.values(scene).some(s => /Find every call site of legacyQuery\(\)/.test(s.alt))).toBe(true)
+  expect(Object.values(scene).some(s => /README/.test(s.alt))).toBe(true)
+  expect(scene['scene-foot']?.alt).toMatch(/session \$0\.42 · ctx \d+% · plan 42% · cache /)
+  expect(await desk.find({ type: 'Button', key: 'solo-ryo' })).toBeDefined()
+  await desk.unmount()
 })
 
 test('Blast Radius holds rm -rf behind the dropped guitar, measures it through the file system, and Cancel refuses it', async ($, on) => {
@@ -700,6 +719,47 @@ test('Cache Tax holds a cold send once, puts the prompt back, and lets the secon
   expect(sent.text).toBe('where were we?')
 })
 
+test('Bocchi hides in her box when a call is turned down, and while the cache is cold until the next prompt', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  on('tool.call', { tool: 'Write' }, () => ({ deny: "The user doesn't want to proceed with this tool use." }))
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: 'write the notes', turnId: 't1' })
+  // Told no: into the box for a moment, then back to playing.
+  const denied = await $.tool.call({ tool: 'Write', file_path: '/proj/notes.md', content: 'x', tool_use_id: 'tu-write' })
+  expect(denied.deny).toBeDefined()
+  expect(seen.status.at(-1)).toBe(`${MEMBERS.bocchi.faces.hiding} bocchi · told no… hiding in the box`)
+  await clock.advance(6100)
+  expect(seen.status.at(-1)?.startsWith(`${MEMBERS.bocchi.faces.focused} bocchi · `)).toBe(true)
+  // The mod's own memo refusals are no one's no.
+  expect((await $.tool.call({ tool: MEMO_TOOL, rule: '', tool_use_id: 'tu-memo' })).deny).toBeDefined()
+  expect(seen.status.at(-1)).not.toMatch(/told no/)
+  const step = $.turn.step({ turnId: 't1', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })
+  for await (const chunk of step) void chunk
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 1200, isAborted: false, reason: 'answer' })
+  // Warm: she waits; cold (the TTL gone, nobody playing): in her box, on the stage too, until the next prompt.
+  await clock.advance(30 * 60_000)
+  expect(seen.status.at(-1)).not.toMatch(/box/)
+  await clock.advance(31 * 60_000)
+  expect(seen.status.at(-1)).toBe(`${MEMBERS.bocchi.faces.hiding} bocchi · the cache went cold… in the box till your next prompt`)
+  const desk = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect((await sceneOf(desk))['scene-stage']?.alt).toMatch(/: Bocchi resting \(hiding\);/)
+  await desk.unmount()
+  // The next prompt brings her out.
+  await $.turn.start({ text: 'where were we?', turnId: 't2' })
+  expect(seen.status.at(-1)).toMatch(/where were we\?/)
+  await $.turn.complete({ turnId: 't2', answer: 'here', durationMs: 900, isAborted: false, reason: 'answer' })
+  await clock.advance(61 * 60_000)
+  expect(seen.status.at(-1)).toMatch(/cache went cold/)
+  // /clear starts the room over: she waits again, and the line says so.
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  expect(seen.status.at(-1)).toBe(`${MEMBERS.bocchi.faces.anxious} bocchi · ${MEMBERS.bocchi.lines.anxious}`)
+  await clock.advance(61 * 60_000)
+  expect(seen.status.at(-1)).not.toMatch(/box/)
+})
+
 test('Cache Tax never holds a prompt nobody can resend (an SDK host, a -p run)', async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
@@ -747,7 +807,8 @@ test('the memo tool puts a proposed rule on Nijika\'s card with its byline, queu
   expect(seen.written['/proj/CLAUDE.md']).toBeUndefined()
   for (const surface of SURFACES) {
     const band = await $.ui.mount({ plugin: PLUGIN, surface, component: 'AbovePrompt', props: BAND_PROPS })
-    expect(await band.find({ type: 'Text', text: /NIJIKA · band memo/ })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: /^ BAND MEMO $/ })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: /BAND MEMO .*Nijika · proposed by/ })).toBeDefined()
     expect(await band.find({ type: 'Text', text: /^ · proposed by $/ })).toBeDefined()
     expect(await band.find({ type: 'Text', text: /^Bocchi$/ })).toBeDefined()
     expect(await band.find({ type: 'Text', text: /^ mid-set$/ })).toBeDefined()
@@ -930,8 +991,13 @@ test('subagents take the stage as band members and leave with their cost', async
   for await (const chunk of step) void chunk
   const panel = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
   expect(await panel.find({ type: 'Text', text: /legacyQuery/ })).toBeDefined()
-  expect(await panel.find({ type: 'Text', text: /43\.0k/ })).toBeDefined()
+  // On the mix, her act's own context meter; on her solo, its tokens too.
+  expect(JSON.stringify(await panel.find({ type: 'Box', key: 'chan-ryo' }))).toMatch(/ctx /)
   await panel.unmount()
+  await $.command.run(cmd('bocchi', 'solo ryo'))
+  const solo = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect(await solo.find({ type: 'Text', text: /tokens 43\.0k · cost ≈\$/ })).toBeDefined()
+  await solo.unmount()
   await $.turn.complete({ turnId: 'a1', agentId: 'agent-1', answer: 'found 3', durationMs: 4000, isAborted: false, reason: 'answer' })
   expect(seen.toasts.some(t => /Ryo finished/.test(t))).toBe(true)
 })
@@ -953,9 +1019,8 @@ test('a SubagentStart for an act its spawn seated leaves the act as the spawn wr
   await $.agent.spawn({ tool_use_id: 'tu-r', prompt: 'Find every call site of legacyQuery.', description: 'Search for legacyQuery call sites', subagentType: 'Explore', provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-sonnet-5-5', background: false, fork: false })
   await start
   const panel = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
-  const ryo = JSON.stringify(await panel.find({ type: 'Box', key: 'card-ryo' }))
-  expect(ryo).toContain('Search for legacyQuery call sites')
-  expect(ryo).toContain('warming up')
+  // Her song is the spawn's act: its description, not the bare type SubagentStart carried.
+  expect((await sceneOf(panel))['song-agent-1']?.alt).toMatch(/^Ryo · playing · Search for legacyQuery call sites · /)
   await panel.unmount()
 })
 
@@ -992,10 +1057,14 @@ test('a band agent type lands on its member\'s card by name, and the Agent tool 
   expect(dispatched[1]).toBe(`${PLUGIN}:nijika`)
   await spawn('general-purpose', 'Implement the feature', 'Build it end to end.')
   expect(seen.toasts.at(-1)).toMatch(/Bocchi takes the stage: Implement the feature$/)
-  // Each act sits on her own card: Ryo's on Ryo's, Nijika's on Nijika's (whatever the words said), the plain one on Bocchi's.
+  // Each act sits on her own channel: Ryo's on Ryo's, Nijika's on Nijika's (whatever the words said), the plain one on Bocchi's.
   for (const surface of SURFACES) {
     const panel = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
-    const card = async (member: string) => JSON.stringify(await panel.find({ type: 'Box', key: `card-${member}` }))
+    // A terminal's channels by key; the desktop's songs by whose they are.
+    const card = async (member: string) =>
+      surface === 'terminal'
+        ? JSON.stringify(await panel.find({ type: 'Box', key: `chan-${member}` }))
+        : Object.values(await sceneOf(panel)).filter(s => s.alt.startsWith(`${member === 'bocchi' ? 'Bocchi' : MEMBERS[member as 'ryo'].name} · `)).map(s => s.alt).join(' | ')
     expect(await card('ryo')).toContain('strip flickers')
     expect(await card('nijika')).toContain('Update the README')
     expect(await card('bocchi')).toContain('Implement the feature')
@@ -1184,7 +1253,8 @@ test('the file tree walks with fs.list when git ls-files fails; the panes draw o
   await $.command.run(cmd('bocchi', 'setlist'))
   for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
     const panel = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
-    expect(await panel.find({ type: 'Text', text: /KESSOKU BAND/ })).toBeDefined()
+    if (surface === 'terminal') expect(await panel.find({ type: 'Text', text: /KESSOKU BAND/ })).toBeDefined()
+    else expect((await sceneOf(panel))['scene-stage']?.alt).toMatch(/^Kessoku Band on stage/)
     await panel.unmount()
     const replay = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: 'kessoku-replay', props: PANE_PROPS })
     expect(await replay.find({ type: 'Text', text: /track 1 of 2/ })).toBeDefined()
@@ -1719,45 +1789,46 @@ test('the band is drawn as sprites: a Raster on the terminal, repainted by blit;
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await $.command.run(cmd('bocchi', 'demo'))
   const now = 1_000_000
-  // The moods on stage, read off the desktop's drawing of the same moment.
-  const desk = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
-  const bocchiSvg = (await desk.find({ type: 'Svg' }))?.props
-  await desk.unmount()
-  const bocchiMood = moodsIn(String(bocchiSvg?.alt)).bocchi as KessokuMood
-  expect(bocchiMood).toBeDefined()
-  // A tall pane: four cards, each with her hand-drawn mini in half blocks (16 x 8 cells, every color kept).
+  // A tall pane: the stage's four minis side by side in half blocks (70 x 8 cells, every color kept), on the charcoal.
   const tall = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: { ...PANE_PROPS, scroll: { offset: 0, bodyRows: 50 } } })
-  const tallBocchi = (await tall.find({ type: 'Raster', key: 'sprite-bocchi' }))?.props
-  expect(tallBocchi).toMatchObject({ columns: 16, rows: 8 })
-  const bocchiMini = spriteId('bocchi', bocchiMood, 'mini')
-  expect(tallBocchi?.cells).toBe(encodeCells(composite([{ id: bocchiMini, x: 0, y: 0 }], 16, 16, now), 16, 16, 'half', '#26262c').cells)
-  expect(await tall.find({ type: 'Raster', key: 'sprite-ryo' })).toBeDefined()
+  const heads = (await tall.find({ type: 'Raster', key: 'stage-heads' }))?.props
+  expect(heads).toMatchObject({ columns: 70, rows: 8 })
   // No kaomoji where the sprite stands in for her face.
   expect(await tall.find({ type: 'Text', text: BOCCHI_ANXIOUS })).toBeUndefined()
   // The sprite clock walks the frames: repaints reach the pane in place, no redraw.
   await clock.advance(3000)
-  expect(seen.blits.some(x => x.requestId === 'kessoku-band' && x.key.startsWith('sprite-') && x.isTaken)).toBe(true)
+  expect(seen.blits.some(x => x.requestId === 'kessoku-band' && x.key.startsWith('stage-') && x.isTaken)).toBe(true)
   await tall.unmount()
-  // A shorter one: the minis in quadrants (8 x 4), so the four cards fit.
+  // A shorter one: the minis in quadrants (35 x 4), so the mixer fits under them.
   const short = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
-  expect((await short.find({ type: 'Raster', key: 'sprite-kita' }))?.props).toMatchObject({ columns: 8, rows: 4 })
+  expect((await short.find({ type: 'Raster', key: 'stage-heads' }))?.props).toMatchObject({ columns: 35, rows: 4 })
   expect(await short.find({ type: 'Text', text: /legacyQuery/ })).toBeDefined()
   await short.unmount()
+  // The tall stage's heads, cell for cell: the four minis in the demo's moods, two pixels apart, in half blocks.
+  const stageMoods: Record<string, KessokuMood> = { bocchi: 'anxious', nijika: 'focused', ryo: 'focused', kita: 'happy' }
+  const tallAgain = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: { ...PANE_PROPS, scroll: { offset: 0, bodyRows: 50 } } })
+  // The clock as the earlier advance left it.
+  const at = 1_003_000
+  const heads4 = SPRITE_MEMBERS.map((m, i) => ({ id: spriteId(m, stageMoods[m] as KessokuMood, 'mini'), x: i * 18, y: 0 }))
+  expect((await tallAgain.find({ type: 'Raster', key: 'stage-heads' }))?.props.cells).toBe(encodeCells(composite(heads4, 70, 16, at), 70, 16, 'half', '#1b1b1f').cells)
+  await tallAgain.unmount()
+  expect(now).toBe(1_000_000)
   // The strip: the four minis in one picture where the band has the rows (35 x 4), the one-line strip where it does not.
   const t2 = 1_003_000
   const deskStrip = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
-  const stripSvg = (await deskStrip.find({ type: 'Svg' }))?.props
+  // On a remote surface: the neon now-playing sign, an image (it changes with every redraw).
+  const sign = (await sceneOf(deskStrip))['strip-sign']
+  expect(sign?.isInteractive).toBe(false)
+  expect(sign?.alt).toMatch(/^Off air · now playing · Ryo · /)
   await deskStrip.unmount()
-  // On a remote surface: the four portraits side by side, 34 apart, one CSS pixel a pixel.
-  expect(stripSvg).toMatchObject({ width: 134, height: 32, isInteractive: true })
-  const moods = moodsIn(String(stripSvg?.alt))
-  expect(Object.keys(moods)).toHaveLength(4)
+  // The moods on stage, as the demo seats them: Bocchi idle, Nijika and Ryo playing, Kita's README just done.
+  const moods: Record<string, KessokuMood> = { bocchi: 'anxious', nijika: 'focused', ryo: 'focused', kita: 'happy' }
   const strip = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
   const stripRaster = (await strip.find({ type: 'Raster', key: 'strip-sprites' }))?.props
   expect(stripRaster).toMatchObject({ columns: 35, rows: 4 })
   const minis = SPRITE_MEMBERS.map((m, i) => ({ id: spriteId(m, moods[m] as KessokuMood, 'mini'), x: i * 18, y: 0 }))
   expect(stripRaster?.cells).toBe(encodeCells(composite(minis, 70, 16, t2), 70, 16, 'quad', '#1b1b1f').cells)
-  expect(await strip.find({ type: 'Text', text: /Nijika/ })).toBeDefined()
+  expect(await strip.find({ type: 'Text', text: /^ · NOW PLAYING · $/ })).toBeDefined()
   expect(await strip.find({ type: 'Button', key: 'strip-panel' })).toBeDefined()
   await strip.unmount()
   const low = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: { ...BAND_PROPS, maxRows: 4, scroll: { offset: 0, bodyRows: 3 } } })
@@ -1765,14 +1836,14 @@ test('the band is drawn as sprites: a Raster on the terminal, repainted by blit;
   expect(await low.find({ type: 'Button', key: 'strip-panel' })).toBeDefined()
   await low.unmount()
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
-    // The panel's whole figure, 96 x 96 at one CSS pixel a pixel.
+    // The stage: an image (it scales to the pane's width), its sprites animating, inside the Svg element's limit.
     const pane = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
-    const svg = await pane.find({ type: 'Svg' })
-    expect(svg).toBeDefined()
-    expect(svg?.props).toMatchObject({ isInteractive: true, width: 96, height: 96 })
-    expect(String(svg?.props.source)).toContain('<animate')
-    expect(String(svg?.props.source).length).toBeLessThanOrEqual(SVG_LIMIT)
-    expect(String(svg?.props.alt)).toMatch(/Bocchi/)
+    const stage = (await sceneOf(pane))['scene-stage']
+    expect(stage?.isInteractive).toBe(false)
+    expect(stage?.source.length).toBeLessThanOrEqual(SVG_LIMIT)
+    expect(stage?.source).toMatch(/^<svg [^>]*viewBox="0 0 \d+ \d+"/)
+    expect(stage?.source).toContain('<animate')
+    expect(stage?.alt).toMatch(/Bocchi/)
     await pane.unmount()
   }
   // Nijika's memo carries her mini above the prompt in a terminal, her portrait on the desktop.
@@ -1802,17 +1873,33 @@ test("the small spots keep v1's footprints: Cache Tax and the panel above the pr
   expect((await taxDesk.find({ type: 'Svg' }))?.props).toMatchObject({ width: 32, height: 32, isInteractive: true })
   await taxDesk.press({ key: 'tax-dismiss' })
   await taxDesk.unmount()
-  // No room for a pane: the panel is drawn above the prompt, its cards with the minis (8 x 4) in a terminal and the
-  // portraits (32 CSS pixels) on a remote surface.
+  await $.command.run(cmd('bocchi', 'demo'))
+  // No room for a pane: the panel is drawn above the prompt, its stage the four minis in quadrants (35 x 4) in a
+  // terminal; on a remote surface the live house without its stage (the plates and a board of three songs) and Hide.
   expect((await $.command.run(cmd('kessoku'))).text).toMatch(/above the prompt/)
   const band = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
-  expect((await band.find({ type: 'Raster', key: 'sprite-bocchi' }))?.props).toMatchObject({ columns: 8, rows: 4 })
+  expect((await band.find({ type: 'Raster', key: 'stage-heads' }))?.props).toMatchObject({ columns: 35, rows: 4 })
+  expect(await band.find({ type: 'Button', key: 'panel-hide' })).toBeDefined()
   await band.unmount()
   for (const surface of ['desktop', 'mobile'] as const) {
     const remote = await $.ui.mount({ plugin: PLUGIN, surface, component: 'AbovePrompt', props: BAND_PROPS })
-    expect((await remote.find({ type: 'Svg' }))?.props).toMatchObject({ width: 32, height: 32 })
+    const scene = await sceneOf(remote)
+    expect(scene['scene-stage']).toBeUndefined()
+    expect(scene['scene-plates']?.alt).toMatch(/^Bocchi: /)
+    expect(scene['scene-head']).toBeDefined()
+    expect(Object.keys(scene).filter(k => k.startsWith('song-'))).toEqual(['song-demo-ryo', 'song-demo-nijika', 'song-demo-ryo2'])
+    expect(scene['scene-foot']?.alt).toMatch(/^\+3 earlier songs · /)
+    expect(await remote.find({ type: 'Button', key: 'panel-hide' })).toBeDefined()
     await remote.unmount()
   }
+  // Hide: the band goes back to the strip.
+  const toHide = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  await toHide.press({ key: 'panel-hide' })
+  await clock.settle()
+  await toHide.unmount()
+  const after = await sceneOf(await $.ui.mount({ plugin: PLUGIN, surface: 'mobile', component: 'AbovePrompt', props: BAND_PROPS }))
+  expect(after['scene-head']).toBeUndefined()
+  expect(after['strip-sign']).toBeDefined()
 })
 
 test('the guard screen fits its picture to the room inside its frame, and keeps the command in view', async ($, on) => {
@@ -1990,13 +2077,60 @@ function slimeCells(member: (typeof SPRITE_MEMBERS)[number], state: (typeof SLIM
 }
 
 /** The props of the picture a remote surface's drawing holds under `key`: the Svg in the Box of that key. */
+type Drawn = { find: (q: { type?: string; key?: string; text?: RegExp | string }) => Promise<{ children: unknown[]; props: Record<string, unknown> } | undefined>; findAll: (q: { type?: string }) => Promise<{ key?: string; children: unknown[]; props?: Record<string, unknown> }[]> }
+
+/**
+ * The desktop's live house as words: every picture's alt (and source), by the key of the Box it is drawn in:
+ * `scene-stage`, `scene-plates`, `scene-head`, `song-<act id>`, `scene-foot`, `strip-sign`. A song's details
+ * (revealed on hover) are under `detail:<act id>`.
+ */
+type ScenePicture = { alt: string; source: string; isInteractive: boolean; hover?: unknown; buttons?: { key?: string; label?: string }[]; box?: { props?: Record<string, unknown>; hover?: unknown } }
+
+async function sceneOf(drawing: Drawn): Promise<Record<string, ScenePicture>> {
+  const out: Record<string, ScenePicture> = {}
+  const boxes = await drawing.findAll({ type: 'Box' })
+  // A keyed Box's hover, read off its parent's children (a found element carries its props, not its hover).
+  const hovers = new Map<string, unknown>()
+  for (const box of boxes) {
+    for (const child of box.children) {
+      const n = child as { type?: unknown; key?: string; props?: { key?: string }; hover?: unknown }
+      const k = n.key ?? n.props?.key
+      if (n.type === 'Box' && typeof k === 'string') hovers.set(k, n.hover)
+    }
+  }
+  for (const box of boxes) {
+    if (box.key === undefined) continue
+    const svgs = box.children.filter(c => typeof c === 'object' && c !== null && (c as { type?: unknown }).type === 'Svg') as { props: { alt: string; source: string; isInteractive?: boolean } }[]
+    const first = svgs[0]
+    // the keyed Box's own look too (a song's: its border, and the wash its hover paints)
+    if (first !== undefined) out[box.key] = { alt: first.props.alt, source: first.props.source, isInteractive: first.props.isInteractive === true, box: { props: box.props, hover: hovers.get(box.key) } }
+    // A song's hidden details: the Svg in the unkeyed Box under it.
+    for (const child of box.children) {
+      const inner = child as { type?: unknown; children?: unknown[]; hover?: unknown; props?: { display?: string } }
+      if (inner.type !== 'Box' || inner.props?.display !== 'none' || box.key.startsWith('song-') === false) continue
+      const svg = inner.children?.find(c => (c as { type?: unknown }).type === 'Svg') as { props: { alt: string; source: string; isInteractive?: boolean } } | undefined
+      // The Buttons under the hidden Box, however deep.
+      const buttons: { key?: string; label?: string }[] = []
+      const walk = (node: unknown) => {
+        const n = node as { type?: unknown; key?: string; props?: { label?: string; key?: string }; children?: unknown[] }
+        if (n === null || typeof n !== 'object') return
+        if (n.type === 'Button') buttons.push({ key: n.key ?? n.props?.key, label: n.props?.label })
+        for (const c of n.children ?? []) walk(c)
+      }
+      walk(inner)
+      if (svg !== undefined) out[`detail:${box.key.slice('song-'.length)}`] = { alt: svg.props.alt, source: svg.props.source, isInteractive: svg.props.isInteractive === true, hover: inner.hover, buttons }
+    }
+  }
+  return out
+}
+
 async function svgUnder(drawing: { find: (q: { type?: string; key?: string }) => Promise<{ children: unknown[] } | undefined> }, key: string): Promise<Record<string, unknown> | undefined> {
   const box = await drawing.find({ type: 'Box', key })
   const svg = box?.children.find(c => typeof c === 'object' && c !== null && (c as { type?: unknown }).type === 'Svg') as { props?: Record<string, unknown> } | undefined
   return svg?.props
 }
 
-test('every act on stage is a slime at the head of its row: an Svg on a remote surface, its mini in a tall terminal panel, a glyph in a short one', async ($, on) => {
+test('every act on stage is a slime in its member\'s pit: in her slot on a remote surface, one row under the stage in a terminal', async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
   bottoms(on, clock, seen)
@@ -2004,80 +2138,89 @@ test('every act on stage is a slime at the head of its row: an Svg on a remote s
   expect((await $.command.run(cmd('bocchi', 'demo'))).text).toMatch(/five demo acts/)
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
     const pane = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
-    for (const [act, [member, state]] of Object.entries(DEMO_ACTS)) {
-      // At the head of the act's row, keyed by the act: one CSS pixel a pixel, the player's own drawing of her slime
-      // in that state, named for a reader.
-      const row = await pane.find({ type: 'Box', key: `act-${act}` })
-      expect((row?.children[0] as { type?: string; props?: { key?: string } } | undefined)?.props?.key).toBe(`slime-${act}`)
-      const svg = await svgUnder(pane, `slime-${act}`)
-      expect(svg).toMatchObject({ width: 36, height: 24, isInteractive: true, alt: `${MEMBERS[member].name}'s act, ${state}` })
-      expect(svg?.source).toBe(spritesSvg([{ id: spriteId(member, state, 'slime'), x: 0, y: 0 }], 36, 24, 1))
-    }
-    // Her figure is as it was, still the panel's first picture.
-    expect((await pane.find({ type: 'Svg' }))?.props).toMatchObject({ width: 96, height: 96 })
-    // A chip on the name line, in her color, counts her slimes on stage, the live ones: none for Kita, whose acts ended.
-    const chips = await pane.findAll({ type: 'Text', text: /^ \d+ on stage $/ })
-    expect(chips.map(chip => [chip.text, chip.props.backgroundColor])).toEqual([
-      [' 1 on stage ', MEMBERS.nijika.color],
-      [' 2 on stage ', MEMBERS.ryo.color],
-    ])
+    const scene = await sceneOf(pane)
+    // The stage says who plays: Nijika's act, Ryo's two; Kita rests (her README's encore is no act on stage) with one failed.
+    expect(scene['scene-stage']?.alt).toBe('Kessoku Band on stage, between sets: Bocchi resting (anxious); Nijika playing 1 (focused); Ryo playing 2 (focused); Kita resting (happy), 1 failed')
+    // The setlist: the live songs first, then the failed one, then the rest; each its whole description and its figures.
+    const songs = Object.keys(scene).filter(k => k.startsWith('song-')).map(k => k.slice('song-'.length))
+    expect(songs).toEqual(['demo-ryo', 'demo-nijika', 'demo-ryo2', 'demo-kita2', 'demo-kita', 'main'])
+    expect(scene['song-demo-ryo']?.alt).toMatch(/^Ryo · playing · Find every call site of legacyQuery\(\) · 0:17 · ctx \d+% · \$0\.\d\d · now Grep "legacyQuery"$/)
+    expect(scene['song-demo-ryo2']?.alt).toMatch(/^Ryo · waiting · Benchmark the cache warm-up · /)
+    expect(scene['song-demo-kita']?.alt).toMatch(/^Kita · encore · Update README for the new CLI flags · 1:31 · /)
+    expect(scene['song-demo-kita2']?.alt).toMatch(/^Kita · failed · Polish the settings page styles · .* · last Edit src\/settings\.css$/)
+    expect(scene['song-main']?.alt).toMatch(/^Bocchi \(main loop\) · /)
+    // A song's details, revealed on hover: the tools by count, the model, steps and tokens; a button to open it on her page.
+    expect(scene['detail:demo-ryo']?.alt).toMatch(/^Read 5 · Grep 4 · Bash 3 · claude-sonnet-5-5 · 7 steps · [\d.]+k tokens · general-purpose$/)
+    for (const act of ['demo-nijika', 'demo-ryo', 'demo-ryo2', 'demo-kita', 'demo-kita2']) expect(await pane.find({ type: 'Button', key: `act-solo-${act}` })).toBeDefined()
+    // The details sit in an unkeyed Box drawn hidden, revealed by the surface while the pointer is over the song's keyed
+    // Box (its hover scope); an image, not a frame; its button opens the song on her page.
+    expect(scene['detail:demo-ryo']).toMatchObject({ hover: { display: 'flex' }, isInteractive: false, buttons: [{ key: 'act-solo-demo-ryo', label: "Open on Ryo's page →" }] })
+    expect(scene['detail:main']?.buttons).toEqual([])
+    // The song's keyed Box is the card that opens: the board's green at rest and no border (a desktop pads a bordered
+    // Box); under the pointer her chalk (Ryo's blue, not Kita's coral), which the song's stencil shows as a chalk box.
+    const card = scene['song-demo-ryo']?.box
+    expect(card?.props).toMatchObject({ backgroundColor: SCENE_COLORS.board })
+    expect(card?.props?.borderStyle).toBeUndefined()
+    const lit = (card?.hover ?? {}) as { backgroundColor?: string }
+    expect([lit.backgroundColor === SCENE_COLORS.board, /^#[0-9a-f]{6}$/.test(lit.backgroundColor ?? '')]).toEqual([false, true])
+    expect((scene['song-demo-kita']?.box?.hover as { backgroundColor?: string } | undefined)?.backgroundColor).not.toBe(lit.backgroundColor)
+    // The song paints the board only through its stencil (round the card, a shade thinner inside, none on its lines);
+    // the details paint the card's lower part themselves and close its chalk box.
+    expect(scene['song-demo-ryo']?.source).toContain(`fill="${SCENE_COLORS.board}" mask="url(#cm)"`)
+    expect(scene['detail:demo-ryo']?.source).toContain('filter="url(#cg)"')
+    // The pictures say it too: the whole description, the failure stamped.
+    expect(scene['song-demo-ryo']?.source).toContain('legacyQuery')
+    expect(scene['song-demo-kita2']?.source).toContain('FAILED')
+    expect(scene['song-demo-kita2']?.alt).not.toMatch(/Edit src\/settings\.css · Edit src\/settings\.css/)
+    expect(await pane.find({ type: 'Button', key: 'act-solo-main' })).toBeUndefined()
+    // Every picture is an image (an interactive frame would be drawn 300 x 150), each inside the Svg element's limit.
+    expect(Object.entries(scene).filter(([, s]) => s.isInteractive).map(([k]) => k)).toEqual([])
+    for (const [key, s] of Object.entries(scene)) expect([key, s.source.length <= SVG_LIMIT]).toEqual([key, true])
     await pane.unmount()
   }
-  // A tall terminal panel (the heads in half blocks): each act's slime mini in quadrants, 9 x 3 cells beside its lines.
-  const tall = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: { ...PANE_PROPS, scroll: { offset: 0, bodyRows: 50 } } })
-  expect((await tall.find({ type: 'Raster', key: 'sprite-ryo' }))?.props).toMatchObject({ columns: 16, rows: 8 })
-  for (const [act, [member, state]] of Object.entries(DEMO_ACTS)) {
-    const raster = (await tall.find({ type: 'Raster', key: `slime-${act}` }))?.props
-    expect(raster).toMatchObject({ columns: 9, rows: 3 })
-    expect(raster?.cells).toBe(slimeCells(member, state, 1_000_000))
-  }
-  expect(await tall.find({ type: 'Text', text: /legacyQuery/ })).toBeDefined()
-  expect(leaves(await tall.drawn()).some(line => line.startsWith('● '))).toBe(false)
-  expect(await tall.find({ type: 'Text', text: /^ 2 on stage $/ })).toBeDefined()
-  await tall.unmount()
-  // A short one (the heads in quadrants): no slime grows a card; her color as one glyph at the head of each act's line.
-  const short = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
-  expect((await short.find({ type: 'Raster', key: 'sprite-ryo' }))?.props).toMatchObject({ columns: 8, rows: 4 })
-  for (const act of Object.keys(DEMO_ACTS)) expect(await short.find({ type: 'Raster', key: `slime-${act}` })).toBeUndefined()
-  const lines = leaves(await short.drawn())
-  expect(lines.filter(line => line.startsWith('● '))).toHaveLength(Object.keys(DEMO_ACTS).length)
-  expect(lines.some(line => /^● \S Find every call site of legacyQuery/.test(line))).toBe(true)
-  expect(lines.some(line => /^● ✖ Polish the settings page/.test(line))).toBe(true)
-  const glyph = await short.find({ type: 'Text', text: /^● $/ })
-  expect(glyph?.props).toMatchObject({ color: MEMBERS.nijika.color })
-  await short.unmount()
+  // A terminal: one row of slime minis in quadrants under the stage (39 x 3 cells for four), in the band's order.
+  const term = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  const pit = [['nijika', 'active'], ['ryo', 'active'], ['ryo', 'idle'], ['kita', 'asleep']] as const
+  const raster = (await term.find({ type: 'Raster', key: 'stage-pit' }))?.props
+  expect(raster).toMatchObject({ columns: 39, rows: 3 })
+  expect(raster?.cells).toBe(encodeCells(composite(pit.map(([m, s], i) => ({ id: spriteId(m, s, 'slime-mini'), x: i * 20, y: 0 })), 78, 12, 1_000_000), 78, 12, 'quad', '#1b1b1f').cells)
+  await term.unmount()
+  // The encore is over eight seconds after the act ended: her line settles dim, its cost at the right again.
+  await clock.advance(5000)
+  const later = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect((await sceneOf(later))['song-demo-kita']?.alt).toMatch(/^Kita · done · Update README for the new CLI flags · /)
+  await later.unmount()
 })
 
-test("a running act's slime moves from one beat to the next while a waiting act's holds still, repainted in place", async ($, on) => {
+test("the pit's running slime moves from one beat to the next, repainted in place", async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
   bottoms(on, clock, seen)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await $.command.run(cmd('bocchi', 'demo'))
-  // Two beats where Ryo's running act has moved on screen and her waiting act has not.
+  const pitAt = (t: number) => {
+    const acts = [['nijika', 'active'], ['ryo', 'active'], ['ryo', 'idle'], ['kita', 'asleep']] as const
+    return encodeCells(composite(acts.map(([m, s], i) => ({ id: spriteId(m, s, 'slime-mini'), x: i * 20, y: 0 })), 78, 12, t), 78, 12, 'quad', '#1b1b1f').cells
+  }
   const t1 = 1_000_000
-  const t2 = Array.from({ length: 48 }, (_, k) => t1 + 100 * (k + 1)).find(t => slimeCells('ryo', 'active', t) !== slimeCells('ryo', 'active', t1) && slimeCells('ryo', 'idle', t) === slimeCells('ryo', 'idle', t1))
+  const t2 = Array.from({ length: 48 }, (_, k) => t1 + 100 * (k + 1)).find(t => pitAt(t) !== pitAt(t1))
   expect(t2).toBeDefined()
-  const tall = { ...PANE_PROPS, scroll: { offset: 0, bodyRows: 50 } }
   const drawn = async () => {
-    const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: tall })
-    const running = (await pane.find({ type: 'Raster', key: 'slime-demo-ryo' }))?.props.cells
-    const waiting = (await pane.find({ type: 'Raster', key: 'slime-demo-ryo2' }))?.props.cells
+    const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+    const cells = (await pane.find({ type: 'Raster', key: 'stage-pit' }))?.props.cells
     await pane.unmount()
-    return { running, waiting }
+    return cells
   }
   const before = await drawn()
   await clock.advance((t2 as number) - t1)
   const after = await drawn()
-  expect(after.running).not.toBe(before.running)
-  expect(after.running).toBe(slimeCells('ryo', 'active', t2 as number))
-  expect(after.waiting).toBe(before.waiting)
-  // While the pane shows them, the sprite clock repaints the slimes in place: no redraw.
-  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: tall })
+  expect(after).not.toBe(before)
+  expect(after).toBe(pitAt(t2 as number))
+  // While the pane shows them, the sprite clock repaints the pit in place: no redraw.
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
   const from = seen.blits.length
   await clock.advance(3200)
-  expect(seen.blits.slice(from).some(x => x.requestId === 'kessoku-band' && x.key === 'slime-demo-ryo' && x.isTaken)).toBe(true)
-  expect(seen.blits.slice(from).some(x => x.key === 'slime-demo-kita' && x.isTaken)).toBe(true)
+  expect(seen.blits.slice(from).some(x => x.requestId === 'kessoku-band' && x.key === 'stage-pit' && x.isTaken)).toBe(true)
   await pane.unmount()
 })
 
@@ -2090,16 +2233,13 @@ test('the strip shows the acts on stage as slimes after the heads, a finished ac
   // In the band's order, each member's oldest first: Nijika's run, Ryo's wait and run, and Kita's README, which ended
   // 4 s ago (her act that failed 70 s ago has left the strip; it sleeps on her card).
   const acts = [['nijika', 'active'], ['ryo', 'idle'], ['ryo', 'active'], ['kita', 'asleep']] as const
-  const alt = "Slimes on stage: Nijika's act, active; Ryo's act, idle; Ryo's act, active; Kita's act, asleep"
   const words = /^3 slimes on stage \(2 playing, 1 waiting\) · \$0\.42 · /
   const desk = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
-  // The heads first, then one picture of the slimes, two pixels apart, one CSS pixel a pixel.
-  expect((await desk.find({ type: 'Svg' }))?.props).toMatchObject({ width: 134, height: 32 })
-  const row = await svgUnder(desk, 'strip-slimes')
-  expect(row).toMatchObject({ width: 4 * 38 - 2, height: 24, isInteractive: true, alt })
-  expect(row?.source).toBe(spritesSvg(acts.map(([m, s], i) => ({ id: spriteId(m, s, 'slime'), x: i * 38, y: 0 })), 4 * 38 - 2, 24, 1))
-  expect(await desk.find({ type: 'Text', text: words })).toBeDefined()
-  expect(await desk.find({ type: 'Text', text: /^\+\d+$/ })).toBeUndefined()
+  // The desktop's strip is the neon now-playing sign: one picture, its words the same story.
+  expect((await sceneOf(desk))['strip-sign']?.alt).toMatch(/ · 3 on stage · \$0\.42 · 1 failed$/)
+  expect((await sceneOf(desk))['strip-sign']?.source).toContain('Ryo')
+  expect(await desk.find({ type: 'Button', key: 'strip-panel' })).toBeDefined()
+  expect(await desk.find({ type: 'Button', key: 'strip-hide' })).toBeDefined()
   await desk.unmount()
   // A terminal: the minis in quadrants in one Raster under the heads (39 x 3 cells), on the strip's charcoal.
   const term = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
@@ -2119,11 +2259,11 @@ test('the strip shows the acts on stage as slimes after the heads, a finished ac
   expect((await term.find({ type: 'Raster', key: 'strip-slimes' }))?.props).toMatchObject({ columns: 29, rows: 3 })
   await term.unmount()
   const later = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
-  expect((await svgUnder(later, 'strip-slimes'))?.alt).toBe("Slimes on stage: Nijika's act, active; Ryo's act, idle; Ryo's act, active")
+  expect((await sceneOf(later))['strip-sign']?.alt).toMatch(/ · 3 on stage · /)
   await later.unmount()
-  // Her card keeps the act, asleep, as long as it lists it.
+  // The setlist keeps the act as a done song as long as it lists it, though her pit has let it go.
   const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
-  expect((await svgUnder(pane, 'slime-demo-kita'))?.alt).toBe("Kita's act, asleep")
+  expect((await sceneOf(pane))['song-demo-kita']?.alt).toMatch(/^Kita · done · Update README for the new CLI flags · /)
   await pane.unmount()
   // A short band has no rows for the slimes under the heads: the count stays, in words.
   const low = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: { ...BAND_PROPS, maxRows: 6, scroll: { offset: 0, bodyRows: 5 } } })
@@ -2145,26 +2285,37 @@ test('the strip draws six slimes at most and counts the rest', async ($, on) => 
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   // Eight searches at once: eight of Ryo's acts on stage.
   for (let i = 1; i <= 8; i += 1) await $.classic.SubagentStart({ agent_id: `agent-${i}`, agent_type: 'Explore' })
-  const six = Array.from({ length: 6 }, (_, i) => ({ id: spriteId('ryo', 'active', 'slime'), x: i * 38, y: 0 }))
   for (const surface of SURFACES) {
     const strip = await $.ui.mount({ plugin: PLUGIN, surface, component: 'AbovePrompt', props: BAND_PROPS })
     if (surface === 'terminal') {
       expect((await strip.find({ type: 'Raster', key: 'strip-slimes' }))?.props).toMatchObject({ columns: 59, rows: 3 })
+      expect(await strip.find({ type: 'Text', text: /^\+2$/ })).toBeDefined()
+      expect(await strip.find({ type: 'Text', text: /^8 slimes on stage \(8 playing, 0 waiting\) · / })).toBeDefined()
     } else {
-      const picture = await svgUnder(strip, 'strip-slimes')
-      expect(picture).toMatchObject({ width: 6 * 38 - 2, height: 24 })
-      expect(picture?.source).toBe(spritesSvg(six, 6 * 38 - 2, 24, 1))
-      expect(String(picture?.alt)).toMatch(/Ryo's act, active; and 2 more$/)
+      expect((await sceneOf(strip))['strip-sign']?.alt).toMatch(/ · 8 on stage · /)
+      // Hide takes the sign away; /bocchi strip brings it back.
+      await strip.press({ key: 'strip-hide' })
+      await clock.settle()
+      const hidden = await $.ui.mount({ plugin: PLUGIN, surface: 'mobile', component: 'AbovePrompt', props: BAND_PROPS })
+      expect((await sceneOf(hidden))['strip-sign']).toBeUndefined()
+      await hidden.unmount()
+      await $.command.run(cmd('bocchi', 'strip'))
     }
-    expect(await strip.find({ type: 'Text', text: /^\+2$/ })).toBeDefined()
-    expect(await strip.find({ type: 'Text', text: /^8 slimes on stage \(8 playing, 0 waiting\) · / })).toBeDefined()
     await strip.unmount()
   }
-  // The panel's card lists four of them, each a slime, and counts the rest; the chip counts all eight.
-  const panel = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
-  expect((await panel.findAll({ type: 'Box' })).filter(box => box.key?.startsWith('slime-'))).toHaveLength(4)
-  expect(await panel.find({ type: 'Text', text: /\+ 4 more/ })).toBeDefined()
-  expect(await panel.find({ type: 'Text', text: /^ 8 on stage $/ })).toBeDefined()
+  // The panel (600 px: the band in one row at x2): three slimes fit her quarter of the stage's front and `+5` counts the
+  // rest; her channel lists four acts and counts the rest; her tag counts all eight.
+  const boardPane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  const board = await sceneOf(boardPane)
+  await boardPane.unmount()
+  expect(Object.keys(board).filter(k => k.startsWith('song-'))).toHaveLength(8)
+  expect(board['scene-stage']?.source).toMatch(/>\s*\+5\s*</)
+  expect(board['scene-foot']?.alt).toMatch(/^\+1 earlier songs · /)
+  const panel = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect(await panel.find({ type: 'Text', text: /^\+2$/ })).toBeDefined()
+  expect((await panel.findAll({ type: 'Box' })).filter(box => box.key?.startsWith('entry-'))).toHaveLength(4)
+  expect(await panel.find({ type: 'Text', text: /^\+ 4 more$/ })).toBeDefined()
+  expect(await panel.find({ type: 'Text', text: /^ ×8$/ })).toBeDefined()
   await panel.unmount()
 })
 
@@ -2181,8 +2332,11 @@ test('characterArt kaomoji keeps the text faces and draws no pictures', { option
     expect(await panel.find({ type: 'Svg' })).toBeUndefined()
     expect(await panel.find({ type: 'Text', text: BOCCHI_ANXIOUS })).toBeDefined()
     expect(await panel.find({ type: 'Text', text: /legacyQuery/ })).toBeDefined()
-    expect(leaves(await panel.drawn()).some(line => line.startsWith('● '))).toBe(false)
-    expect(await panel.find({ type: 'Text', text: /^ \d+ on stage $/ })).toBeUndefined()
+    // The stage as faces: her pit as glyphs in her colour (Ryo's two acts playing, Kita's README just done), her count by her tag.
+    expect((await panel.find({ type: 'Text', text: /^♪ ♪$/ }))?.props).toMatchObject({ color: MEMBERS.ryo.color })
+    expect((await panel.find({ type: 'Text', text: /^✓$/ }))?.props).toMatchObject({ color: MEMBERS.kita.color })
+    expect(await panel.find({ type: 'Text', text: /^ ×2$/ })).toBeDefined()
+    expect(await panel.find({ type: 'Button', key: 'act-solo-demo-ryo2' })).toBeDefined()
     await panel.unmount()
     const strip = await $.ui.mount({ plugin: PLUGIN, surface, component: 'AbovePrompt', props: BAND_PROPS })
     expect(await strip.find({ type: 'Raster' })).toBeUndefined()
@@ -2227,9 +2381,9 @@ test('a compaction melts Bocchi in the strip, then the panel and Cache Tax read 
   const compacting = $.session.compact({ trigger: 'manual', messages: TRANSCRIPT })
   await clock.settle()
   expect(seen.status.at(-1)).toMatch(/compacting the set/)
-  const strip = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
-  expect(moodsIn(String((await strip.find({ type: 'Svg' }))?.props.alt)).bocchi).toBe('melting')
-  await strip.unmount()
+  const melting = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect((await sceneOf(melting))['scene-stage']?.alt).toMatch(/: Bocchi resting \(melting\);/)
+  await melting.unmount()
   await clock.advance(3000)
   const stood = await compacting
   expect(stood.skip).toBeUndefined()
@@ -2238,7 +2392,7 @@ test('a compaction melts Bocchi in the strip, then the panel and Cache Tax read 
   // The panel's ctx is the compacted set over the window (12k of 200k), not the 12% the engine measured before (the
   // desktop's drawing: a terminal's would start the sprite clock, which the hour below would have to tick through).
   const panel = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
-  expect(await panel.find({ type: 'Text', text: /ctx .*6% · session/ })).toBeDefined()
+  expect((await sceneOf(panel))['scene-foot']?.alt).toMatch(/ · ctx 6% · /)
   await panel.unmount()
   // Cache Tax: nothing is cached for the new transcript, and the next write is priced at the compacted size.
   const report = (await $.command.run(cmd('cache-tax'))).text
@@ -2268,10 +2422,13 @@ test('typeahead: /bocchi and /keepwarm complete their next word, and nothing els
     return { text, cursor: text.length, token: text.slice(start), start }
   }
   const texts = (text: string) => completions(at(text)).map(c => c.text)
-  expect(texts('/bocchi')).toEqual(['/bocchi theme', '/bocchi mood', '/bocchi demo', '/bocchi tax', '/bocchi crash', '/bocchi memo', '/bocchi setlist', '/bocchi strip', '/bocchi help'])
+  expect(texts('/bocchi')).toEqual(['/bocchi theme', '/bocchi mood', '/bocchi demo', '/bocchi tax', '/bocchi crash', '/bocchi memo', '/bocchi setlist', '/bocchi solo', '/bocchi strip', '/bocchi help'])
   expect(texts('/bocchi t')).toEqual(['theme', 'tax'])
   expect(texts('/bocchi T')).toEqual(['theme', 'tax'])
-  expect(texts('/bocchi s')).toEqual(['setlist', 'strip'])
+  expect(texts('/bocchi s')).toEqual(['setlist', 'solo', 'strip'])
+  expect(texts('/bocchi solo')).toEqual([])
+  expect(texts('/bocchi solo ')).toEqual(['bocchi', 'nijika', 'ryo', 'kita', 'off'])
+  expect(texts('/bocchi solo r')).toEqual(['ryo'])
   expect(texts('/bocchi theme')).toEqual([])
   expect(texts('/bocchi theme o')).toEqual(['on', 'off'])
   expect(texts('/bocchi mood h')).toEqual(['happy', 'hiding'])
@@ -2468,4 +2625,466 @@ test('a refused registration breaks nothing: the session starts, help names no m
   await $.agent.spawn({ tool_use_id: 'tu-b', prompt: 'Fix it.', description: 'Fix the README typo', subagentType: 'kessoku:kita', provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-sonnet-5-5', background: false, fork: false })
   expect(dispatched).toEqual(['Explore', 'kessoku:kita'])
   expect(seen.toasts.some(t => /Kita takes the stage: Fix the README typo \(seated by name: kessoku:kita\)/.test(t))).toBe(true)
+})
+
+// ---- The v0.7.0 Live Stage ---------------------------------------------------------------
+
+test('sprites: a spotlight behind a slot, lit or at rest, and a dimmed part shaded on both surfaces', async () => {
+  expect(shade('#ffffff', '#000000', 0.5)).toBe('#808080')
+  expect(shade('#f7a8c9', '#1b1b1f', 0)).toBe('#f7a8c9')
+  expect(shade('#f7a8c9', '#1b1b1f', 1)).toBe('#1b1b1f')
+  const lit = { color: '#8fb8ff', isLit: true, floor: 96 }
+  const rest = { ...lit, isLit: false }
+  // A gradient id per color and state, so four slots never share one.
+  expect(stageGradientId(lit)).not.toBe(stageGradientId(rest))
+  expect(stageGradientId(lit)).not.toBe(stageGradientId({ ...lit, color: '#ffd166' }))
+  // The cone from the top's middle sixth to the full width at the floor, strong lit, faint at rest; the pool on the floor.
+  expect(stageMarkup(lit, 96, 122)).toContain('points="40,0 56,0 96,96 0,96"')
+  expect(stageMarkup(lit, 96, 122)).toContain('stop-opacity="0.55"')
+  expect(stageMarkup(rest, 96, 122)).toContain('stop-opacity="0.12"')
+  expect(stageMarkup(lit, 96, 122)).toContain('<ellipse cx="48" cy="96"')
+  // Drawn before the sprite, and only when asked; the cache tells the two apart.
+  const id = spriteId('ryo', 'focused', 'full')
+  const plain = drawSvg([{ id, x: 0, y: 0 }], 96, 96, 1).svg
+  const staged = drawSvg([{ id, x: 0, y: 0 }], 96, 96, 1, SPRITES, lit).svg
+  expect(plain).not.toContain('<polygon')
+  expect(staged.indexOf('<polygon')).toBeGreaterThan(0)
+  expect(staged.indexOf('<polygon')).toBeLessThan(staged.indexOf('<path'))
+  expect(staged.length).toBeLessThanOrEqual(SVG_LIMIT)
+  // A dimmed part: faded and desaturated in an SVG, its pixels two thirds of the way to the charcoal in a terminal.
+  const dim = drawSvg([{ id, x: 0, y: 0, dim: true }], 96, 96, 1).svg
+  expect(dim).toContain('<g opacity="0.35" filter="url(#kessoku-dim)">')
+  expect(dim).toContain('<feColorMatrix type="saturate" values="0.2"/>')
+  expect(plain).not.toContain('kessoku-dim')
+  const px = composite([{ id, x: 0, y: 0 }], 96, 96, 0)
+  const shaded = composite([{ id, x: 0, y: 0, dim: true }], 96, 96, 0)
+  expect(shaded.every((p, i) => (px[i] === null ? p === null : p === shade(px[i] as string, '#1b1b1f', 2 / 3)))).toBe(true)
+  expect(shaded.some((p, i) => p !== px[i])).toBe(true)
+})
+
+test('solo: her name opens her channel across the mixer with every act in full; the same press, m or /bocchi solo off is the mix', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.command.run(cmd('bocchi', 'demo'))
+  const mount = (surface: (typeof SURFACES)[number]) => $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  for (const surface of ['terminal'] as const) {
+    // The mix: four channels, each name a button with her letter.
+    const mix = await mount(surface)
+    const mixHeads = (await mix.find({ type: 'Raster', key: 'stage-heads' }))?.props.cells
+    for (const [member, key] of [['bocchi', 'b'], ['nijika', 'n'], ['ryo', 'r'], ['kita', 'k']] as const) {
+      expect((await mix.find({ type: 'Button', key: `solo-${member}` }))?.props).toMatchObject({ hotkey: key })
+      expect(await mix.find({ type: 'Box', key: `chan-${member}` })).toBeDefined()
+    }
+    expect(await mix.find({ type: 'Button', key: 'solo-mix' })).toBeUndefined()
+    await mix.press({ key: 'solo-ryo' })
+    await clock.settle()
+    await mix.unmount()
+    // Her solo: the others folded to a strip each, her acts as cards with every figure, the tool tally and the tool in hand.
+    const solo = await mount(surface)
+    expect(await solo.find({ type: 'Text', text: /^ SOLO $/ })).toBeDefined()
+    expect(await solo.find({ type: 'Text', text: /^Ryo$/ })).toBeDefined()
+    for (const member of ['bocchi', 'nijika', 'kita']) expect(await solo.find({ type: 'Box', key: `strip-chan-${member}` })).toBeDefined()
+    expect(await solo.find({ type: 'Box', key: 'chan-ryo' })).toBeUndefined()
+    const cards = (await solo.findAll({ type: 'Box' })).filter(box => box.key?.startsWith('solo-card-')).map(box => box.key)
+    expect(cards).toEqual(['solo-card-demo-ryo', 'solo-card-demo-ryo2'])
+    expect(await solo.find({ type: 'Text', text: /^ctx [▰▱]{10} \d+% · tokens [\d.]+k · cost ≈\$[\d.]+ · started / })).toBeDefined()
+    expect(await solo.find({ type: 'Text', text: /^Read ×5 · Grep ×4 · Bash ×3 · now: Grep "legacyQuery"$/ })).toBeDefined()
+    expect(await solo.find({ type: 'Button', key: 'solo-mix' })).toBeDefined()
+    expect((await solo.find({ type: 'Raster', key: 'solo-figure' }))?.props).toMatchObject({ columns: 16, rows: 8 })
+    // The stage dims every head but hers.
+    const soloHeads = (await solo.find({ type: 'Raster', key: 'stage-heads' }))?.props.cells
+    expect(soloHeads).toBeDefined()
+    expect(soloHeads).not.toBe(mixHeads)
+    // An act's number under her pit puts that act first; m is the mix.
+    await solo.press({ key: 'act-solo-demo-ryo2' })
+    await clock.settle()
+    await solo.unmount()
+    const first = await mount(surface)
+    expect((await first.findAll({ type: 'Box' })).filter(box => box.key?.startsWith('solo-card-')).map(box => box.key)).toEqual(['solo-card-demo-ryo2', 'solo-card-demo-ryo'])
+    await first.press({ key: 'solo-mix' })
+    await clock.settle()
+    await first.unmount()
+    const back = await mount(surface)
+    expect(await back.find({ type: 'Box', key: 'chan-ryo' })).toBeDefined()
+    expect(await back.find({ type: 'Text', text: /^ SOLO $/ })).toBeUndefined()
+    // Her name twice: her solo, then the mix.
+    await back.press({ key: 'solo-kita' })
+    await clock.settle()
+    await back.press({ key: 'solo-kita' })
+    await clock.settle()
+    await back.unmount()
+    const again = await mount(surface)
+    expect(await again.find({ type: 'Text', text: /^ SOLO $/ })).toBeUndefined()
+    await again.unmount()
+  }
+  // The desktop: the live house. The mix lists every member's songs; her name (a native button) opens her page.
+  const sceneNow = async () => {
+    const pane = await mount('desktop')
+    const scene = await sceneOf(pane)
+    return { pane, scene, songs: Object.keys(scene).filter(k => k.startsWith('song-')).map(k => k.slice('song-'.length)) }
+  }
+  const mixed = await sceneNow()
+  for (const [member, key] of [['bocchi', 'b'], ['nijika', 'n'], ['ryo', 'r'], ['kita', 'k']] as const) expect((await mixed.pane.find({ type: 'Button', key: `solo-${member}` }))?.props).toMatchObject({ hotkey: key })
+  expect(await mixed.pane.find({ type: 'Button', key: 'solo-mix' })).toBeUndefined()
+  expect(mixed.songs).toContain('demo-nijika')
+  await mixed.pane.press({ key: 'solo-ryo' })
+  await clock.settle()
+  await mixed.pane.unmount()
+  // Her page: her songs alone, every one in full (no hover needed), the stage lit for her alone, the mix a primary button.
+  const page = await sceneNow()
+  expect(page.scene['scene-head']?.alt).toMatch(/^Ryo's page · bass · 2 acts · \$/)
+  expect(page.songs).toEqual(['demo-ryo', 'demo-ryo2'])
+  expect(Object.keys(page.scene).some(k => k.startsWith('detail:'))).toBe(false)
+  expect(page.scene['scene-stage']?.alt).toMatch(/, Ryo on solo: /)
+  // The others faded under the dark; the mix fades no one.
+  expect(page.scene['scene-stage']?.source).toContain('kessoku-dim')
+  expect(mixed.scene['scene-stage']?.source).not.toContain('kessoku-dim')
+  expect((await page.pane.find({ type: 'Button', key: 'solo-mix' }))?.props).toMatchObject({ hotkey: 'm', variant: 'primary' })
+  expect((await page.pane.find({ type: 'Button', key: 'solo-ryo' }))?.props).toMatchObject({ variant: 'primary' })
+  await page.pane.press({ key: 'solo-mix' })
+  await clock.settle()
+  await page.pane.unmount()
+  // From a song's details (revealed on hover), "Open on her page" puts that song first.
+  const opened = await sceneNow()
+  expect(opened.scene['scene-stage']?.alt).not.toMatch(/on solo/)
+  await opened.pane.press({ key: 'act-solo-demo-ryo2' })
+  await clock.settle()
+  await opened.pane.unmount()
+  const firstSong = await sceneNow()
+  expect(firstSong.songs).toEqual(['demo-ryo2', 'demo-ryo'])
+  // Her name twice: her page, then the mix.
+  await firstSong.pane.press({ key: 'solo-kita' })
+  await clock.settle()
+  await firstSong.pane.press({ key: 'solo-kita' })
+  await clock.settle()
+  await firstSong.pane.unmount()
+  const backToMix = await sceneNow()
+  expect(backToMix.scene['scene-head']?.alt).toMatch(/^Setlist · /)
+  await backToMix.pane.unmount()
+  // From the prompt, where the panel never holds the focus.
+  expect((await $.command.run(cmd('bocchi', 'solo nijika'))).text).toMatch(/Nijika on solo/)
+  const cmdSolo = await mount('desktop')
+  expect((await sceneOf(cmdSolo))['scene-head']?.alt).toMatch(/^Nijika's page · /)
+  expect((await sceneOf(cmdSolo))['song-demo-nijika']).toBeDefined()
+  await cmdSolo.unmount()
+  expect((await $.command.run(cmd('bocchi', 'solo off'))).text).toMatch(/back to the mix/)
+  expect((await $.command.run(cmd('bocchi', 'solo drums'))).text).toMatch(/^\/bocchi solo </)
+  // Bocchi's solo is the main loop: the set's own figures.
+  await $.command.run(cmd('bocchi', 'solo bocchi'))
+  const main = await mount('desktop')
+  expect((await sceneOf(main))['song-main']?.alt).toMatch(/^Bocchi \(main loop\) · /)
+  expect(await (await mount('terminal')).find({ type: 'Box', key: 'solo-card-main' })).toBeDefined()
+  await main.unmount()
+  expect((await $.command.run(cmd('bocchi', 'help'))).text).toMatch(/\/bocchi solo </)
+})
+
+test('a solo ends itself after the encore of her last act; autoSolo opens one for a new act and never cuts short a chosen one', { options: { autoSolo: true, applyTheme: false } }, async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  let n = 0
+  on('agent.spawn', () => {
+    n += 1
+    return { model: 'claude-sonnet-5-5', agentId: `agent-${n}` }
+  })
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const spawn = (subagentType: string, description: string) =>
+    $.agent.spawn({ tool_use_id: `tu-${description}`, prompt: 'Go.', description, subagentType, provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-sonnet-5-5', background: false, fork: false })
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  // Whose solo the open pane draws: its stage says `…, Ryo on solo: …`. The pane stays mounted: what it shows after a
+  // wait is what its own timers redrew.
+  const soloOf = async () => {
+    const named = /, (Bocchi|Nijika|Ryo|Kita) on solo: /.exec((await sceneOf(pane))['scene-stage']?.alt ?? '')?.[1]
+    return named === undefined ? null : named.toLowerCase()
+  }
+  // A new act: her solo for ten seconds, then the mix.
+  await spawn(`${PLUGIN}:ryo`, 'Find where the strip is drawn')
+  expect(await soloOf()).toBe('ryo')
+  await clock.advance(10_100)
+  expect(await soloOf()).toBeNull()
+  // Her name pressed once after the automatic solo ran out opens her page: the press reads what is drawn.
+  await pane.press({ key: 'solo-ryo' })
+  await clock.settle()
+  expect(await soloOf()).toBe('ryo')
+  await pane.press({ key: 'solo-ryo' })
+  await clock.settle()
+  expect(await soloOf()).toBeNull()
+  // Two automatic solos half a second apart: the second takes the stage and ends on its own due, not the first's.
+  await spawn(`${PLUGIN}:kita`, 'Fix the README typo')
+  await clock.advance(500)
+  await spawn(`${PLUGIN}:nijika`, 'Plan the rollout')
+  await clock.advance(9_700)
+  expect(await soloOf()).toBe('nijika')
+  await clock.advance(400)
+  expect(await soloOf()).toBeNull()
+  // A solo chosen by hand outlives another member's new act.
+  await $.command.run(cmd('bocchi', 'solo nijika'))
+  await spawn(`${PLUGIN}:ryo`, 'Look again')
+  expect(await soloOf()).toBe('nijika')
+  await clock.advance(10_100)
+  expect(await soloOf()).toBe('nijika')
+  // Her act ends, so her solo would end after its encore; her next act, in time, keeps it up.
+  await $.turn.complete({ turnId: 'a3', agentId: 'agent-3', answer: 'planned', durationMs: 4000, isAborted: false, reason: 'answer' })
+  await clock.advance(4000)
+  await spawn(`${PLUGIN}:nijika`, 'Review the plan')
+  await clock.advance(6000)
+  expect(await soloOf()).toBe('nijika')
+  // Her last act ends for good: the encore, then the mix.
+  await $.turn.complete({ turnId: 'a5', agentId: 'agent-5', answer: 'reviewed', durationMs: 4000, isAborted: false, reason: 'answer' })
+  expect(await soloOf()).toBe('nijika')
+  await clock.advance(8_100)
+  expect(await soloOf()).toBeNull()
+  // Bocchi's solo holds while the main loop plays, though an act seated with her ends.
+  await $.turn.start({ text: 'build it', turnId: 't1' })
+  await $.command.run(cmd('bocchi', 'solo bocchi'))
+  await spawn('general-purpose', 'Implement the feature')
+  await $.turn.complete({ turnId: 'a6', agentId: 'agent-6', answer: 'built', durationMs: 4000, isAborted: false, reason: 'answer' })
+  await clock.advance(8_100)
+  expect(await soloOf()).toBe('bocchi')
+  await pane.unmount()
+})
+
+test('tool rows are tracks of the set: number, member tag, tool, target, then the length; the strip and the marquee are ON AIR while it plays', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: 'rework the strip for narrow panes', turnId: 't1' })
+  await $.tool.call({ tool: 'Grep', pattern: 'drawStrip', tool_use_id: 'tu-grep' } as never)
+  await $.tool.call({ tool: 'Read', file_path: '/proj/src/app.ts', tool_use_id: 'tu-read' } as never)
+  await clock.advance(2000)
+  for (const surface of SURFACES) {
+    const done = await $.ui.mount({ plugin: PLUGIN, surface, component: 'ToolUse', requestId: 'tu-read', props: { tool_use_id: 'tu-read', tool: 'Read', input: { file_path: '/proj/src/app.ts' }, isRunning: false, isErrored: false, isInterrupted: false } })
+    expect(await done.find({ type: 'Text', text: /^ 02$/ })).toBeDefined()
+    expect((await done.find({ type: 'Text', text: /^ Ryo $/ }))?.props).toMatchObject({ backgroundColor: MEMBERS.ryo.color })
+    expect(await done.find({ type: 'Text', text: /^ Read$/ })).toBeDefined()
+    expect(await done.find({ type: 'Text', text: /^ · src\/app\.ts$/ })).toBeDefined()
+    // What the call took (it answered at once), not the time since it began, however late the row is drawn.
+    expect(await done.find({ type: 'Text', text: /^0:00$/ })).toBeDefined()
+    await done.unmount()
+    const running = await $.ui.mount({ plugin: PLUGIN, surface, component: 'ToolUse', requestId: 'tu-grep', props: { tool_use_id: 'tu-grep', tool: 'Grep', input: { pattern: 'drawStrip' }, isRunning: true, isErrored: false, isInterrupted: false } })
+    expect(await running.find({ type: 'Text', text: /^ 01$/ })).toBeDefined()
+    expect(await running.find({ type: 'Text', text: /^playing$/ })).toBeDefined()
+    await running.unmount()
+    const failed = await $.ui.mount({ plugin: PLUGIN, surface, component: 'ToolUse', requestId: 'tu-x', props: { tool_use_id: 'tu-x', tool: 'Bash', input: { command: 'npm run check' }, isRunning: false, isErrored: true, isInterrupted: false } })
+    expect((await failed.find({ type: 'Text', text: /^wrong note$/ }))?.props).toMatchObject({ color: 'error' })
+    expect(await failed.find({ type: 'Text', text: /^ 0\d$/ })).toBeUndefined()
+    await failed.unmount()
+    // While the set plays: ON AIR, and Bocchi with the set's task is what plays (no act on stage).
+    if (surface === 'terminal') {
+      const strip = await $.ui.mount({ plugin: PLUGIN, surface, component: 'AbovePrompt', props: BAND_PROPS })
+      expect(await strip.find({ type: 'Text', text: /^ ● ON AIR $/ })).toBeDefined()
+      expect(await strip.find({ type: 'Text', text: /^Bocchi$/ })).toBeDefined()
+      expect(await strip.find({ type: 'Text', text: /^ · Read src\/app\.ts$/ })).toBeDefined()
+      await strip.unmount()
+      const panel = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+      expect(await panel.find({ type: 'Text', text: /^ ● ON AIR $/ })).toBeDefined()
+      expect(await panel.find({ type: 'Text', text: /^ {2}set 1 · 0:02$/ })).toBeDefined()
+      await panel.unmount()
+    } else {
+      const signPane = await $.ui.mount({ plugin: PLUGIN, surface, component: 'AbovePrompt', props: BAND_PROPS })
+      expect((await sceneOf(signPane))['strip-sign']?.alt).toMatch(/^On air · now playing · Bocchi · Read src\/app\.ts · 0 on stage · /)
+      await signPane.unmount()
+      const housePane = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+      const scene = await sceneOf(housePane)
+      await housePane.unmount()
+      expect(scene['scene-head']?.alt).toMatch(/^Setlist · set 1 · on air · /)
+      expect(scene['scene-foot']?.alt).toMatch(/^set 1 · 0:02 · /)
+      expect(scene['song-main']?.alt).toMatch(/^Bocchi \(main loop\) · playing · rework the strip for narrow panes · /)
+    }
+  }
+  // A subagent's own turn is no new set: the tracks count on, the set and its prompt stay the main loop's.
+  await $.turn.start({ text: 'Sub prompt words.', turnId: 'a1', agentId: 'agent-x' } as never)
+  await $.tool.call({ tool: 'Glob', pattern: '*.md', tool_use_id: 'tu-glob0' } as never)
+  const third = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'ToolUse', requestId: 'tu-glob0', props: { tool_use_id: 'tu-glob0', tool: 'Glob', input: { pattern: '*.md' }, isRunning: false, isErrored: false, isInterrupted: false } })
+  expect(await third.find({ type: 'Text', text: /^ 03$/ })).toBeDefined()
+  await third.unmount()
+  const stillSet1 = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  const set1 = await sceneOf(stillSet1)
+  await stillSet1.unmount()
+  expect(set1['scene-head']?.alt).toMatch(/^Setlist · set 1 · on air · /)
+  expect(set1['song-main']?.alt).toMatch(/ · rework the strip for narrow panes · /)
+  // Between sets the set's length stands still.
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 2000, isAborted: false, reason: 'answer' })
+  await clock.advance(30_000)
+  const between = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect((await sceneOf(between))['scene-foot']?.alt).toMatch(/^set 1 · 0:02 · /)
+  await between.unmount()
+  // A new set numbers its tracks from one again.
+  await $.turn.start({ text: 'again', turnId: 't2' })
+  await $.tool.call({ tool: 'Glob', pattern: '*.ts', tool_use_id: 'tu-glob' } as never)
+  const next = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'ToolUse', requestId: 'tu-glob', props: { tool_use_id: 'tu-glob', tool: 'Glob', input: { pattern: '*.ts' }, isRunning: false, isErrored: false, isInterrupted: false } })
+  expect(await next.find({ type: 'Text', text: /^ 01$/ })).toBeDefined()
+  await next.unmount()
+  // Earlier sets' rows keep their numbers and their lengths.
+  const earlier = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'ToolUse', requestId: 'tu-read', props: { tool_use_id: 'tu-read', tool: 'Read', input: { file_path: '/proj/src/app.ts' }, isRunning: false, isErrored: false, isInterrupted: false } })
+  expect(await earlier.find({ type: 'Text', text: /^ 02$/ })).toBeDefined()
+  expect(await earlier.find({ type: 'Text', text: /^0:00$/ })).toBeDefined()
+  await earlier.unmount()
+  // The main loop's song is this set's: its age counts from this set's start, not the session's.
+  await clock.advance(1000)
+  const set2 = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect((await sceneOf(set2))['song-main']?.alt).toMatch(/^Bocchi \(main loop\) · playing · again · 0:01 · /)
+  await set2.unmount()
+})
+
+test('state an older version wrote survives a reload: the panel draws, an old act tallies its tools, the set counts from one', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  // What /reload-plugins hands the new module: $.state as v0.6.0 wrote it (no solo, no set, no tool tally).
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  const oldAct = { id: 'old-ryo', member: 'ryo', description: 'Search left over from before the reload', type: `${PLUGIN}:ryo`, status: 'running', task: 'warming up', startedAt: 990_000, endedAt: null, model: 'claude-sonnet-5-5', usage, context: 30_000, steps: 0, tools: 0, cost: 0.02, isError: false }
+  const oldMain = { ...oldAct, id: 'main', member: 'bocchi', description: 'the main conversation', type: 'main', status: 'idle', task: '', startedAt: 0, context: 0, cost: 0 }
+  const legacy: Record<string, unknown> = {
+    ui: { isPanelOpen: true, isStripHidden: false, panelWhere: 'pane' },
+    band: { agents: [oldMain, oldAct], mood: 'anxious', mainTask: '', contextPercent: 40, window: 200_000, sessionUsd: 28.4, rateLimitPercent: 0, isWorking: false, lastError: '' },
+  }
+  on('state.get', async ($, e, next) => {
+    const r = await next(e)
+    const key = (e as unknown as { key: string }).key
+    const stored = (r as { value?: { value: unknown; version: number } }).value
+    return (stored !== undefined && stored.version === 0 && key in legacy ? { value: { value: legacy[key], version: 0 } } : r) as never
+  })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect(await pane.find({ type: 'Text', text: /KESSOKU BAND/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /^♪ Search left over from before the reload$/ })).toBeDefined()
+  expect(await pane.find({ type: 'Box', key: 'chan-ryo' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /^ SOLO $/ })).toBeUndefined()
+  expect(await pane.find({ type: 'Text', text: /no set yet/ })).toBeDefined()
+  await pane.unmount()
+  const deskPane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  const desk = await sceneOf(deskPane)
+  await deskPane.unmount()
+  expect(desk['scene-stage']?.alt).not.toMatch(/on solo/)
+  expect(desk['song-old-ryo']?.alt).toMatch(/^Ryo · playing · Search left over from before the reload · /)
+  expect(desk['scene-head']?.alt).toMatch(/^Setlist · set 0 · /)
+  // The old act's next call starts its tally; its solo reads it.
+  await $.tool.call({ tool: 'Grep', pattern: 'drawStrip', agentId: 'old-ryo' } as never)
+  await $.command.run(cmd('bocchi', 'solo ryo'))
+  const solo = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect(await solo.find({ type: 'Text', text: /^Grep ×1 · now: Grep "drawStrip"$/ })).toBeDefined()
+  await solo.unmount()
+  const pagePane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  const page = await sceneOf(pagePane)
+  await pagePane.unmount()
+  expect(page['song-old-ryo']?.alt).toMatch(/ · now Grep "drawStrip"$/)
+  // The first set after the reload is set 1, not NaN.
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  const panel = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  expect((await sceneOf(panel))['scene-foot']?.alt).toMatch(/^set 1 · /)
+  await panel.unmount()
+})
+
+test('panelView: who plays, what each act does, its context, cost, tools and failure, read off the state for every drawing', async () => {
+  const now = 10_000_000
+  const usage = { input: 1000, output: 2000, cacheRead: 30_000, cacheWrite: 0 }
+  const act = (id: string, member: KessokuMember, description: string, status: KessokuAgent['status'], startedAgo: number, endedAgo: number | null, extra: Partial<KessokuAgent> = {}): KessokuAgent => ({
+    id, member, description, type: `${PLUGIN}:${member}`, status, task: '', startedAt: now - startedAgo, endedAt: endedAgo === null ? null : now - endedAgo, model: 'claude-sonnet-5-5', usage, context: 40_000, steps: 1, tools: 1, cost: 0.08, isError: false, toolTally: {}, lastTool: '', ...extra,
+  })
+  const band: KessokuBand = {
+    agents: [
+      act('main', 'bocchi', 'the main conversation', 'running', 62_000, null, { type: 'main', cost: 0.31, toolTally: { Read: 2, Edit: 5 }, lastTool: 'Edit hooks/register.tsx' }),
+      act('r1', 'ryo', 'Find every call site of legacyQuery()', 'running', 48_000, null, { toolTally: { Grep: 4, Read: 3, Bash: 1 }, lastTool: 'Grep "legacyQuery"' }),
+      act('r0', 'ryo', 'Explore: where cells are encoded', 'completed', 300_000, 140_000),
+      act('k1', 'kita', 'Update README for the new CLI flags', 'completed', 95_000, 4_000, { cost: 0.04 }),
+      act('k0', 'kita', 'Polish the settings page styles', 'failed', 160_000, 70_000, { isError: true, task: 'stopped: error' }),
+    ],
+    mood: 'focused', mainTask: 'Edit hooks/register.tsx', contextPercent: 42, window: 200_000, sessionUsd: 0.6, rateLimitPercent: 18, isWorking: true, lastError: 'Edit (Kita): old_string not found', set: 3, setStartedAt: now - 62_000, setPrompt: 'rework the strip',
+  }
+  const cache = { lastWarmAt: now - 60_000, contextTokens: 80_000, model: 'claude-sonnet-5-5', keepWarmUntil: 0, isArmed: false, heldAt: 0, heldText: '', heldUsd: 0, warmUsd: 0, pings: 0, pingUsd: 0, misses: 0, lastPingNote: '', engineWriteUsd: 0, engineModel: '' }
+  const ui = { isPanelOpen: true, isStripHidden: false, panelWhere: 'pane' as const, solo: null, soloAct: null, soloUntil: 0, soloChosen: false }
+  const v = panelView(band, cache, ui, now, 60 * 60_000)
+  expect(v.members.map(m => m.member)).toEqual(['bocchi', 'nijika', 'ryo', 'kita'])
+  expect(v).toMatchObject({ onAir: true, set: 3, setLength: '1:02', ctxPercent: 42, planPercent: 18, session: '$0.60', liveCount: 1, solo: null })
+  expect(v.amp).toEqual({ kind: 'warm', words: 'warm 59:00' })
+  expect(v.nowPlaying).toEqual({ who: 'ryo', words: 'Find every call site of legacyQuery() · 0:48' })
+  const [bocchi, nijika, ryo, kita] = v.members as [MemberView, MemberView, MemberView, MemberView]
+  // Bocchi's first act is the main loop: the set's task, the session's context, its own tools.
+  expect(bocchi.acts[0]).toMatchObject({ id: 'main', title: 'rework the strip', ctxPercent: 42, isLive: true, tool: 'Edit hooks/register.tsx' })
+  expect(bocchi.acts[0]?.tools).toEqual([{ name: 'Edit', count: 5 }, { name: 'Read', count: 2 }])
+  expect(bocchi).toMatchObject({ isPlaying: true, isLit: true, isDim: false, hotkey: 'b', ctxPercent: 42 })
+  // Nijika rests: no acts, her spotlight down, no context.
+  expect(nijika).toMatchObject({ isPlaying: false, isLit: false, acts: [], liveCount: 0, ctxPercent: -1, line: MEMBERS.nijika.lines.anxious })
+  // Ryo: the live act first, its context of the window, its tools most first, the tool in its hands.
+  expect(ryo.acts.map(a => a.id)).toEqual(['r1', 'r0'])
+  expect(ryo.acts[0]).toMatchObject({ state: 'playing', ctxPercent: 20, cost: '$0.08', at: '0:14', tool: 'Grep "legacyQuery"', slime: 'active' })
+  expect(ryo.acts[0]?.tools.map(t => t.name)).toEqual(['Grep', 'Read', 'Bash'])
+  expect(ryo.acts[1]).toMatchObject({ state: 'done', isEncore: false, at: '2:20 ago', slime: 'asleep' })
+  expect(ryo).toMatchObject({ isPlaying: true, liveCount: 1, ctxPercent: 20, line: '1 playing' })
+  expect(ryo.pit.map(a => a.id)).toEqual(['r1'])
+  // Kita: the README just ended (its encore, in her pit); the failed one says why.
+  expect(kita.acts.find(a => a.id === 'k1')).toMatchObject({ state: 'done', isEncore: true, age: '1:31' })
+  expect(kita.acts.find(a => a.id === 'k0')).toMatchObject({ state: 'failed', isFailed: true, reason: 'stopped: error', isEncore: false })
+  expect(kita.pit.map(a => a.id)).toEqual(['k1'])
+  expect(kita).toMatchObject({ mood: 'happy', line: 'set done', spend: '$0.12' })
+  // A member whose act was just stopped waits out her encore in her box; after it she rests.
+  const stoppedAct = (endedAgo: number) => panelView({ ...band, agents: [...band.agents, act('n1', 'nijika', 'Plan the auth refactor', 'killed', 30_000, endedAgo)] }, cache, ui, now, 60 * 60_000).members[1]?.mood
+  expect(stoppedAct(2_000)).toBe('hiding')
+  expect(stoppedAct(9_000)).toBe('anxious')
+  // Shares of the session's spend.
+  expect(Math.round(ryo.share * 100)).toBe(27)
+  // Ryo on solo: only her spotlight, the others faded; the pressed act first.
+  const solo = panelView(band, cache, { ...ui, solo: 'ryo', soloAct: 'r0' }, now, 60 * 60_000)
+  expect(solo.members.map(m => [m.member, m.isLit, m.isDim, m.isSolo])).toEqual([['bocchi', false, true, false], ['nijika', false, true, false], ['ryo', true, false, true], ['kita', false, true, false]])
+  expect(solo.members[2]?.acts.map(a => a.id)).toEqual(['r0', 'r1'])
+  // A solo past its due is the mix; the cache cold, kept warm, or never warmed.
+  expect(panelView(band, cache, { ...ui, solo: 'ryo', soloUntil: now - 1 }, now, 60 * 60_000).solo).toBeNull()
+  expect(panelView(band, { ...cache, lastWarmAt: now - 70 * 60_000 }, ui, now, 60 * 60_000).amp).toEqual({ kind: 'cold', words: 'cold 10:00' })
+  expect(panelView(band, { ...cache, keepWarmUntil: now + 7_200_000 }, ui, now, 60 * 60_000).amp.kind).toBe('keepwarm')
+  expect(panelView(band, { ...cache, lastWarmAt: 0 }, ui, now, 60 * 60_000).amp).toEqual({ kind: 'none', words: 'no cache yet' })
+  // State an older version wrote (no set, no solo, no tally) reads whole.
+  const legacyBand = { ...band, set: undefined, setStartedAt: undefined, agents: band.agents.map(a => ({ ...a, toolTally: undefined, lastTool: undefined })) } as unknown as KessokuBand
+  const legacy = panelView(legacyBand, cache, { isPanelOpen: true, isStripHidden: false, panelWhere: 'pane' } as unknown as KessokuUi, now, 60 * 60_000)
+  expect(legacy).toMatchObject({ set: 0, setLength: '', solo: null })
+  expect(legacy.members[2]?.acts[0]).toMatchObject({ tools: [], tool: '' })
+})
+
+test("the stage's source stays the same while only clocks, costs and tools change; a mood, a slime or a solo changes it", async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.command.run(cmd('bocchi', 'demo'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  const stageNow = async () => (await sceneOf(pane))['scene-stage']?.source
+  const before = await stageNow()
+  const songBefore = (await sceneOf(pane))['song-demo-ryo']?.source
+  // A second on, Ryo's act calls a tool and takes a model step (its cost, tokens and context move): the songs change,
+  // the stage does not, so its frame never reloads and its animations never restart.
+  await clock.advance(1500)
+  await $.tool.call({ tool: 'Read', file_path: '/proj/src/app.ts', agentId: 'demo-ryo' } as never)
+  const step = $.turn.step({ turnId: 'r1', index: 0, model: 'claude-sonnet-5-5', messageCount: 1, agentId: 'demo-ryo' })
+  for await (const chunk of step) void chunk
+  expect((await sceneOf(pane))['song-demo-ryo']?.source).not.toBe(songBefore)
+  expect(await stageNow()).toBe(before)
+  // Kita's encore ends (her face goes back to waiting): the stage is drawn anew.
+  await clock.advance(5000)
+  const afterEncore = await stageNow()
+  expect(afterEncore).not.toBe(before)
+  // Ryo on solo: drawn anew again.
+  await pane.press({ key: 'solo-ryo' })
+  await clock.settle()
+  expect(await stageNow()).not.toBe(afterEncore)
+  await pane.unmount()
+})
+
+test('a slime that ended leaves the stage by itself half a minute later, though nothing else happens', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.command.run(cmd('bocchi', 'demo'))
+  // Kita's README ended four seconds ago: asleep in her pit. Nothing changes the state from here on.
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
+  const at10 = async () => (await sceneOf(pane))['scene-stage']?.source
+  await clock.advance(6000)
+  const withSlime = await at10()
+  await clock.advance(21_000)
+  expect(await at10()).not.toBe(withSlime)
+  await pane.unmount()
 })

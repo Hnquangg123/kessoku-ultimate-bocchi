@@ -43,6 +43,10 @@ export type KessokuAgent = {
   tools: number
   cost: number
   isError: boolean
+  /** Calls by tool name, this act (the main loop's reset at every turn). */
+  toolTally: Record<string, number>
+  /** The task line's words for its newest call; empty before one. */
+  lastTool: string
 }
 
 /** What the Kessoku Band panel and the strip above the prompt draw from. */
@@ -57,6 +61,12 @@ export type KessokuBand = {
   rateLimitPercent: number
   isWorking: boolean
   lastError: string
+  /** The set: the main loop's turn, counted from the session's first (0 before it). */
+  set: number
+  /** What the set was asked: the head of the prompt that started it (mainTask follows the tool in hand). */
+  setPrompt: string
+  /** When the current (or last) set started. */
+  setStartedAt: number
 }
 
 /** Cache Tax: when the prompt cache was last warmed, and what a cold send costs. */
@@ -156,6 +166,14 @@ export type KessokuUi = {
   isPanelOpen: boolean
   isStripHidden: boolean
   panelWhere: 'pane' | 'band' | 'none'
+  /** The member whose channel is open across the mixer; null for the mix. */
+  solo: KessokuMember | null
+  /** The act listed first on her solo (pressed under her pit); null for the newest. */
+  soloAct: string | null
+  /** When an automatic solo (or one whose last act ended) returns to the mix; 0 for a chosen one with acts on stage. */
+  soloUntil: number
+  /** The solo was chosen (her name pressed, /bocchi solo), not opened by autoSolo: her new act calls off its pending end, and autoSolo never replaces it. */
+  soloChosen: boolean
 }
 
 declare module 'claude-code' {
