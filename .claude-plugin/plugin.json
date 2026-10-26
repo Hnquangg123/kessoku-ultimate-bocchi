@@ -1,6 +1,6 @@
 {
   "name": "kessoku-ultimate-bocchi",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Kessoku Ultimate Bocchi Theme: a Bocchi the Rock!-inspired charcoal-and-pink skin for all of Claude Code (an engine theme plus every render site), a live Kessoku Band panel with the band on stage as animated pixel-art sprites under spotlights and their subagents as songs on a setlist (solo any member) and band subagent types Claude can delegate to by name, a recap card when a long set ends and a per-project tour across sessions (/bocchi stats), and themed Cache Tax, Blast Radius, Filetree, Reflect and Replay Theater gags.",
   "author": {
     "name": "Dylan"
