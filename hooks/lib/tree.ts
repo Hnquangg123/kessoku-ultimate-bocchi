@@ -20,7 +20,7 @@ export const IGNORED_DIRS = new Set([
 export const MAX_PATHS = 600
 
 /** Forward slashes, `\\?\` prefixes dropped, `.` and `..` folded, no trailing slash. */
-function norm(path: string): string {
+export function norm(path: string): string {
   let p = path.replace(/\\/g, '/').replace(/^\/\/\?\/UNC\//i, '//').replace(/^\/\/\?\//, '')
   const unc = p.startsWith('//')
   const drive = /^[A-Za-z]:/.exec(p)?.[0] ?? ''

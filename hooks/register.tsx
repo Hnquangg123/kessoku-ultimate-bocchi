@@ -1,6 +1,6 @@
 // Kessoku Ultimate Bocchi Theme: the hooks module.
 //
-// One module, nine features, every `on(...)` and `$.noun.method(...)` spelled
+// One module, ten features, every `on(...)` and `$.noun.method(...)` spelled
 // here so the host can read them off the source; the pure parts (the look,
 // the price table, the risk classifier, the diff, the notebook, the tree
 // shape) live under ./lib.
@@ -34,8 +34,12 @@
 //             rule itself through the memo tool, and the person still saves it.
 //   replay    Replay Theater (`/replay`): the last turn's edits as a setlist,
 //             one unified diff at a time, with the file's real line numbers.
-//   bocchi    `/bocchi theme|demo|memo|tax|crash|mood <m>|strip|help` previews
-//             each piece so the look can be tweaked without waiting for the real thing.
+//   tour      a set of half a minute or more ends with Nijika's recap above
+//             the prompt (its counts, its MVP, Replay); every set joins its
+//             project's tour in the plugin's store, one line a night, which
+//             `/bocchi stats [all]` shows on the `♪ On Tour` page.
+//   bocchi    `/bocchi theme|demo|memo|tax|crash|setlist|recap|mood <m>|solo|strip|stats|help`
+//             previews each piece so the look can be tweaked without waiting for the real thing.
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PluginOptions, Register, RenderInput, Timer } from 'claude-code'
@@ -50,7 +54,10 @@ import type {
   KessokuMemo,
   KessokuMood,
   KessokuProposal,
+  KessokuRecap,
   KessokuReplay,
+  KessokuTally,
+  KessokuTour,
   KessokuTrack,
   KessokuTree,
   KessokuUi,
@@ -104,6 +111,8 @@ import { completions } from './lib/typeahead'
 import { boardFootSvg, boardHeadSvg, boardLayout, boardPlan, layoutFor, platesSvg, SCENE_COLORS, songDetailSvg, songLook, songSvg, stageSvg, stripSvg } from './lib/scene'
 import type { SceneSvg } from './lib/scene'
 import type { ActView, PanelView } from './lib/stage'
+import { ALL_PROJECTS, TOUR_KEY, addMemo, addSet, bar, dayOf, plural, projectRoot, readBook, setOf, shortDay, spark, statsLine, tourChart, tourKey, tourView } from './lib/tour'
+import type { TourBook, TourView } from './lib/tour'
 import { BAND_ORDER, panelView, ENCORE_MS, SLIME_TAIL_MS, SOLO_KEYS, actsInOrder, actsOf, bandOf, channelState, isEncore, isLive, liveCount, memberMood, nowPlaying, pitActs, setLength, slotContext, soloNow, uiOf, vuLevel } from './lib/stage'
 import { CRASH, CRASH_MINI, animOf, cellsFor, composite, encodeCells, frameSignature, isAnimated, spriteId, spritesSvg, viewSize } from './lib/sprite'
 import type { CellMode, MemberView, SlimeView, SpritePart, StageLayer } from './lib/sprite'
@@ -115,6 +124,7 @@ const PANEL = 'kessoku-band'
 const TREE = 'kessoku-filetree'
 const BLAST = 'kessoku-blast-radius'
 const REPLAY = 'kessoku-replay'
+const TOUR = 'kessoku-tour'
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit'])
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
@@ -198,6 +208,8 @@ const INITIAL_CACHE: KessokuCache = {
 const INITIAL_TREE: KessokuTree = { root: '', paths: [], lights: [], isOpen: false, isBand: false, builtAt: 0 }
 const INITIAL_REPLAY: KessokuReplay = { tracks: [], index: 0, isOpen: false, inBand: false, setlist: 0 }
 const INITIAL_UI: KessokuUi = { isPanelOpen: false, isStripHidden: false, panelWhere: 'none', solo: null, soloAct: null, soloUntil: 0, soloChosen: false }
+const INITIAL_TALLY: KessokuTally = { set: 0, mainUsd: 0, errors: { bocchi: 0, nijika: 0, ryo: 0, kita: 0 }, held: 0, stopped: 0, commits: 0 }
+const INITIAL_TOUR: KessokuTour = { isOpen: false, inBand: false, scope: 'project', view: null }
 
 const band = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'band' } as const, INITIAL_BAND)
 const cache = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'cache' } as const, INITIAL_CACHE)
@@ -208,6 +220,9 @@ const memo = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'memo' } as const, n
 const proposals = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'proposals' } as const, [] as KessokuProposal[])
 const replay = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'replay' } as const, INITIAL_REPLAY)
 const ui = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'ui' } as const, INITIAL_UI)
+const recap = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'recap' } as const, null)
+const tally = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'tally' } as const, INITIAL_TALLY)
+const tour = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'tour' } as const, INITIAL_TOUR)
 
 type Skin = 'full' | 'light' | 'none'
 type Toasts = 'all' | 'important' | 'none'
@@ -1400,6 +1415,9 @@ async function saveRule($: EngineInterface, where: 'project' | 'global'): Promis
     toast($, `${MEMBERS.nijika.faces.panic} Nijika could not write ${path}: ${String((error as { message?: string })?.message ?? error).slice(0, 120)}`)
     return
   }
+  // A memo saved counts on tonight's night of the project's tour.
+  const day = dayOf(await $.clock.now())
+  await writeBook($, b => addMemo(b, day))
   // Marked saved only while the card still holds the rule just written: a memo that took it during the write stays open.
   const isWritten = (x: KessokuMemo | null): x is KessokuMemo => x !== null && x.at === m.at && x.rule === m.rule
   const saved = await update($, memo, x => (isWritten(x) ? { ...x, status: 'saved' as const, savedTo: path } : x))
@@ -1496,6 +1514,85 @@ function suggestReplay($: EngineInterface, tracks: number): void {
       if (isMissingApi(error)) features.suggest = false
     }
   })()
+}
+
+// ---- On tour: the set's recap and the project's tour ---------------------------
+
+/** The project a set belongs to: the repository's root (the main working tree's, so worktrees share a tour), else the session's root. */
+async function tourProject($: EngineInterface): Promise<{ root: string; name: string }> {
+  let root = ''
+  try {
+    root = (await $.session.repo())?.root ?? ''
+  } catch {
+    root = ''
+  }
+  if (root === '') root = await $.session.root().catch(() => cwd)
+  const spelled = projectRoot(root)
+  return { root: spelled, name: baseName(spelled) || spelled }
+}
+
+/** The tour's writes, one after another, so a set and a memo saved at once each read the book the other wrote. */
+let tourWrites: Promise<void> = Promise.resolve()
+
+/**
+ * This project's book in the store, changed by `fn`: read, changed and
+ * written after every write before it. The store failing leaves the tour as
+ * it was; the tour is the band's memory, never a reason a set or a save fails.
+ */
+async function writeBook($: EngineInterface, fn: (book: TourBook) => TourBook): Promise<void> {
+  const write = tourWrites.then(async () => {
+    const { root, name } = await tourProject($)
+    const key = tourKey(root)
+    await $.store.set(key, fn(readBook(await $.store.get(key), root, name)))
+  })
+  tourWrites = write.catch(() => undefined)
+  await tourWrites
+}
+
+/** This project's book, or every project's the store holds. */
+async function loadBooks($: EngineInterface, scope: KessokuTour['scope']): Promise<TourBook[]> {
+  if (scope === 'project') {
+    const { root, name } = await tourProject($)
+    return [readBook(await storeGet($, tourKey(root)), root, name)]
+  }
+  let keys: string[] = []
+  try {
+    keys = (await $.store.keys()).filter(k => k.startsWith(TOUR_KEY))
+  } catch {
+    keys = []
+  }
+  const books: TourBook[] = []
+  for (const k of keys) {
+    const root = k.slice(TOUR_KEY.length)
+    books.push(readBook(await storeGet($, k), root, baseName(root) || root))
+  }
+  return books
+}
+
+/** The tour as the page shows it, on this project or every one. */
+async function loadView($: EngineInterface, scope: KessokuTour['scope']): Promise<TourView> {
+  return scope === 'all' ? tourView(await loadBooks($, scope), ALL_PROJECTS) : tourView(await loadBooks($, scope))
+}
+
+/** The tour page, on this project or every one: the view worked out from the store, then the pane (above the prompt where no pane fits). */
+async function openTour($: EngineInterface, scope: KessokuTour['scope']): Promise<TourView> {
+  const view = await loadView($, scope)
+  await update($, tour, x => ({ ...x, isOpen: true, scope, view }))
+  const placed = await $.ui.open({ id: TOUR, title: '♪ On Tour', focus: true, closeOnEscape: true, rows: 24, columns: 72 })
+  await update($, tour, x => ({ ...x, inBand: !placed.isPlaced }))
+  return view
+}
+
+/** The page on another scope: the view worked out again; the pane stays where it is. */
+async function scopeTour($: EngineInterface, scope: KessokuTour['scope']): Promise<void> {
+  const view = await loadView($, scope)
+  await update($, tour, x => ({ ...x, scope, view }))
+}
+
+async function closeTour($: EngineInterface): Promise<void> {
+  await update($, tour, x => ({ ...x, isOpen: false, inBand: false }))
+  // Always by id: a pane that waited undrawn in a narrow terminal is open to the engine too.
+  await $.ui.close({ id: TOUR }).catch(() => undefined)
 }
 
 // ---- The panel ---------------------------------------------------------------
@@ -2721,6 +2818,148 @@ function drawMemo($: EngineInterface, e: RenderInput<'AbovePrompt'>, m: KessokuM
   )
 }
 
+/** Nijika's recap of the set that just ended, in the strip's place above the prompt. */
+function drawRecap($: EngineInterface, e: RenderInput<'AbovePrompt'>, r: KessokuRecap, rp: KessokuReplay, now: number): Draw {
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const isTerminal = e.surface === 'terminal'
+  const n = MEMBERS.nijika
+  const isWrap = r.reason === 'answer'
+  // Nijika holds the card up: beaming after an answer, her usual smile after a set that stopped.
+  const sprite = drawSprite($, e, headSprite('recap-sprite', e, 'nijika', isWrap ? 'happy' : 'anxious', bg()), now)
+  // A count: the number (large where the surface has sizes), then its word.
+  const stat = (key: string, count: number, one: string, many: string): Draw => (
+    <Box key={key} flexDirection={isTerminal ? 'row' : 'column'} gap={isTerminal ? 1 : 0}>
+      <Text color="text" bold size="heading" tabular>{String(count)}</Text>
+      <Text dimColor size="caption">{count === 1 ? one : many}</Text>
+    </Box>
+  )
+  const mvp = MEMBERS[r.mvp.member]
+  const why =
+    r.mvp.acts > 0
+      ? ` · ${r.mvp.acts} ${r.mvp.acts === 1 ? 'act' : 'acts'} · ≈${fmtUsd(r.mvp.usd)}${r.mvp.what === '' ? '' : ` · "${r.mvp.what}"`}`
+      : ` · the main loop · ${r.mvp.tracks} tool ${r.mvp.tracks === 1 ? 'call' : 'calls'} · ≈${fmtUsd(r.mvp.usd)}`
+  return (
+    <Box flexDirection="row" gap={1} borderStyle="round" borderColor={n.color} paddingX={1} backgroundColor={bg()}>
+      {sprite}
+      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+        <Box flexDirection="row" justifyContent="space-between" gap={1}>
+          <Text color={opts.accent} bold wrap="truncate-end">{`${sprite === null ? `${n.faces[isWrap ? 'happy' : 'anxious']} ` : ''}♪ SET ${r.set} · ${isWrap ? "that's a wrap" : `stopped on ${r.reason}`}`}</Text>
+          <Text dimColor>{`${fmtDuration(r.ms)} · ≈${fmtUsd(r.usd)}`}</Text>
+        </Box>
+        <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+          {stat('recap-edits', r.edits, 'edit', 'edits')}
+          {stat('recap-acts', r.acts, 'act', 'acts')}
+          {stat('recap-errors', r.errors, 'wrong note', 'wrong notes')}
+          {stat('recap-held', r.held, 'blast held', 'blasts held')}
+        </Box>
+        <Text wrap="truncate-end">
+          <Text dimColor>MVP </Text>
+          <Text color={mvp.color} bold>{mvp.name}</Text>
+          <Text dimColor>{why}</Text>
+        </Text>
+        <Box flexDirection="row" gap={2}>
+          {r.edits > 0 && rp.tracks.length > 0 && !rp.isOpen ? <Button key="recap-replay" label={`Replay ${rp.tracks.length}`} hotkey="r" variant="primary" plain onPress={() => void openReplay($)} /> : null}
+          <Button key="recap-tour" label="Tour" hotkey="t" plain onPress={() => void openTour($, 'project')} />
+          <Button key="recap-dismiss" label="Dismiss" hotkey="x" plain dimColor onPress={() => void update($, recap, () => null)} />
+        </Box>
+      </Box>
+    </Box>
+  )
+}
+
+/**
+ * The tour page: the project (or every one), since when, and its figures;
+ * then the recent nights and the members, a picture where the surface draws
+ * Svg and block characters in a terminal; then the records.
+ */
+function drawTour($: EngineInterface, e: Site, t: KessokuTour): Draw {
+  const table = $.ui.resolve(e)
+  const { Box, Text, Button } = table
+  const isTerminal = e.surface === 'terminal'
+  const v = t.view
+  if (v === null) return <Text dimColor>No tour open.</Text>
+  const first = v.recent[0]
+  const last = v.recent[v.recent.length - 1]
+  const dearest = Math.max(0, ...v.recent.map(n => n.usd))
+  const busiest = Math.max(0, ...BAND_ORDER.map(m => v.acts[m]))
+  let charts: Draw | null = null
+  if (!isTerminal && 'Svg' in table) {
+    const chart = tourChart(v)
+    const { Svg } = table
+    charts = (
+      <Box key="tour-chart" flexDirection="column">
+        <Svg source={chart.svg} alt={chart.alt} />
+      </Box>
+    )
+  } else if (first !== undefined && last !== undefined) {
+    charts = (
+      <Box flexDirection="column">
+        <Text wrap="truncate-end">
+          <Text dimColor>{'cost a night  '}</Text>
+          <Text color={opts.accent}>{spark(v.recent.map(n => n.usd))}</Text>
+          <Text dimColor>{`  ${shortDay(first.day)}${first === last ? '' : ` → ${shortDay(last.day)}`} · dearest ≈${fmtUsd(dearest)}`}</Text>
+        </Text>
+        {BAND_ORDER.map(m => (
+          <Box key={`tour-act-${m}`} flexDirection="row" gap={1}>
+            <Box width={7}>
+              <Text color={MEMBERS[m].color} bold>{MEMBERS[m].name}</Text>
+            </Box>
+            {v.acts[m] > 0 ? <Text color={MEMBERS[m].color}>{bar(v.acts[m], busiest, 10)}</Text> : null}
+            <Text dimColor>{String(v.acts[m])}</Text>
+          </Box>
+        ))}
+      </Box>
+    )
+  }
+  const records = [
+    v.longest === null ? '' : `longest set ${fmtDuration(v.longest.ms)} on ${shortDay(v.longest.day)}`,
+    v.priciest === null ? '' : `priciest ≈${fmtUsd(v.priciest.usd)} on ${shortDay(v.priciest.day)}`,
+    v.mostErrors === null ? '' : `most wrong notes ${MEMBERS[v.mostErrors.member].name} (${v.mostErrors.count})`,
+  ]
+    .filter(words => words !== '')
+    .join(' · ')
+  // A figure: the value (large where the surface has sizes), then its word.
+  const stat = (key: string, value: string, label: string): Draw => (
+    <Box key={key} flexDirection={isTerminal ? 'row' : 'column'} gap={isTerminal ? 1 : 0}>
+      <Text color="text" bold size="title" tabular>{value}</Text>
+      <Text dimColor size="caption">{label}</Text>
+    </Box>
+  )
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={opts.accent} paddingX={1} backgroundColor={bg()}>
+      <Box flexDirection="row" justifyContent="space-between" gap={1}>
+        <Text color={opts.accent} bold wrap="truncate-end">{`♪ ON TOUR · ${v.label}`}</Text>
+        <Text dimColor>{v.since === '' ? 'no nights yet' : `since ${v.since} · ${plural(v.nights, 'night')}`}</Text>
+      </Box>
+      {v.sets === 0 ? (
+        <Text dimColor>No sets played here yet.</Text>
+      ) : (
+        <Box flexDirection="row" flexWrap="wrap" columnGap={3}>
+          {stat('tour-sets', String(v.sets), v.sets === 1 ? 'set' : 'sets')}
+          {stat('tour-usd', `≈${fmtUsd(v.usd)}`, 'spent')}
+          {stat('tour-commits', String(v.commits), v.commits === 1 ? 'commit' : 'commits')}
+          {stat('tour-stopped', String(v.stopped), v.stopped === 1 ? 'blast stopped' : 'blasts stopped')}
+          {stat('tour-memos', String(v.memos), v.memos === 1 ? 'memo saved' : 'memos saved')}
+        </Box>
+      )}
+      {v.sets === 0 ? null : charts}
+      {records === '' ? null : (
+        <Text dimColor wrap="wrap">
+          {records}
+        </Text>
+      )}
+      <Box flexDirection="row" gap={2} marginTop={1}>
+        {t.scope === 'project' ? (
+          <Button key="tour-all" label="All projects" hotkey="a" variant="primary" autoFocus onPress={() => void scopeTour($, 'all')} />
+        ) : (
+          <Button key="tour-project" label="This project" hotkey="p" variant="primary" autoFocus onPress={() => void scopeTour($, 'project')} />
+        )}
+        <Button key="tour-close" label="Close" hotkey="c" role="dismiss" onPress={() => void closeTour($)} />
+      </Box>
+    </Box>
+  )
+}
+
 function drawReplay($: EngineInterface, e: Site, r: KessokuReplay, inBand: boolean, now: number): Draw {
   const { Box, Text, Button, Code } = $.ui.resolve(e)
   const total = r.tracks.length
@@ -2977,6 +3216,25 @@ async function demoReplay($: EngineInterface): Promise<string> {
   return 'Replay Theater: a two-track sample setlist is open (preview).'
 }
 
+/** A sample recap above the prompt, as a six-minute set would leave it; the tour does not count it. */
+async function demoRecap($: EngineInterface): Promise<string> {
+  const b = await read($, band)
+  const now = await $.clock.now()
+  await update($, recap, () => ({
+    set: Math.max(1, b.set),
+    reason: 'answer',
+    ms: 362_000,
+    usd: 0.54,
+    edits: 3,
+    acts: 3,
+    errors: 1,
+    held: 0,
+    mvp: { member: 'ryo' as const, acts: 2, usd: 0.19, what: 'Look into why the strip flickers on resize', tracks: 0 },
+    at: now,
+  }))
+  return "Nijika's sample recap is up above the prompt (preview): Dismiss, or your next prompt, takes it down."
+}
+
 const HELP_LINES = [
   '/kessoku          toggle the Kessoku Band panel (subagents as Nijika, Ryo, Kita; Bocchi is the main loop)',
   '/filetree         toggle the file tree: pink while Claude edits a file, neon green once a commit lands',
@@ -2985,9 +3243,10 @@ const HELP_LINES = [
   '/cache-tax        is the cache warm, and what would a cold send cost?',
   '/bocchi theme [on|off|status]   switch Claude Code\'s own theme to Kessoku Bocchi (the light twin on a light theme), or back',
   '/bocchi strip     hide or show the band strip above the prompt',
+  "/bocchi stats [all]   the tour: this project's sets, nights, spend, members and records across sessions (all: every project); a set of half a minute or more ends with Nijika's recap above the prompt",
   "/bocchi solo <bocchi|nijika|ryo|kita|off>   one member alone, every act in full: her page on the desktop, her channel in a terminal (on the panel: her hotkey b n r k, m for the mix; in a terminal an act's number under the pit solos her with that act first)",
   '/bocchi mood <anxious|focused|happy|panic|melting|hiding>   try a face in the status line',
-  '/bocchi demo [off]   put sample acts on the panel · /bocchi memo [proposed] · /bocchi tax · /bocchi crash · /bocchi setlist   previews',
+  '/bocchi demo [off]   put sample acts on the panel · /bocchi memo [proposed] · /bocchi tax · /bocchi crash · /bocchi setlist · /bocchi recap   previews',
   'Blast Radius and Reflect need no command: a risky command or a correction brings them up, and Claude can propose a rule itself with the memo tool (you still press Save).',
   "Band agent types: Claude can delegate to kessoku-ultimate-bocchi:nijika (plans, reviews, triage), :ryo (searches, shells, tests) and :kita (edits to named files); each act is seated with its member by name.",
   'Config: /config → kessoku-ultimate-bocchi (engine theme, transcript skin, character art, restyle other mods, toasts, accent, backgrounds, tool cards, spinner words, cache TTL, keepwarm, reflect, panel on start, auto solo).',
@@ -3030,6 +3289,8 @@ async function startUi($: EngineInterface): Promise<void> {
   else if (t.isOpen && t.lights.length > 0) ensureShimmer($)
   const r = await read($, replay)
   if (r.isOpen && !r.inBand && !panes.some(p => p.id === REPLAY)) await update($, replay, x => ({ ...x, isOpen: false }))
+  const tp = await read($, tour)
+  if (tp.isOpen && !tp.inBand && !panes.some(p => p.id === TOUR)) await update($, tour, x => ({ ...x, isOpen: false }))
   await update($, blast, () => null)
   // A memo already answered, or a face set with a timer, does not survive the reload that lost the timer.
   const m = await read($, memo)
@@ -3070,7 +3331,7 @@ export const register: Register = (on, options) => {
     await $.command.register({ name: 'replay', description: 'Replay Theater: step through the last turn\'s edits as a setlist' })
     await $.command.register({ name: 'keepwarm', description: 'Cache Tax: keep the prompt cache warm (e.g. /keepwarm 90m, /keepwarm off)', argumentHint: '[duration|off]' })
     await $.command.register({ name: 'cache-tax', description: 'Cache Tax: is the cache warm, and what would a cold send cost?' })
-    await $.command.register({ name: 'bocchi', description: 'Kessoku theme: help, the engine theme, previews, moods, the strip', argumentHint: '[help|theme on|off|strip|solo <member|off>|mood <m>|demo|memo [proposed]|tax|crash|setlist]' })
+    await $.command.register({ name: 'bocchi', description: 'Kessoku theme: help, the engine theme, previews, moods, the strip', argumentHint: '[help|theme on|off|strip|stats [all]|solo <member|off>|mood <m>|demo|memo [proposed]|tax|crash|setlist|recap]' })
     await readEngine($).catch(() => undefined)
     // What the model can do with the band: delegate to a member by name, and propose a rule for Nijika's card.
     await registerBand($).catch(() => undefined)
@@ -3101,6 +3362,7 @@ export const register: Register = (on, options) => {
       await update($, tree, x => ({ ...x, lights: [] }))
       await update($, memo, () => null)
       await update($, proposals, () => [])
+      await update($, recap, () => null)
       if (memoTimer !== null) {
         memoTimer.cancel()
         memoTimer = null
@@ -3188,6 +3450,13 @@ export const register: Register = (on, options) => {
         return { text: await demoCrash($) }
       case 'setlist':
         return { text: await demoReplay($) }
+      case 'recap':
+        return { text: await demoRecap($) }
+      case 'stats': {
+        const scope = arg === 'all' ? ('all' as const) : ('project' as const)
+        // Where nobody can see a page (a -p run), the line alone.
+        return { text: statsLine(canDraw() ? await openTour($, scope) : await loadView($, scope)) }
+      }
       default:
         return { text: help() }
     }
@@ -3204,7 +3473,11 @@ export const register: Register = (on, options) => {
     cwd = await $.session.cwd().catch(() => cwd)
     const now = await $.clock.now()
     const head = e.text.replace(/\s+/g, ' ').trim().slice(0, 48)
-    await update($, band, b => patchAgent({ ...b, isWorking: true, mainTask: head, lastError: '', set: (b.set ?? 0) + 1, setStartedAt: now, setPrompt: head }, 'main', a => ({ ...a, status: 'running', startedAt: now, endedAt: null, task: '', toolTally: {}, lastTool: '', isError: false })))
+    const started = await update($, band, b => patchAgent({ ...b, isWorking: true, mainTask: head, lastError: '', set: (b.set ?? 0) + 1, setStartedAt: now, setPrompt: head }, 'main', a => ({ ...a, status: 'running', startedAt: now, endedAt: null, task: '', toolTally: {}, lastTool: '', isError: false })))
+    // The last set's recap never stands between two sets; what the main loop has spent so far is not this set's.
+    await update($, recap, () => null)
+    const spent = started.agents.find(a => a.id === 'main')?.cost ?? 0
+    await update($, tally, t => ({ ...t, set: started.set, mainUsd: spent }))
     // The main loop is Bocchi's act: a chosen solo of hers holds while it plays.
     await update($, ui, raw => {
       const x = uiOf(raw)
@@ -3252,8 +3525,29 @@ export const register: Register = (on, options) => {
       scheduleTail($, now + ENCORE_MS, now)
       return r
     }
-    await update($, band, b => patchAgent({ ...b, isWorking: false }, 'main', a => ({ ...a, status: 'idle', endedAt: now })))
+    const ended = bandOf(await update($, band, b => patchAgent({ ...b, isWorking: false }, 'main', a => ({ ...a, status: 'idle', endedAt: now }))))
+    // The set's counters are read once and start over for the next set.
+    const counted = await read($, tally)
+    await update($, tally, () => INITIAL_TALLY)
+    const figures = setOf(ended, counted)
     const edits = pendingTracks.length
+    // Every set joins its project's tour, short, long or interrupted.
+    const byMember = (fn: (m: KessokuMember) => number) => ({ bocchi: fn('bocchi'), nijika: fn('nijika'), ryo: fn('ryo'), kita: fn('kita') })
+    const facts = {
+      day: dayOf(now),
+      ms: Math.max(0, e.durationMs),
+      usd: figures.usd,
+      acts: byMember(m => figures.acts.filter(a => a.member === m).length),
+      errors: byMember(m => counted.errors[m] ?? 0),
+      edits,
+      commits: counted.commits,
+      held: counted.held,
+      stopped: counted.stopped,
+    }
+    await writeBook($, b => addSet(b, facts))
+    // The tour page, when it is up, reads the night just added.
+    const page = await read($, tour)
+    if (page.isOpen) await scopeTour($, page.scope).catch(() => undefined)
     if (edits > 0) {
       const tracks = pendingTracks.slice(-MAX_TRACKS)
       pendingTracks = []
@@ -3261,10 +3555,15 @@ export const register: Register = (on, options) => {
       if (e.reason === 'answer' && !setlist.isOpen && canDraw()) suggestReplay($, tracks.length)
     }
     await update($, cache, c => ({ ...c, lastWarmAt: now }))
-    // A long set may have played to an empty room: its end is announced (an interrupted one had the person there).
-    if (e.durationMs >= SET_AWAY_MS && e.reason !== 'aborted') {
+    // A long set may have played to an empty room (an interrupted one had the person there): its end is announced,
+    // and Nijika's recap of it stands above the prompt for whoever is at a screen; toasts none keeps both quiet.
+    const isLong = e.durationMs >= SET_AWAY_MS && e.reason !== 'aborted'
+    if (isLong) {
       const took = fmtDuration(e.durationMs)
       void notify($, e.reason === 'answer' ? `Nijika: the set is done after ${took}${edits > 0 ? ` · ${edits} ${edits === 1 ? 'edit' : 'edits'} on the setlist (/replay)` : ''}` : `Nijika: the set stopped on ${e.reason} after ${took}`)
+    }
+    if (isLong && canDraw() && opts.toasts !== 'none') {
+      await update($, recap, () => ({ set: ended.set, reason: e.reason, ms: e.durationMs, usd: figures.usd, edits, acts: figures.acts.length, errors: figures.errors, held: counted.held, mvp: figures.mvp, at: now }))
     }
     if (e.reason === 'answer') await setMood($, 'happy', `${MEMBERS.bocchi.lines.happy} ${fmtDuration(e.durationMs)}${edits > 0 ? ` · ${edits} ${edits === 1 ? 'edit' : 'edits'} on the setlist (/replay)` : ''}`, 6000)
     else if (e.reason === 'aborted') await setMood($, 'hiding', 'interrupted… hiding in the box', 8000)
@@ -3391,6 +3690,7 @@ export const register: Register = (on, options) => {
       if (risk !== null && (canDraw() || (await $.session.surfaces().catch(() => [])).length > 0)) {
         hasSurface = true
         const verdict = await holdForDecision($, next.signal, command, risk)
+        await update($, tally, t => ({ ...t, held: t.held + 1, stopped: t.stopped + (verdict.kind === 'deny' ? 1 : 0) }))
         if (verdict.kind === 'deny') return { deny: verdict.reason }
       }
     }
@@ -3433,9 +3733,13 @@ export const register: Register = (on, options) => {
     if (failed) {
       const why = `${tool}${agentId ? ` (${MEMBERS[member].name})` : ''}: ${(ran.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)}`
       await update($, band, b => patchAgent({ ...b, lastError: why }, agentId ?? 'main', a => ({ ...a, isError: true })))
+      await update($, tally, t => ({ ...t, errors: { ...t.errors, [member]: (t.errors[member] ?? 0) + 1 } }))
       if (agentId === undefined) await setMood($, 'panic', `wrong note in ${tool}`, 5000)
     }
-    if (SHELL_TOOLS.has(tool) && !failed && isGitCommit(readField(input, 'command'))) await commitLights($, member)
+    if (SHELL_TOOLS.has(tool) && !failed && isGitCommit(readField(input, 'command'))) {
+      await update($, tally, t => ({ ...t, commits: t.commits + 1 }))
+      await commitLights($, member)
+    }
     return ran
   }).catch(($, e, next) => {
     if (next.called) return next(e)
@@ -3507,6 +3811,7 @@ export const register: Register = (on, options) => {
     if (e.id === PANEL) await update($, ui, x => ({ ...x, isPanelOpen: false, panelWhere: 'none' as const }))
     else if (e.id === TREE) await update($, tree, x => ({ ...x, isOpen: false, isBand: false }))
     else if (e.id === REPLAY) await update($, replay, x => ({ ...x, isOpen: false, inBand: false }))
+    else if (e.id === TOUR) await update($, tour, x => ({ ...x, isOpen: false, inBand: false }))
     else if (e.id === BLAST && e.origin.kind !== 'unload' && held !== null && held.decision === null) held.decision = 'closed'
     const r = await next(e)
     // Once it is closed: a drawing that was on its way registers nothing for it either.
@@ -3755,6 +4060,7 @@ export const register: Register = (on, options) => {
     }
     return drawReplay($, e, r, false, now)
   })
+  on('ui.render', { component: 'Pane', requestId: TOUR }, async ($, e) => drawTour($, e, await read($, tour)))
 
   // -- drawing: the band above the prompt, by priority ---------------------------------
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -3783,6 +4089,8 @@ export const register: Register = (on, options) => {
     const t = await read($, tree)
     const u = await read($, ui)
     const b = bandOf(await read($, band))
+    const rc = await read($, recap)
+    const tp = await read($, tour)
     const beat = t.isOpen && t.isBand ? await read($, frame) : 0
     // Other mods' bands stack under this one's drawing rather than vanishing behind it.
     const { Box } = $.ui.resolve(e)
@@ -3795,9 +4103,12 @@ export const register: Register = (on, options) => {
     )
     beginSprites(e)
     if (r.isOpen && r.inBand) return stack(drawReplay($, e, r, true, now))
+    if (tp.isOpen && tp.inBand) return stack(drawTour($, e, tp))
     if (t.isOpen && t.isBand) return stack(drawTree($, e, t, beat, now))
     if (u.isPanelOpen && u.panelWhere === 'band') return stack(drawPanel($, e, b, c, soloNow(u, now), now, true))
     if (u.isStripHidden) return below
+    // The last set's recap stands in the strip's place until the next set starts or it is dismissed.
+    if (rc !== null) return stack(drawRecap($, e, rc, r, now))
     // The strip's heads take four rows on a terminal: only where the band has them to spare beside whatever stacks below;
     // the row of slimes under them three more, so seven in all.
     // The engine answers its own band as a bare engine reference: anything else is another mod's drawing.
