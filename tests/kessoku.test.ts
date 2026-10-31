@@ -40,7 +40,7 @@ type Entry = { name: string; kind: 'file' | 'dir'; size: number; mtimeMs: number
 type Registered = { name: string; description: string; prompt?: string; tools?: readonly string[]; inputSchema?: Record<string, unknown>; isDeferred?: boolean }
 type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[]; suggested: string[]; notified: { text: string; title: string | undefined }[]; agents: Registered[]; tools: Registered[]; drafts: number }
 /** What a test may vary in the engine beneath: one bottom per event, so the knobs live here. */
-type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string; notifyReason?: 'disabled' | 'no-channel' | 'no-surface' | 'refused'; engineVersion?: string; noVersion?: boolean; refuseRegister?: boolean; writeMs?: number }
+type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string; notifyReason?: 'disabled' | 'no-channel' | 'no-surface' | 'refused'; engineVersion?: string; noVersion?: boolean; refuseRegister?: boolean; writeMs?: number; store?: Record<string, unknown>; storeFails?: boolean; repoRoot?: string }
 const THEME_OPTION_LIGHT = 'Kessoku Bocchi Light (kessoku-ultimate-bocchi)'
 
 /** `C:\proj\x` and `/proj/x` are the same file to the engine's fs; the tests key by the forward-slash spelling. */
@@ -72,7 +72,14 @@ const BUILD: Record<string, Entry[]> = {
 
 /** The engine beneath the mod: every noun it calls, answered from memory. */
 function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: Answers = {}): void {
-  mock.store(on)
+  // The plugin's store as another session left it (a knob), else empty; or (a knob) one that refuses every call, as a full one would.
+  if (a.storeFails) {
+    for (const op of ['store.get', 'store.set', 'store.delete', 'store.keys'] as const) {
+      on(op, () => {
+        throw new Error('the store is over 4 MiB')
+      })
+    }
+  } else mock.store(on, a.store)
   // The engine's own drawing at every site: what a hook that passes or wraps gets back; the props that reached it are kept for the test.
   on('ui.render', ($, e) => {
     seen.rendered[e.component] = e.props
@@ -137,6 +144,8 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
   on('agent.list', () => ({ value: [] }))
   on('session.cwd', () => ({ value: '/proj' }))
   on('session.root', () => ({ value: '/proj' }))
+  // No repository, or (a knob) one whose main working tree is elsewhere, as a worktree's is.
+  on('session.repo', () => ({ value: a.repoRoot === undefined ? null : { root: a.repoRoot, remote: null, internal: false, name: null } }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000, percent: 12, tokens: 24_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-10T12:00:00Z' }], cost: { usd: 0.42 } } }))
   on('fs.exists', ($, e) => ({ value: key(e.path) in seen.written }))
   // The mod's own manifest, read for its version; anything else is what a test wrote.
@@ -2422,10 +2431,13 @@ test('typeahead: /bocchi and /keepwarm complete their next word, and nothing els
     return { text, cursor: text.length, token: text.slice(start), start }
   }
   const texts = (text: string) => completions(at(text)).map(c => c.text)
-  expect(texts('/bocchi')).toEqual(['/bocchi theme', '/bocchi mood', '/bocchi demo', '/bocchi tax', '/bocchi crash', '/bocchi memo', '/bocchi setlist', '/bocchi solo', '/bocchi strip', '/bocchi help'])
+  expect(texts('/bocchi')).toEqual(['/bocchi theme', '/bocchi mood', '/bocchi demo', '/bocchi tax', '/bocchi crash', '/bocchi memo', '/bocchi setlist', '/bocchi recap', '/bocchi solo', '/bocchi strip', '/bocchi stats', '/bocchi help'])
   expect(texts('/bocchi t')).toEqual(['theme', 'tax'])
   expect(texts('/bocchi T')).toEqual(['theme', 'tax'])
-  expect(texts('/bocchi s')).toEqual(['setlist', 'solo', 'strip'])
+  expect(texts('/bocchi s')).toEqual(['setlist', 'solo', 'strip', 'stats'])
+  expect(texts('/bocchi r')).toEqual(['recap'])
+  expect(texts('/bocchi stats ')).toEqual(['all'])
+  expect(texts('/bocchi stats all x')).toEqual([])
   expect(texts('/bocchi solo')).toEqual([])
   expect(texts('/bocchi solo ')).toEqual(['bocchi', 'nijika', 'ryo', 'kita', 'off'])
   expect(texts('/bocchi solo r')).toEqual(['ryo'])
@@ -2601,6 +2613,8 @@ test('/bocchi help opens with the mod and engine versions, and names what this e
   expect(lines.some(l => l.startsWith('Band agent types:') && l.includes('kessoku-ultimate-bocchi:nijika'))).toBe(true)
   expect(lines.some(l => /memo tool/.test(l))).toBe(true)
   expect(lines.some(l => l.includes('/bocchi memo [proposed]'))).toBe(true)
+  expect(lines.some(l => l.startsWith('/bocchi stats [all]'))).toBe(true)
+  expect(lines.some(l => l.includes('/bocchi recap'))).toBe(true)
 })
 
 test('a refused registration breaks nothing: the session starts, help names no missing call, band types still seat by name', { options: { applyTheme: false } }, async ($, on) => {
@@ -3087,4 +3101,369 @@ test('a slime that ended leaves the stage by itself half a minute later, though 
   await clock.advance(21_000)
   expect(await at10()).not.toBe(withSlime)
   await pane.unmount()
+})
+
+// ---- On tour: the set's recap and the project's tour (v1.0.1) ----------------------
+
+/** 2026-10-20 at noon UTC: the same night on any clock from UTC-11 to UTC+11. */
+const TOUR_NOW = Date.UTC(2026, 9, 20, 12)
+
+test("a set of half a minute or more ends with Nijika's recap above the prompt, in the strip's place", async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: TOUR_NOW })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: 'rework the strip for narrow panes', turnId: 't1' })
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 362_000, isAborted: false, reason: 'answer' })
+  for (const surface of SURFACES) {
+    const band = await $.ui.mount({ plugin: PLUGIN, surface, component: 'AbovePrompt', props: BAND_PROPS })
+    expect(await band.find({ type: 'Text', text: /^♪ SET 1 · that's a wrap$/ })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: /^6:02 · ≈\$/ })).toBeDefined()
+    expect(await band.find({ type: 'Button', key: 'strip-panel' })).toBeUndefined()
+    await band.unmount()
+  }
+})
+
+test('the recap leaves when the next set starts, on Dismiss and with /clear; a short or an interrupted set brings none', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: TOUR_NOW })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const recapUp = async () => {
+    const band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+    const found = await band.find({ type: 'Text', text: /^♪ SET \d+ · / })
+    await band.unmount()
+    return found !== undefined
+  }
+  const set = async (turnId: string, durationMs: number, reason: 'answer' | 'aborted' | 'error' = 'answer') => {
+    await $.turn.start({ text: `set ${turnId}`, turnId })
+    await $.turn.complete({ turnId, answer: 'ok', durationMs, isAborted: reason === 'aborted', reason })
+  }
+  await set('t1', 29_000)
+  expect(await recapUp()).toBe(false)
+  await set('t2', 45_000, 'aborted')
+  expect(await recapUp()).toBe(false)
+  // A set that stopped on an error is recapped as such.
+  await set('t3', 45_000, 'error')
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await band.find({ type: 'Text', text: /^♪ SET 3 · stopped on error$/ })).toBeDefined()
+  await band.unmount()
+  // The next set takes it down as it starts.
+  await $.turn.start({ text: 'and now', turnId: 't4' })
+  expect(await recapUp()).toBe(false)
+  await $.turn.complete({ turnId: 't4', answer: 'ok', durationMs: 31_000, isAborted: false, reason: 'answer' })
+  expect(await recapUp()).toBe(true)
+  // Dismiss takes it down, and the strip is back.
+  const card = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  await card.press({ key: 'recap-dismiss' })
+  await clock.settle()
+  await card.unmount()
+  expect(await recapUp()).toBe(false)
+  const strip = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await strip.find({ type: 'Button', key: 'strip-panel' })).toBeDefined()
+  await strip.unmount()
+  // /clear forgets it too.
+  await set('t5', 40_000)
+  expect(await recapUp()).toBe(true)
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  expect(await recapUp()).toBe(false)
+})
+
+test("the recap counts the set's edits, acts, wrong notes and held blasts, prices it, and names its MVP", async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: TOUR_NOW })
+  // A search that fails, answered before the generic tool bottom.
+  on('tool.call', { tool: 'Grep' }, () => ({ isError: true as const, result: 'no such directory', text: 'no such directory' }))
+  bottoms(on, clock, seen)
+  // Every step, the main loop's or an act's, costs $0.0415 on Sonnet 5.5: 2000 in, 500 out, 300k cache reads, 1000 cache writes.
+  stepBottom(on)
+  let spawned = 0
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: `agent-${(spawned += 1)}` }))
+  const act = async (description: string, subagentType: string) => {
+    const r = await $.agent.spawn({ tool_use_id: `tu-${description}`, prompt: description, description, subagentType, provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-sonnet-5-5', background: false, fork: false })
+    const agentId = r.agentId as string
+    for await (const chunk of $.turn.step({ turnId: `a-${agentId}`, index: 0, model: 'claude-sonnet-5-5', messageCount: 1, agentId })) void chunk
+    await $.turn.complete({ turnId: `a-${agentId}`, agentId, answer: 'done', durationMs: 4000, isAborted: false, reason: 'answer' })
+    await clock.advance(1000)
+  }
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // An earlier set's spend is not this set's.
+  await $.turn.start({ text: 'warm up', turnId: 't0' })
+  for await (const chunk of $.turn.step({ turnId: 't0', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })) void chunk
+  await $.turn.complete({ turnId: 't0', answer: 'ok', durationMs: 2000, isAborted: false, reason: 'answer' })
+  await $.turn.start({ text: 'rework the strip for narrow panes', turnId: 't1' })
+  for await (const chunk of $.turn.step({ turnId: 't1', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })) void chunk
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/app.ts', old_string: 'greet(', new_string: 'welcome(' })
+  await $.tool.call({ tool: 'Grep', pattern: 'drawStrip', path: '/proj/nowhere' })
+  const call = $.tool.call({ tool: 'Bash', command: 'rm -rf build' })
+  await clock.settle()
+  const guard = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-blast-radius', props: PANE_PROPS })
+  await guard.press({ key: 'blast-cancel' })
+  await clock.advance(300)
+  expect((await call).deny).toMatch(/caught the guitar/)
+  await guard.unmount()
+  await act('Explore: where cells are encoded', 'Explore')
+  await act('Plan: split the sprite loader', 'kessoku:nijika')
+  await act('Look into why the strip flickers', 'kessoku:ryo')
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 362_000, isAborted: false, reason: 'answer' })
+  for (const surface of SURFACES) {
+    const band = await $.ui.mount({ plugin: PLUGIN, surface, component: 'AbovePrompt', props: BAND_PROPS })
+    // One main-loop step and three acts' steps: 4 x $0.0415.
+    expect(await band.find({ type: 'Text', text: /^6:02 · ≈\$0\.17$/ })).toBeDefined()
+    expect(JSON.stringify(await band.find({ type: 'Box', key: 'recap-edits' }))).toMatch(/"1".*edit/)
+    expect(JSON.stringify(await band.find({ type: 'Box', key: 'recap-acts' }))).toMatch(/"3".*acts/)
+    expect(JSON.stringify(await band.find({ type: 'Box', key: 'recap-errors' }))).toMatch(/"1".*wrong note/)
+    expect(JSON.stringify(await band.find({ type: 'Box', key: 'recap-held' }))).toMatch(/"1".*blast held/)
+    expect(await band.find({ type: 'Text', text: /^MVP Ryo · 2 acts · ≈\$0\.08 · "Look into why the strip flickers"$/ })).toBeDefined()
+    await band.unmount()
+  }
+})
+
+test('the recap offers Replay when the set left edits, and opens the setlist; a hidden strip hides the recap too', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: TOUR_NOW })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: 'rename greet', turnId: 't1' })
+  await $.tool.call({ tool: 'Edit', file_path: '/proj/src/app.ts', old_string: 'greet(', new_string: 'welcome(' })
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 40_000, isAborted: false, reason: 'answer' })
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect((await band.find({ type: 'Button', key: 'recap-replay' }))?.props).toMatchObject({ label: 'Replay 1', hotkey: 'r' })
+  await band.press({ key: 'recap-replay' })
+  await clock.settle()
+  await band.unmount()
+  expect(seen.opened).toContain('kessoku-replay')
+  // A set with no edits has nothing to replay.
+  await $.turn.start({ text: 'just answer', turnId: 't2' })
+  await $.turn.complete({ turnId: 't2', answer: 'done', durationMs: 40_000, isAborted: false, reason: 'answer' })
+  const plain = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await plain.find({ type: 'Text', text: /^♪ SET 2 · / })).toBeDefined()
+  expect(await plain.find({ type: 'Button', key: 'recap-replay' })).toBeUndefined()
+  await plain.unmount()
+  // The strip hidden: the prompt area stays as quiet as it was set.
+  await $.command.run(cmd('bocchi', 'strip'))
+  const quiet = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await quiet.find({ type: 'Text', text: /^♪ SET 2 · / })).toBeUndefined()
+  await quiet.unmount()
+})
+
+test('toasts none: a long set ends with no recap card', { options: { toasts: 'none', applyTheme: false } }, async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: TOUR_NOW })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: 'long one', turnId: 't1' })
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 90_000, isAborted: false, reason: 'answer' })
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await band.find({ type: 'Text', text: /^♪ SET 1 · / })).toBeUndefined()
+  expect(await band.find({ type: 'Button', key: 'strip-panel' })).toBeDefined()
+  await band.unmount()
+})
+
+/** A repository's tour as an earlier session left it in the store: one night, 2026-10-18, four sets. */
+const STORED_BOOK = {
+  v: 1,
+  root: '/work/app',
+  name: 'app',
+  since: '2026-10-18',
+  nights: [{ day: '2026-10-18', sets: 4, ms: 1_200_000, usd: 1.25, acts: { bocchi: 0, nijika: 1, ryo: 3, kita: 0 }, errors: { bocchi: 1, nijika: 0, ryo: 2, kita: 0 }, edits: 6, commits: 2, held: 1, stopped: 1, memos: 1 }],
+  older: { sets: 0, ms: 0, usd: 0, acts: { bocchi: 0, nijika: 0, ryo: 0, kita: 0 }, errors: { bocchi: 0, nijika: 0, ryo: 0, kita: 0 }, edits: 0, commits: 0, held: 0, stopped: 0, memos: 0, nights: 0 },
+  longest: { ms: 600_000, day: '2026-10-18' },
+  priciest: { usd: 0.75, day: '2026-10-18' },
+}
+
+test("every set joins its repository's tour in the store, from a worktree too, and /bocchi stats adds it up", async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: TOUR_NOW })
+  // The session runs in a worktree whose repository is /work/app; an earlier session's tour of it is in the store.
+  bottoms(on, clock, seen, { repoRoot: '/work/app', store: { 'tour:/work/app': STORED_BOOK } })
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // A long set with one step ($0.0415) and a commit, a short one, an interrupted one: every set counts.
+  await $.turn.start({ text: 'ship it', turnId: 't1' })
+  for await (const chunk of $.turn.step({ turnId: 't1', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })) void chunk
+  await $.tool.call({ tool: 'Bash', command: 'git commit -m "ship"' })
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 90_000, isAborted: false, reason: 'answer' })
+  await $.turn.start({ text: 'quick', turnId: 't2' })
+  await $.turn.complete({ turnId: 't2', answer: 'ok', durationMs: 3000, isAborted: false, reason: 'answer' })
+  await $.turn.start({ text: 'stop', turnId: 't3' })
+  await $.turn.complete({ turnId: 't3', answer: '', durationMs: 5000, isAborted: true, reason: 'aborted' })
+  const stats = await $.command.run(cmd('bocchi', 'stats'))
+  expect(stats.text).toBe('♪ On tour · app: 7 sets over 2 nights since 2026-10-18 · ≈$1.29 · 3 commits · 1 blast stopped · 1 memo saved')
+})
+
+test('a memo saved counts on the tour, on the night it was saved', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: TOUR_NOW })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: 'run the checks', turnId: 't1' })
+  await $.tool.call({ tool: MEMO_TOOL, rule: 'Use pnpm, not npm, for every script in this repository.' })
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 5000, isAborted: false, reason: 'answer' })
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  await band.press({ key: 'memo-save' })
+  await clock.settle()
+  await band.unmount()
+  expect(seen.written['/proj/CLAUDE.md']).toContain('Use pnpm')
+  expect((await $.command.run(cmd('bocchi', 'stats'))).text).toMatch(/^♪ On tour · proj: 1 set over 1 night since 2026-10-20 · .* · 1 memo saved$/)
+})
+
+test("/bocchi stats opens the tour page with the project's figures, on the terminal and the desktop", async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: TOUR_NOW })
+  bottoms(on, clock, seen, { store: { 'tour:/proj': STORED_BOOK } })
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: 'ship it', turnId: 't1' })
+  for await (const chunk of $.turn.step({ turnId: 't1', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })) void chunk
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 90_000, isAborted: false, reason: 'answer' })
+  await $.command.run(cmd('bocchi', 'stats'))
+  expect(seen.opened).toContain('kessoku-tour')
+  for (const surface of SURFACES) {
+    const page = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: 'kessoku-tour', props: PANE_PROPS })
+    expect(await page.find({ type: 'Text', text: /^♪ ON TOUR · proj$/ })).toBeDefined()
+    expect(await page.find({ type: 'Text', text: /^since 2026-10-18 · 2 nights$/ })).toBeDefined()
+    expect(JSON.stringify(await page.find({ type: 'Box', key: 'tour-sets' }))).toMatch(/"5".*sets/)
+    expect(JSON.stringify(await page.find({ type: 'Box', key: 'tour-usd' }))).toMatch(/"≈\$1\.29".*spent/)
+    expect(JSON.stringify(await page.find({ type: 'Box', key: 'tour-commits' }))).toMatch(/"2".*commits/)
+    expect(JSON.stringify(await page.find({ type: 'Box', key: 'tour-stopped' }))).toMatch(/"1".*blast stopped/)
+    expect(JSON.stringify(await page.find({ type: 'Box', key: 'tour-memos' }))).toMatch(/"1".*memo saved/)
+    await page.unmount()
+  }
+})
+
+test('the tour page charts the recent nights and the members, and keeps the records: blocks in a terminal, a picture on the desktop', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: TOUR_NOW })
+  bottoms(on, clock, seen, { store: { 'tour:/proj': STORED_BOOK } })
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // Tonight: one set of one step, $0.0415, against the stored night's $1.25.
+  await $.turn.start({ text: 'ship it', turnId: 't1' })
+  for await (const chunk of $.turn.step({ turnId: 't1', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })) void chunk
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 90_000, isAborted: false, reason: 'answer' })
+  await $.command.run(cmd('bocchi', 'stats'))
+  const records = /^longest set 10:00 on 10-18 · priciest ≈\$0\.75 on 10-18 · most wrong notes Ryo \(2\)$/
+  const term = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-tour', props: PANE_PROPS })
+  expect(await term.find({ type: 'Text', text: /^cost a night +█▁ +10-18 → 10-20 · dearest ≈\$1\.25$/ })).toBeDefined()
+  expect(JSON.stringify(await term.find({ type: 'Box', key: 'tour-act-ryo' }))).toMatch(/Ryo.*██████████.*"3"/)
+  expect(JSON.stringify(await term.find({ type: 'Box', key: 'tour-act-nijika' }))).toMatch(/Nijika.*"███".*"1"/)
+  expect(await term.find({ type: 'Text', text: records })).toBeDefined()
+  await term.unmount()
+  const desk = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-tour', props: PANE_PROPS })
+  const chart = await svgUnder(desk, 'tour-chart')
+  expect(String(chart?.alt)).toMatch(/cost a night: 10-18 ≈\$1\.25, 10-20 ≈\$0\.04/)
+  expect(String(chart?.alt)).toMatch(/acts: Bocchi 0, Nijika 1, Ryo 3, Kita 0/)
+  expect(String(chart?.source)).toMatch(/^<svg /)
+  expect(await desk.find({ type: 'Text', text: /^cost a night/ })).toBeUndefined()
+  expect(await desk.find({ type: 'Text', text: records })).toBeDefined()
+  await desk.unmount()
+})
+
+test('the recap opens the tour with Tour; the page switches to every project and back, and closes', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: TOUR_NOW })
+  // Another project's tour, as an older version might have left it: one night, nothing else.
+  const site = { v: 1, root: '/work/site', name: 'site', nights: [{ day: '2026-10-19', sets: 1, ms: 60_000, usd: 0.25 }] }
+  bottoms(on, clock, seen, { store: { 'tour:/proj': STORED_BOOK, 'tour:/work/site': site } })
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: 'long one', turnId: 't1' })
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 40_000, isAborted: false, reason: 'answer' })
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  await band.press({ key: 'recap-tour' })
+  await clock.settle()
+  await band.unmount()
+  expect(seen.opened).toContain('kessoku-tour')
+  const page = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-tour', props: PANE_PROPS })
+  expect(await page.find({ type: 'Text', text: /^♪ ON TOUR · proj$/ })).toBeDefined()
+  await page.press({ key: 'tour-all' })
+  await clock.settle()
+  expect(await page.find({ type: 'Text', text: /^♪ ON TOUR · all projects$/ })).toBeDefined()
+  expect(await page.find({ type: 'Text', text: /^since 2026-10-18 · 3 nights$/ })).toBeDefined()
+  expect(JSON.stringify(await page.find({ type: 'Box', key: 'tour-sets' }))).toMatch(/"6".*sets/)
+  await page.press({ key: 'tour-project' })
+  await clock.settle()
+  expect(await page.find({ type: 'Text', text: /^♪ ON TOUR · proj$/ })).toBeDefined()
+  await page.press({ key: 'tour-close' })
+  await clock.settle()
+  await page.unmount()
+  expect(seen.closed).toContain('kessoku-tour')
+  // /bocchi stats all says the same in its line.
+  expect((await $.command.run(cmd('bocchi', 'stats all'))).text).toMatch(/^♪ On tour · all projects: 6 sets over 3 nights since 2026-10-18 · /)
+})
+
+test('the tour page draws above the prompt where no pane fits, and follows a set that ends while it is open', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: TOUR_NOW })
+  bottoms(on, clock, seen, { unplaced: true })
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  expect((await $.command.run(cmd('bocchi', 'stats'))).text).toBe('♪ On tour · proj: no sets played here yet.')
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await band.find({ type: 'Text', text: /^♪ ON TOUR · proj$/ })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /^No sets played here yet\.$/ })).toBeDefined()
+  // A set ends while the page is up: it reads the new night at once.
+  await $.turn.start({ text: 'quick', turnId: 't1' })
+  await $.turn.complete({ turnId: 't1', answer: 'ok', durationMs: 4000, isAborted: false, reason: 'answer' })
+  await clock.settle()
+  expect(await band.find({ type: 'Text', text: /^since 2026-10-20 · 1 night$/ })).toBeDefined()
+  expect(JSON.stringify(await band.find({ type: 'Box', key: 'tour-sets' }))).toMatch(/"1".*set"/)
+  await band.press({ key: 'tour-close' })
+  await clock.settle()
+  expect(await band.find({ type: 'Text', text: /^♪ ON TOUR/ })).toBeUndefined()
+  expect(await band.find({ type: 'Button', key: 'strip-panel' })).toBeDefined()
+  await band.unmount()
+  // Every project, though the store holds only this one: the page says so, not the project's name.
+  expect((await $.command.run(cmd('bocchi', 'stats all'))).text).toMatch(/^♪ On tour · all projects: 1 set over 1 night /)
+})
+
+test('/bocchi recap previews the card with a sample set, which the tour does not count', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: TOUR_NOW })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  expect((await $.command.run(cmd('bocchi', 'recap'))).text).toMatch(/sample recap/)
+  for (const surface of SURFACES) {
+    const band = await $.ui.mount({ plugin: PLUGIN, surface, component: 'AbovePrompt', props: BAND_PROPS })
+    expect(await band.find({ type: 'Text', text: /^♪ SET \d+ · that's a wrap$/ })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: /^MVP Ryo · 2 acts · / })).toBeDefined()
+    await band.unmount()
+  }
+  expect((await $.command.run(cmd('bocchi', 'stats'))).text).toBe('♪ On tour · proj: no sets played here yet.')
+})
+
+test('a store that refuses every call costs the tour its night, never the set', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: TOUR_NOW })
+  bottoms(on, clock, seen, { storeFails: true })
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: 'long one', turnId: 't1' })
+  const done = await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 40_000, isAborted: false, reason: 'answer' })
+  expect(done.text).toBe('done')
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await band.find({ type: 'Text', text: /^♪ SET 1 · that's a wrap$/ })).toBeDefined()
+  await band.unmount()
+  expect((await $.command.run(cmd('bocchi', 'stats'))).text).toBe('♪ On tour · proj: no sets played here yet.')
+})
+
+test("a set a reload from 1.0.0 caught mid-play is not charged the session's spend before it", async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: TOUR_NOW })
+  // $.state as 1.0.0 left it: set 3 playing, the main loop $5 into the session; 1.0.0 kept no tally.
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  const main = { id: 'main', member: 'bocchi', description: 'the main conversation', type: 'main', status: 'running', task: '', startedAt: TOUR_NOW - 20_000, endedAt: null, model: 'claude-sonnet-5-5', usage, context: 0, steps: 12, tools: 4, cost: 5, isError: false, toolTally: {}, lastTool: '' }
+  const legacy: Record<string, unknown> = { band: { agents: [main], mood: 'focused', mainTask: 'x', contextPercent: 30, window: 200_000, sessionUsd: 5, rateLimitPercent: 0, isWorking: true, lastError: '', set: 3, setStartedAt: TOUR_NOW - 20_000, setPrompt: 'x' } }
+  on('state.get', async ($, e, next) => {
+    const r = await next(e)
+    const key = (e as unknown as { key: string }).key
+    const stored = (r as { value?: { value: unknown; version: number } }).value
+    return (stored !== undefined && stored.version === 0 && key in legacy ? { value: { value: legacy[key], version: 0 } } : r) as never
+  })
+  bottoms(on, clock, seen)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.complete({ turnId: 't3', answer: 'done', durationMs: 40_000, isAborted: false, reason: 'answer' })
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await band.find({ type: 'Text', text: /^♪ SET 3 · that's a wrap$/ })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /^0:40 · ≈\$0\.00$/ })).toBeDefined()
+  await band.unmount()
 })

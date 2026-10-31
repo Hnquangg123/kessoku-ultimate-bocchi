@@ -13,7 +13,7 @@ a slime in its member's colour.
 *The four of them in every mood, from the sprite studio. The live house itself is described under
 [Kessoku Band panel](#kessoku-band-panel).*
 
-Version 1.0.0, the Live Stage. Needs Claude Code 2.1.287 or newer (tested on 2.1.299; see [Notes](#notes));
+Version 1.0.1, On Tour. Needs Claude Code 2.1.287 or newer (tested on 2.1.299; see [Notes](#notes));
 `/bocchi help` shows the mod's version and the Claude Code it runs on.
 
 ## Quick start
@@ -38,7 +38,8 @@ Then try three things:
    appear at Ryo's feet and the act land on her channel (a new song on the setlist, in the desktop app).
 
 The gags have previews: `/bocchi crash` (the dropped guitar), `/bocchi tax` (Cache Tax), `/bocchi memo` (a band
-memo) and `/bocchi setlist` (Replay Theater). `/bocchi help` lists every command.
+memo), `/bocchi setlist` (Replay Theater) and `/bocchi recap` (the end-of-set recap). `/bocchi stats` opens the
+project's tour. `/bocchi help` lists every command.
 
 ## Words the band uses
 
@@ -50,6 +51,17 @@ memo) and `/bocchi setlist` (Replay Theater). `/bocchi help` lists every command
 - **Solo**: one member alone, with every act in full: her page on the desktop, her channel in a terminal. **The
   mix** is the whole band again.
 - **Encore**: the 8 s after an act ends, while it takes its bow.
+- **Night**: a day the band played at least one set in a project, by your machine's date.
+- **Tour**: what the mod keeps of a project's nights between sessions.
+
+## New in 1.0.1
+
+- **A recap when a set ends.** After a set of 30 s or more, Nijika holds up a card above the prompt: the set's
+  length and cost, its edits, acts, wrong notes and held blasts, its MVP, and Replay. It goes with your next prompt.
+  See [On tour](#on-tour).
+- **The tour.** Every set is kept, per project and across sessions (worktrees of one repository share a tour).
+  `/bocchi stats` shows the sets, the nights, the spend, the commits, the blasts stopped, the memos saved, the cost
+  of each recent night, who did the acts and the records; `/bocchi stats all` adds up every project.
 
 ## New in 1.0.0
 
@@ -70,7 +82,7 @@ memo) and `/bocchi setlist` (Replay Theater). `/bocchi help` lists every command
 [The band and its moods](#the-band-and-its-moods) · [Kessoku Band panel](#kessoku-band-panel) ·
 [The strip](#the-strip-above-the-prompt) · [Cache Tax](#cache-tax-and-keepwarm) · [Blast Radius](#blast-radius) ·
 [Filetree](#filetree) · [Reflect](#reflect-and-the-memo-tool) · [Replay Theater](#replay-theater) ·
-[Notifications](#notifications) · [Commands](#commands) · [Keys](#keys) · [Settings](#settings) ·
+[On tour](#on-tour) · [Notifications](#notifications) · [Commands](#commands) · [Keys](#keys) · [Settings](#settings) ·
 [Installing](#installing) · [Tweaking and development](#tweaking-and-development) · [Notes](#notes)
 
 ## Claude Code theme
@@ -444,13 +456,14 @@ closes the panel) and `Hide` (`h`).
 2. the dropped-guitar screen, when a held command got no pane
 3. the Cache Tax warning, while a held prompt is under 15 minutes old
 4. Nijika's memo
-5. Replay Theater or the Filetree, opened above the prompt
+5. Replay Theater, the tour page or the Filetree, opened above the prompt
 6. the panel, drawn above the prompt
 7. nothing, while the strip is hidden
-8. the strip
+8. Nijika's recap of the set that just ended
+9. the strip
 
-Under Replay Theater, the Filetree, the panel and the strip, other mods' drawings above the prompt stack below the
-mod's.
+Under Replay Theater, the tour page, the Filetree, the panel, the recap and the strip, other mods' drawings above the
+prompt stack below the mod's.
 
 ## Cache Tax and keepwarm
 
@@ -617,6 +630,48 @@ it.
 
 A setlist holds up to 40 tracks, each kept to 120 diff lines. `/bocchi setlist` previews a two-track sample.
 
+## On tour
+
+**The recap.** When a set of 30 s or more ends (not one you interrupted), Nijika's card takes the strip's place
+above the prompt, on every surface:
+
+- `♪ SET 3 · that's a wrap` (or `stopped on error`), and at the right the set's length and cost: `6:02 · ≈$0.54`
+- four counts: **edits** (the tracks it put on Replay's setlist), **acts** (subagents that started during it),
+  **wrong notes** (tool calls that came back as errors, the main loop's and its acts') and **blasts held**
+- the **MVP**: the member with the most acts, the one who spent less on a tie, then the band's order, with her acts,
+  their cost and her newest act (`MVP Ryo · 2 acts · ≈$0.19 · "Look into why the strip flickers"`). With no acts,
+  Bocchi for the main loop and its tool calls.
+- `Replay 3` (`r`, when the set left edits), `Tour` (`t`), `Dismiss` (`x`)
+
+It goes when the next set starts, on Dismiss, or with `/clear`. With **Toasts** on `none`, or the strip hidden, no
+card comes up. The cost is the mod's estimate, as everywhere: what the main loop spent during the set plus what its
+acts have spent so far. `/bocchi recap` puts up a sample card.
+
+**The tour.** Every set ends up in its project's tour: short, long or interrupted, with or without a screen. The
+project is the git repository (the main working tree's folder, so its worktrees share one tour), else the session's
+folder. The tour keeps one line a night: its sets, their length and cost, the acts and the wrong notes by member,
+the edits, the commits, the blasts held and stopped (held and not run: you said no, closed the screen, or nobody
+answered), the memos saved. It keeps the newest 60 nights whole and sums the older ones into one line, along with the
+longest and the priciest set and the first night. A saved memo counts on the night it was saved. An act still playing
+when its set ends (a background subagent) is counted with its set as far as it got: what it spends afterwards is
+not counted, and its later wrong notes and commits count with the next set.
+
+**`/bocchi stats`** answers in one line (`♪ On tour · app: 41 sets over 14 nights since 2026-10-12 · ≈$7.34 ·
+23 commits · 5 blasts stopped · 9 memos saved`) and opens the pane `♪ On Tour` (above the prompt where no pane fits):
+
+- `♪ ON TOUR · app`, since when and how many nights
+- the figures: sets, spend, commits, blasts stopped, memos saved
+- the cost of each of the last 14 nights played, and the acts by member: a picture on the desktop, block characters
+  (`▁▂▃▄▅▆▇█`, `██████`) in a terminal
+- the records: the longest set, the priciest set and who hit the most wrong notes, each with its night
+- `All projects` (`a`) or `This project` (`p`), and `Close` (`c`); Esc closes it too
+
+`/bocchi stats all` opens it on every project the mod has kept. A set that ends while the page is open shows up on
+it at once.
+
+The tour lives in the mod's own store (a JSON file under your Claude configuration folder, which Claude Code keeps
+for each plugin), about 9 KB a project at most. If the store cannot be written, the night is lost and nothing else.
+
 ## Notifications
 
 Three things go to your own notification channel, each titled `Kessoku Band`:
@@ -625,7 +680,8 @@ Three things go to your own notification channel, each titled `Kessoku Band`:
    `Blast Radius is holding <label>: it would <summary>. Answer the dropped-guitar screen.`
 2. A set of 30 seconds or more that ended, unless you interrupted it:
    `Nijika: the set is done after 2:14 · 3 edits on the setlist (/replay)`, or
-   `Nijika: the set stopped on <reason> after 2:14`.
+   `Nijika: the set stopped on <reason> after 2:14`. The same set also leaves Nijika's [recap](#on-tour) above the
+   prompt, the desktop app included.
 3. The cache about to go cold (see [Cache Tax](#cache-tax-and-keepwarm)). Only this one falls back to a toast when no
    notification went out.
 
@@ -664,14 +720,17 @@ cache warnings, and the notifications still go out. `none` silences the toasts a
 | `/bocchi tax` | Preview the Cache Tax warning (nothing is held) |
 | `/bocchi crash` | Open the dropped-guitar screen for 20 s (refused while a real command is held) |
 | `/bocchi setlist` | Open Replay Theater on a two-track sample setlist |
+| `/bocchi recap` | Put up a sample recap card (the tour does not count it) |
+| `/bocchi stats` | This project's tour, in a line and on the `♪ On Tour` page |
+| `/bocchi stats all` | Every project's tour, added up |
 
 - Typing `/bocchi` lists its sub-commands in the typeahead, each with a line saying what it does. After
-  `/bocchi theme`, `mood`, `demo`, `memo` or `solo` their arguments complete, and `/keepwarm` offers `30m`, `1h`,
-  `2h` and `off`.
+  `/bocchi theme`, `mood`, `demo`, `memo`, `solo` or `stats` their arguments complete, and `/keepwarm` offers `30m`,
+  `1h`, `2h` and `off`.
 - Sub-commands are case-insensitive. An unknown one prints the help.
 - Under the `full` skin, these commands' output is drawn in a pink card.
-- `/clear` also clears the stage, the solo, the Replay setlist, the file lights and the memo card, and sets Bocchi
-  back to anxious. An armed keepwarm survives it.
+- `/clear` also clears the stage, the solo, the Replay setlist, the file lights, the memo card and the recap, and
+  sets Bocchi back to anxious. An armed keepwarm and the tour survive it.
 - Blast Radius and Reflect need no command: a risky command or a correction brings them up.
 
 ## Keys
@@ -707,6 +766,11 @@ strip.
 | Band memo | `k` | `Skip` |
 | Replay Theater | `p` / `n` | `◀ Prev` / `Next ▶` |
 | Replay Theater | `c`, Esc | `Close` |
+| Recap | `r` | `Replay N` |
+| Recap | `t` | `Tour`: open the tour page |
+| Recap | `x` | `Dismiss` |
+| Tour page | `a` / `p` | `All projects` / `This project` (has the focus) |
+| Tour page | `c`, Esc | `Close` |
 | Filetree | `f` | `Refresh` |
 | Filetree | `c` | `Close` |
 | Prompt | Tab | Take the `/replay N tracks` suggestion |
@@ -809,8 +873,8 @@ Here *the engine* is Claude Code itself, and `$` is the interface it hands the h
 
 - `hooks/register.tsx`: the one hooks module, with every hook and every `$` call, and every drawing:
   `drawScene` and `drawStripScene` (the desktop's live house and neon sign), `drawPanel` (the terminal's marquee,
-  stage, mixer, solo, keys row and rail), `drawStrip`, `drawBlast`, `drawCacheTax`, `drawMemo`, `drawReplay` and
-  `drawTree`; `drawSprite` (a Raster in a terminal, an animated Svg elsewhere) with the sprite clock that repaints the
+  stage, mixer, solo, keys row and rail), `drawStrip`, `drawBlast`, `drawCacheTax`, `drawMemo`, `drawRecap`,
+  `drawReplay`, `drawTour` and `drawTree`; `drawSprite` (a Raster in a terminal, an animated Svg elsewhere) with the sprite clock that repaints the
   terminal's Rasters ten times a second through `$.ui.blit`; and the render hooks for the engine's own sites.
 - `hooks/lib/stage.ts`: the panel as data (`panelView`), which every panel drawing shares: who plays, each act's
   description, context, cost, tools and failure, the session's figures, the solo, the encore (`ENCORE_MS`) and the
@@ -838,6 +902,10 @@ Here *the engine* is Claude Code itself, and `$` is the interface it hands the h
   combining marks or fullwidth glyphs, padded to one width), the spinner words per mode, the turn-footer words and
   the guitar art. The files under `themes/` are those maps written out for the engine: after editing a map, run
   `npm run themes` in `studio/` (`npm run check` fails when they drift).
+- `hooks/lib/tour.ts`: the tour as data. A project's book as the store keeps it (one line a night, the oldest folded
+  past 60), reading back whatever the store holds (`readBook`), adding a set or a memo, the view the page draws of one
+  book or several (`tourView`), the recap's MVP (`mvpOf`), the night of a time (`dayOf`), the terminal's bars and the
+  desktop's chart (`tourChart`).
 - `hooks/lib/typeahead.ts`: what the typeahead offers after `/bocchi` and `/keepwarm`.
 - `hooks/lib/engine.ts`: the engine version the mod expects (`MIN_ENGINE`), how versions compare, and the features
   that switch themselves off when a call is missing. The hooks themselves cannot be gated: an engine that does not
@@ -851,8 +919,9 @@ Here *the engine* is Claude Code itself, and `$` is the interface it hands the h
 - `hooks/lib/diff.ts`: Replay's line diff (past 1,500 lines, a marked approximate remove-all-then-add-all), unified
   hunks, the tool's own patch turned into a diff, and hunk cutting. CRLF and LF compare equal.
 - `hooks/hooks.json` names the module. `types/index.d.ts` is the `$.state` contract, which `claude plugin validate`
-  holds every `$.state` key to. `tests/kessoku.test.ts` runs under `claude plugin test`. `docs/specs/` holds each
-  release's spec.
+  holds every `$.state` key to. `tests/kessoku.test.ts` (the hooks, through the engine's test kit) and
+  `tests/tour.test.ts` (the tour's arithmetic) run under `claude plugin test`. `docs/specs/` holds each release's
+  spec.
 
 A folder loaded with `--plugin-dir` reloads the module on every save in an interactive session; a local-folder
 install picks edits up at `/reload-plugins`. `$.state` survives a reload; module state (timers, track numbers) does
@@ -902,7 +971,7 @@ From `studio/`, after `npm install`:
 - `claude plugin validate .` reads the manifest, the marketplace file and the hooks module (`--strict` fails on
   warnings). It warns that the hooks on `session.compact`, `classic.PostModelSwitch`, `classic.SubagentStart` and
   `classic.SubagentStop` pass over a plugin a person installed where an organization manages Claude Code.
-- `claude plugin test .` runs `tests/kessoku.test.ts` against the engine itself.
+- `claude plugin test .` runs every `tests/*.test.ts` against the engine itself.
 - A type check: `tsc -p <folder>` once the engine has laid `.claude-plugin/types/` beside the mod, or otherwise a
   `tsconfig.json` kept outside the folder whose `include` names the engine's `claude-code.d.ts` and the mod's
   `hooks`, `types` and `tests` (the header of that declaration file carries the compiler options).
@@ -919,6 +988,7 @@ From `studio/`, after `npm install`:
   - writes a theme copy only when needed (see [Claude Code theme](#claude-code-theme))
   - changes the `/config` theme row only with your yes or `/bocchi theme on`
   - registers three agent types and, while Reflect is on, the memo tool at each session start
+  - keeps each project's tour, and a few flags (the theme it replaced, a hint shown), in its own store
   - makes one small Haiku call per correction and one cheap request per keepwarm ping
 
   No network calls of its own.
@@ -927,8 +997,8 @@ From `studio/`, after `npm install`:
   model switch go unread, and a subagent the mod missed at spawn is picked up only by the 2 s poll.
   `claude plugin validate` names the hooks.
 - **Older versions of Claude Code.** The mod expects Claude Code 2.1.287 or newer, and `/bocchi help` flags an older
-  one. 1.0.0 was checked on 2.1.299 (validate, tests, type check) and validates on 2.1.295; 2.1.287 itself was not
-  re-checked. Five features switch themselves off where Claude Code lacks the call, and the help names them: the
+  one. 1.0.1 was checked on 2.1.299 (validate, tests, type check); 1.0.0 also validated on 2.1.295, and 2.1.287
+  itself was not re-checked. Five features switch themselves off where Claude Code lacks the call, and the help names them: the
   Replay suggestion, the native notifications, Claude Code's version in the help, the band agent types and the memo
   tool. On a Claude
   Code older than 2.1.287 the mod may not load at all.
