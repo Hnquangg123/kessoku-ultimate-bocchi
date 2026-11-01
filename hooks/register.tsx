@@ -935,10 +935,15 @@ async function shutGate($: EngineInterface, fn: (l: KessokuLedger) => KessokuLed
  */
 async function sendFork($: EngineInterface, kind: ForkKind): Promise<ForkSent> {
   if (forkOut || noSnapshot) return NOT_SENT
-  if (!(await read($, ledger)).canFork) return NOT_SENT
+  // Claimed before any await, so two callers never both get through.
   forkOut = true
-  const epoch = gateEpoch
+  let drew = false
   try {
+    if (!(await read($, ledger)).canFork) return NOT_SENT
+    const epoch = gateEpoch
+    // The Hotpot dims Top up and Re-heat while a fork is out.
+    $.ui.invalidate('ui.render')
+    drew = true
     const calledAt = await $.clock.now()
     const r = await $.model.fork({ prompt: 'Kessoku keep-warm ping. Reply with one word: ok' })
     const c = await read($, cache)
@@ -955,7 +960,7 @@ async function sendFork($: EngineInterface, kind: ForkKind): Promise<ForkSent> {
     let miss = false
     let usd = 0
     await writeLedger($, l => {
-      const o = bookFork(l, { kind, usage: u, calledAt, gateOpen, model: c.model }, { lastWarmAt: c.lastWarmAt, loadedAt, ttlMs: ttlMs() })
+      const o = bookFork(l, { kind, usage: u, calledAt, gateOpen, model: c.model }, { lastWarmAt: c.lastWarmAt, loadedAt, ttlMs: ttlMs(), context: c.contextTokens })
       warmAt = o.warmAt
       miss = o.miss
       usd = o.usd
@@ -969,6 +974,7 @@ async function sendFork($: EngineInterface, kind: ForkKind): Promise<ForkSent> {
     return { sent: true, isAnswered: r.isAnswered, reason: r.isAnswered ? '' : r.reason, status: !r.isAnswered && r.reason === 'api-error' ? r.status : null, warmed, miss, usd, read: u.read, write: u.write }
   } finally {
     forkOut = false
+    if (drew) $.ui.invalidate('ui.render')
   }
 }
 
@@ -996,7 +1002,8 @@ async function keepWarmTick($: EngineInterface): Promise<void> {
   const l = await read($, ledger)
   const now = await $.clock.now()
   if (c.keepWarmUntil <= now || b.isWorking || isCompacting || c.lastWarmAt === 0 || c.contextTokens < TOP_UP_MIN_TOKENS) return
-  if (forkOut || !l.canFork || noSnapshot || pingsStopped || retryTimer !== null) return
+  // With caching off there is no pot to keep: a ping would re-send the context uncached, minute after minute.
+  if (forkOut || !l.canFork || noSnapshot || pingsStopped || retryTimer !== null || cachingOff(l)) return
   if (now - c.lastWarmAt < ttlMs() - 90_000 || isCold(c, l, now)) return
   await keepWarmPing($, false)
 }
@@ -1046,7 +1053,7 @@ async function retryPing($: EngineInterface): Promise<void> {
   const b = await read($, band)
   const l = await read($, ledger)
   const now = await $.clock.now()
-  if (c.keepWarmUntil <= now || b.isWorking || isCompacting || forkOut || !l.canFork || noSnapshot || pingsStopped || c.lastWarmAt === 0 || isCold(c, l, now)) return
+  if (c.keepWarmUntil <= now || b.isWorking || isCompacting || forkOut || !l.canFork || noSnapshot || pingsStopped || c.lastWarmAt === 0 || isCold(c, l, now) || cachingOff(l)) return
   await keepWarmPing($, true)
 }
 
@@ -1808,7 +1815,7 @@ async function bookMain($: EngineInterface, step: MainStep): Promise<void> {
   const c = await read($, cache)
   let out: StepOutcome | null = null
   await writeLedger($, l => {
-    const o = bookMainStep(l, step, { lastWarmAt: c.lastWarmAt, ttl: ttlNow(), loadedAt })
+    const o = bookMainStep(l, step, { lastWarmAt: c.lastWarmAt, ttl: ttlNow(), loadedAt, context: c.contextTokens })
     out = o
     return o.ledger
   })
@@ -4756,6 +4763,8 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: HOTPOT }, async ($, e) => {
     const now = await $.clock.now()
     const v = await hotpotViewOf($, e, now)
+    // Placed at last: the copy drawn above the prompt meanwhile steps aside (outside the render, which writes nothing).
+    if (v.hotpot.inBand) $.clock.after(1, () => void update($, hotpot, h => (h.isOpen && h.inBand ? { ...h, inBand: false } : h)).catch(() => undefined))
     beginSprites(e)
     return drawHotpot($, e, v, now)
   })

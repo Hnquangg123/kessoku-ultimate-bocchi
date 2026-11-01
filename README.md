@@ -571,7 +571,7 @@ The same command, the panel's ♨ again, `Close` (`c`) or Esc close it. It costs
 | more than two thirds of the TTL left | a bubbling pot, steam, the platter as full as the context; Bocchi eats shyly, Ryo fast, Nijika serves with her ladle, Kita photographs the pot |
 | more than a third | simmering, half the food, slower chopsticks |
 | less | the last few pieces |
-| the last 5 minutes | last orders: a LAST ORDER sign, a sputtering flame, one piece of meat left; all four look up at you |
+| the last 5 minutes (half the TTL, if that is shorter) | last orders: a LAST ORDER sign, a sputtering flame, one piece of meat left; all four look up at you |
 | cold | an empty, frosted pot, no flame, blue light, snow; Bocchi in her box under a rain cloud, Nijika and Kita melting |
 | keepwarm on | Nijika in the nabe-bugyō headband, the stove's knob glowing; in the last minutes she has the pot |
 | a send held by Cache Tax | the bill on the table, the re-write's price and a warm turn's; Bocchi in a seated panic |

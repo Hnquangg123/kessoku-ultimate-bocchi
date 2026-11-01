@@ -99,7 +99,7 @@ function viewOf(ageMs: number, over: Partial<HotpotView> = {}, cacheOver: Parame
 }
 
 const step = (u: Partial<StepUsage>, over: Partial<MainStep> = {}): MainStep => ({ usage: { input: 2000, output: 500, read: 0, write: 0, model: OPUS, ...u }, startedAt: NOW, index: 0, effort: 'high', serverTools: false, responded: true, now: NOW + 1000, ...over })
-const ctxOf = (lastWarmAt: number, over: Partial<StepContext> = {}): StepContext => ({ lastWarmAt, ttl: ASSUMED, loadedAt: 0, ...over })
+const ctxOf = (lastWarmAt: number, over: Partial<StepContext> = {}): StepContext => ({ lastWarmAt, ttl: ASSUMED, loadedAt: 0, context: 0, ...over })
 /** A ledger after a warm step of 168k on Opus at `at`, as the mod saw it. */
 const warmed = (at: number, over: Partial<KessokuLedger> = {}): KessokuLedger => ({ ...newLedger(0), prompt: 168_000, lastModel: OPUS, warmModel: OPUS, warmEffort: 'high', seenWarmAt: at, canFork: true, ...over })
 
@@ -297,7 +297,7 @@ test('a seated act’s step is booked to her member; a fork books a ping, a miss
   expect(act.steps).toBe(1)
   expect(act.prompt).toBe(168_000)
   const l = warmed(NOW - 58 * MIN)
-  const ctx = { lastWarmAt: NOW - 58 * MIN, loadedAt: 0, ttlMs: HOUR }
+  const ctx = { lastWarmAt: NOW - 58 * MIN, loadedAt: 0, ttlMs: HOUR, context: 0 }
   const ping = bookFork(l, { kind: 'ping', usage: { input: 30, output: 8, read: 168_000, write: 0 }, calledAt: NOW, gateOpen: true, model: OPUS }, ctx)
   expect(ping).toMatchObject({ warmAt: NOW, miss: false })
   expect(ping.ledger.pings).toMatchObject({ count: 1, misses: 0 })

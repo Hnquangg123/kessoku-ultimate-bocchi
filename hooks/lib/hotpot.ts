@@ -242,10 +242,10 @@ export function ttlInForce(optionMinutes: number, l: Pick<KessokuLedger, 'ttl' |
   return { ms: l.ttl.ms, how: l.ttl.how, sighting: l.sighting }
 }
 
-/** The mark the wooden board carries while the TTL is unsettled: `TTL 5m?` after a first five-minute sighting, `TTL 1h?` while assumed. */
+/** The mark the wooden board carries while the TTL is unsettled: `TTL 5m?` after a first five-minute sighting of a longer one, `TTL 1h?` while assumed. */
 export function ttlMark(ttl: TtlInForce): string {
   if (ttl.how === 'option' || ttl.how === 'engine') return ''
-  if (ttl.sighting > 0) return 'TTL 5m?'
+  if (ttl.sighting > 0 && ttl.ms > 5 * MINUTE) return 'TTL 5m?'
   return ttl.how === 'assumed' ? 'TTL 1h?' : ''
 }
 
@@ -341,8 +341,8 @@ export function bookActStep(l: KessokuLedger, member: Member, u: StepUsage): Kes
 /** A main-loop step, as `turn.step` saw it: its usage (null when none came), when it began, its place in the turn, its effort, whether it ran server tools, whether its response began. */
 export type MainStep = { usage: StepUsage | null; startedAt: number; index: number; effort: string; serverTools: boolean; responded: boolean; now: number }
 
-/** What the step finds the cache as: its warmth, the TTL in force, when the module loaded. */
-export type StepContext = { lastWarmAt: number; ttl: TtlInForce; loadedAt: number }
+/** What the step finds the cache as: its warmth, the TTL in force, when the module loaded, its context (P until a step, a measure or a compaction sets it). */
+export type StepContext = { lastWarmAt: number; ttl: TtlInForce; loadedAt: number; context: number }
 
 export type StepOutcome = {
   ledger: KessokuLedger
@@ -371,7 +371,7 @@ export function bookMainStep(l: KessokuLedger, s: MainStep, ctx: StepContext): S
     return { ...quiet, warmAt, ledger: { ...l, seenWarmAt: warmAt, cleared: false, lastStepAt: s.now } }
   }
   const p = priceInfo(u.model).price
-  const P = l.prompt
+  const P = l.prompt > 0 ? l.prompt : ctx.context
   const isSwitch = l.lastModel !== '' && u.model !== l.lastModel && !l.switched
   const judged = !s.serverTools && !isSwitch
   const kind: StepKind | 'unjudged' = judged ? judgeStep(u, P) : 'unjudged'
@@ -395,7 +395,7 @@ export function bookMainStep(l: KessokuLedger, s: MainStep, ctx: StepContext): S
     if (gap > 5.5 * MINUTE && u.read >= 0.9 * P && u.write < 0.5 * P) {
       next = { ...next, ttl: { ms: HOUR, how: 'seen' }, sighting: 0 }
       taught = '1h'
-    } else if (gap >= 5.5 * MINUTE && gap <= 59 * MINUTE && ctx.lastWarmAt >= ctx.loadedAt && u.model === l.warmModel && s.effort === l.warmEffort && u.write >= 0.5 * P && u.read < 0.1 * P) {
+    } else if (next.ttl.ms > 5 * MINUTE && gap >= 5.5 * MINUTE && gap <= 59 * MINUTE && ctx.lastWarmAt >= ctx.loadedAt && u.model === l.warmModel && s.effort === l.warmEffort && u.write >= 0.5 * P && u.read < 0.1 * P) {
       if (next.sighting > 0) {
         next = { ...next, ttl: { ms: 5 * MINUTE, how: 'seen' }, sighting: 0 }
         taught = '5m'
@@ -441,13 +441,13 @@ export type ForkOutcome = { ledger: KessokuLedger; warmAt: number | null; miss: 
  * evidence on a fork's terms. Landing with the gate shut, it books and
  * changes nothing else.
  */
-export function bookFork(l: KessokuLedger, fk: ForkFacts, ctx: { lastWarmAt: number; loadedAt: number; ttlMs: number }): ForkOutcome {
+export function bookFork(l: KessokuLedger, fk: ForkFacts, ctx: { lastWarmAt: number; loadedAt: number; ttlMs: number; context: number }): ForkOutcome {
   const u = fk.usage
   if (u === null) return { ledger: l, warmAt: null, miss: false, usd: 0, taught: null }
   const p = priceInfo(fk.model || 'default').price
   const usd = (u.input * p.input + u.output * p.output + u.read * p.cacheRead) / 1e6
   const writeBase = (u.write * p.input) / 1e6
-  const P = l.prompt
+  const P = l.prompt > 0 ? l.prompt : ctx.context
   const miss = fk.kind !== 'reheat' && P > 0 && u.write >= 0.1 * P
   let next: KessokuLedger =
     fk.kind === 'reheat'
@@ -461,7 +461,7 @@ export function bookFork(l: KessokuLedger, fk: ForkFacts, ctx: { lastWarmAt: num
     if (gap > 5.5 * MINUTE && u.read >= 0.9 * P && u.write < 0.1 * P) {
       next = { ...next, ttl: { ms: HOUR, how: 'seen' }, sighting: 0 }
       taught = '1h'
-    } else if (gap >= 5.5 * MINUTE && gap <= 59 * MINUTE && ctx.lastWarmAt >= ctx.loadedAt && u.write >= 0.5 * P) {
+    } else if (next.ttl.ms > 5 * MINUTE && gap >= 5.5 * MINUTE && gap <= 59 * MINUTE && ctx.lastWarmAt >= ctx.loadedAt && u.write >= 0.5 * P) {
       if (next.sighting > 0) {
         next = { ...next, ttl: { ms: 5 * MINUTE, how: 'seen' }, sighting: 0 }
         taught = '5m'
@@ -1386,13 +1386,13 @@ function cushions(): string {
   }).join('')
 }
 
-/** The flames under the pot: blue at the burner, licking up; sputtering at last orders; none while it is out. */
+/** The flames under the pot, the burner's ring wider than its base so the outer ones show at its sides: blue, licking up; sputtering at last orders; none while it is out. */
 function flames(phase: FeastPhase, level: number): string {
   if (!(phase === 'zosui' || (isWarmPhase(phase) && level > 0))) return ''
   const cls = phase === 'last' || phase === 'tend' ? 'fs' : 'fl'
   let s = ''
-  for (let i = 0; i < 7; i += 1) {
-    const x = 123 + i * 7
+  for (let i = 0; i < 9; i += 1) {
+    const x = 112 + i * 8
     s += `<g class="${cls}" style="animation-delay:${f(-i * 0.13)}s"><path d="M${x} 143c-1.6-1.2-1.8-3.2 0-5.4 1.8 2.2 1.6 4.2 0 5.4z" fill="#7fb6ff"/><path d="M${x} 143c-.8-.7-.9-1.8 0-3 .9 1.2.8 2.3 0 3z" fill="#e8f3ff"/></g>`
   }
   return s
@@ -1618,8 +1618,10 @@ export function hotpotSvg(v: HotpotView, layout: SceneLayout): SceneSvg {
   const lines = speechOf(phase, keepwarm, moment)
   after += lines.map(([m, t], i) => bubble(m, t, lines.length === 1 ? 'sp' : i === 0 ? 'sa' : 'sb')).join('')
   const open = svgDoc(SCENE_W, SCENE_H, '', SCENE_CSS).replace(/<\/svg>$/, '')
-  const chrome = open.length + back.length + potStuff.length + after.length + '</svg>'.length
   const band = bandParts(phase, moment, keepwarm)
+  // the room, the pot, what comes after the band, and each seat's clip around her
+  const wraps = band.wraps.reduce((n, w) => n + (w === '' ? 0 : `<g ${w}></g>`.length), 0)
+  const chrome = open.length + back.length + potStuff.length + after.length + '</svg>'.length + wraps
   const { markup } = fitBand(band.parts, band.wraps, potStuff, SVG_LIMIT - chrome - 64)
   // With no sprite of the band to place it after, the pot still stands.
   const body = markup.includes(potStuff) ? markup : markup + CRISP(potStuff)
