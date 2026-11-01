@@ -1514,10 +1514,10 @@ test('sprites: every member has every mood whole, as a portrait and as a mini, a
   expect(viewSize('full')).toEqual({ w: 96, h: 96 })
   expect(viewSize('portrait')).toEqual({ w: 32, h: 32 })
   expect(viewSize('mini')).toEqual({ w: 16, h: 16 })
-  // The figures in three views a mood, the slimes in two a state, and the two crashes.
-  expect(Object.keys(SPRITES)).toHaveLength(SPRITE_MEMBERS.length * SPRITE_MOODS.length * 3 + SPRITE_MEMBERS.length * SLIME_STATES.length * 2 + 2)
+  // The figures in three views a mood, the slimes in two a state, the two crashes, the band seated at the Hotpot (24 loops) and Nijika's headband.
+  expect(Object.keys(SPRITES)).toHaveLength(SPRITE_MEMBERS.length * SPRITE_MOODS.length * 3 + SPRITE_MEMBERS.length * SLIME_STATES.length * 2 + 2 + 24 + 1)
   for (const [id, anim] of Object.entries(SPRITES)) {
-    expect(id).toMatch(/^(bocchi|nijika|ryo|kita)-(anxious|focused|happy|panic|melting|hiding)(-portrait|-mini)?$|^(bocchi|nijika|ryo|kita)-slime-(active|idle|asleep)(-mini)?$|^fx-crash(-mini)?$/)
+    expect(id).toMatch(/^(bocchi|nijika|ryo|kita)-(anxious|focused|happy|panic|melting|hiding)(-portrait|-mini)?$|^(bocchi|nijika|ryo|kita)-slime-(active|idle|asleep)(-mini)?$|^fx-crash(-mini)?$|^(bocchi|nijika|ryo|kita)-feast-(eat|calm|worry|wait|cold|shock|serve)$|^nijika-feast-headband$/)
     expect(anim.frames.length).toBeGreaterThan(0)
     // Every frame holds a whole number of 100 ms beats and is spelled in the palette's characters, `.`, `=` and counts;
     // the first never leans on a frame before it.

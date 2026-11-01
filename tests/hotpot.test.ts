@@ -10,24 +10,29 @@ import { expect, test } from 'claude-code/testing'
 
 import type { KessokuHotpot, KessokuLedger } from '../types'
 import {
+  BOX_RAISE,
   FEAST_TOP,
   FEAST_WAIST,
+  HEADBAND,
   HELD_PROMPT_MS,
   INITIAL_LEDGER,
   SEAT_ORDER,
   SEAT_ROW,
   SEAT_SIDE,
   TABLE,
+  bandParts,
   billRows,
   boardOf,
   bookActStep,
   bookFork,
   bookMainStep,
   bookSummary,
+  drawnPhase,
   edgeL,
   edgeR,
   enginePriceOf,
   feastOf,
+  fitBand,
   hitRate,
   hotpotAlt,
   hotpotButtons,
@@ -39,6 +44,7 @@ import {
   keepwarmUsd,
   minutesText,
   miniMoods,
+  momentOf,
   newLedger,
   pingsADay,
   potGauge,
@@ -57,7 +63,8 @@ import {
   writeRate,
 } from '../hooks/lib/hotpot'
 import type { HotpotView, MainStep, StepContext, StepUsage, TtlInForce } from '../hooks/lib/hotpot'
-import { SVG_LIMIT } from '../hooks/lib/sprite'
+import { SVG_LIMIT, animOf, fitSprites, framePixels, viewSize } from '../hooks/lib/sprite'
+import type { SpritePart } from '../hooks/lib/sprite'
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -529,4 +536,125 @@ test('the scene: the same key gives the same string; the alt moves with the cloc
   // reduced motion stops the room's motion (the steam, the flames, the speech's turn)
   expect(a.svg).toContain('@media (prefers-reduced-motion:reduce){*{animation:none!important}}')
   expect(a.svg).not.toContain('mix-blend-mode')
+})
+
+// ---- the seated band (the studio's feast family) ------------------------------------------------------------
+
+const FEAST_IDS: readonly string[] = [
+  ...(['bocchi', 'nijika', 'ryo', 'kita'] as const).flatMap(m => (['eat', 'calm', 'worry', 'wait', 'shock'] as const).map(s => `${m}-feast-${s}`)),
+  'nijika-feast-cold',
+  'ryo-feast-cold',
+  'kita-feast-cold',
+  'nijika-feast-serve',
+]
+
+test('the feast family is exported whole: every member\'s seat in every state she plays, 96x64, and Nijika\'s headband', async () => {
+  expect(FEAST_IDS).toHaveLength(24)
+  for (const id of FEAST_IDS) expect(animOf(id)).toMatchObject({ w: 96, h: 64 })
+  expect(animOf(HEADBAND)).toMatchObject({ w: 96, h: 64 })
+  expect(animOf(HEADBAND)?.frames).toHaveLength(1)
+  expect(animOf('bocchi-feast-cold')).toBeUndefined()
+  expect(viewSize('feast')).toEqual({ w: 96, h: 64 })
+  // every id the table asks for is there
+  for (const phase of ['none', 'feast', 'simmer', 'last', 'cold', 'held', 'zosui'] as const)
+    for (const moment of [null, { kind: 'ping' as const, until: NOW + 1 }])
+      for (const p of bandParts(phase, moment, true).parts) expect(animOf(p.id)).toBeDefined()
+})
+
+test('every figure the feast draws, its seats and Bocchi\'s box, is whole at level 0 within 24,000 characters', async () => {
+  for (const id of [...FEAST_IDS, HEADBAND, 'bocchi-hiding']) {
+    const r = fitSprites([{ id, x: 0, y: 0 }], 10_000_000)
+    expect(r.levels).toEqual([0])
+    expect(r.markup.length).toBeLessThanOrEqual(24_000)
+  }
+})
+
+/** Bocchi's hair, which falls past her waist on her outer side (the studio's seat.ts; its outline is her jacket's too): all that may lie beyond its end. */
+const BOCCHI_HAIR = new Set(['#eba2b3', '#fcc7cd', '#b76c8d', '#542549'])
+
+test('the waist constants are the sprites\' own: the outer end of each seat\'s waist is drawn in every frame of every loop, only Bocchi\'s hair beyond it', async () => {
+  for (const m of ['bocchi', 'nijika', 'ryo', 'kita'] as const) {
+    const w = FEAST_WAIST[m]
+    for (const id of FEAST_IDS.filter(x => x.startsWith(`${m}-`))) {
+      const anim = animOf(id)
+      if (anim === undefined) throw new Error(id)
+      anim.frames.forEach((_f, i) => {
+        const px = framePixels(id, i)
+        const row = (w.y - FEAST_TOP) * anim.w
+        expect(px[row + w.x]).not.toBeNull()
+        // the waist ends there: the next pixel out on her outer side is empty, or Bocchi's hair
+        const beyond = px[row + (SEAT_SIDE[m] === 'left' ? w.x - 1 : w.x + 1)] ?? null
+        if (beyond !== null) expect(m === 'bocchi' && BOCCHI_HAIR.has(beyond)).toBe(true)
+      })
+    }
+  }
+})
+
+test('the scene draws the band in every phase, platter, keepwarm and moment, under the Svg\'s limit; the far two before the pot, the near two after', async () => {
+  const phases: [string, number, NonNullable<Parameters<typeof feastOf>[3]>][] = [
+    ['none', -1, {}],
+    ['cleared', -1, { cleared: true }],
+    ['off', -1, { cachingOff: true }],
+    ['feast', 5 * MIN, {}],
+    ['feast4', 15 * MIN, {}],
+    ['simmer', 30 * MIN, {}],
+    ['low', 45 * MIN, {}],
+    ['last', 57 * MIN, {}],
+    ['cold', 74 * MIN, {}],
+    ['held', 74 * MIN, { held: true }],
+    ['zosui', 5 * MIN, { compacting: true }],
+  ]
+  const moments: KessokuHotpot['moment'][] = [null, { kind: 'ping', until: NOW + 1 }, { kind: 'reheat', until: NOW + 1 }, { kind: 'keepon', until: NOW + 1 }, { kind: 'paid', until: NOW + 1 }]
+  let largest = 0
+  for (const [, age, flags] of phases)
+    for (const tokens of [20_000, 80_000, 200_000, 320_000])
+      for (const keep of [0, NOW + HOUR])
+        for (const moment of moments) {
+          const v = viewOf(age, { hotpot: { ...HOTPOT, moment }, slip: flags.held ? { writeUsd: 1.34, warmUsd: 0.03, tokens, ageMs: 14 * MIN } : null }, { contextTokens: tokens, keepWarmUntil: keep }, flags)
+          const svg = hotpotSvg(v, { width: 600 }).svg
+          largest = Math.max(largest, svg.length)
+          expect(svg.length).toBeLessThanOrEqual(SVG_LIMIT)
+          const states = seatStates(drawnPhase(v).phase, momentOf(v))
+          // every member seated, in paint order: Bocchi and Ryo, the stove, Nijika (and her headband), Kita
+          const at = (m: 'bocchi' | 'nijika' | 'ryo' | 'kita') => {
+            const s = seatAt(m)
+            return svg.indexOf(`<g transform="translate(${s.x} ${states[m] === 'box' ? s.y - BOX_RAISE : s.y + FEAST_TOP})">`)
+          }
+          const stove = svg.indexOf('<g transform="translate(101 140) scale(1)">')
+          for (const m of ['bocchi', 'nijika', 'ryo', 'kita'] as const) expect(at(m)).toBeGreaterThan(0)
+          expect(at('bocchi')).toBeLessThan(at('ryo'))
+          expect(at('ryo')).toBeLessThan(stove)
+          expect(stove).toBeLessThan(at('nijika'))
+          expect(at('nijika')).toBeLessThan(at('kita'))
+          // each through her lap's clip
+          for (const m of ['bocchi', 'nijika', 'ryo', 'kita'] as const) expect(svg).toContain(`<g clip-path="url(#lp${m[0]})"><g transform="translate(${seatAt(m).x} `)
+        }
+  expect(largest).toBeLessThan(SVG_LIMIT)
+})
+
+test('Nijika wears her headband while keepwarm runs, on whatever she plays, and only with her', async () => {
+  const kept = bandParts('feast', null, true)
+  const i = kept.parts.findIndex(p => p.id === HEADBAND)
+  expect(kept.parts[i - 1]?.id).toBe('nijika-feast-eat')
+  expect(kept.parts[i]).toMatchObject({ x: kept.parts[i - 1]?.x, y: kept.parts[i - 1]?.y })
+  expect(kept.wraps[i]).toBe(kept.wraps[i - 1])
+  expect(bandParts('feast', null, false).parts.some(p => p.id === HEADBAND)).toBe(false)
+  expect(bandParts('cold', null, true).parts.map(p => p.id)).toEqual(['bocchi-hiding', 'ryo-feast-cold', 'nijika-feast-cold', HEADBAND, 'kita-feast-cold'])
+  // Bocchi's box sits where her seat is, raised, through her lap's clip
+  const cold = bandParts('cold', null, false)
+  expect(cold.parts[0]).toEqual({ id: 'bocchi-hiding', x: seatAt('bocchi').x, y: seatAt('bocchi').y - BOX_RAISE })
+  expect(cold.wraps[0]).toBe('clip-path="url(#lpb)"')
+  // no headband without Nijika: a budget the headband fits but Nijika's still does not leaves both out
+  const pair = kept.parts.slice(i - 1, i + 1)
+  const wraps = kept.wraps.slice(i - 1, i + 1)
+  const alone = fitSprites([pair[1] as SpritePart], 10_000_000).markup.length
+  // Nijika alone, even as a still, is past it
+  expect(fitSprites([pair[0] as SpritePart], alone + 4).levels).toEqual([-1])
+  const tight = fitBand(pair, wraps, '', alone + 4)
+  expect(tight.parts.map(p => p.id)).toEqual(['nijika-feast-eat'])
+  expect(tight.levels).toEqual([-1])
+  expect(tight.markup).not.toContain('translate(')
+  const roomy = fitBand(pair, wraps, '', 10_000_000)
+  expect(roomy.parts.map(p => p.id)).toEqual(['nijika-feast-eat', HEADBAND])
+  expect(roomy.levels).toEqual([0, 0])
 })
