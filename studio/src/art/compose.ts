@@ -946,6 +946,20 @@ function checkFeast(
         }
       if (diff > 0) problems.push(`feast pose ${name}: the face region (${fw}x${fh} at ${art.face.x},${art.face.y}) differs from stand's in ${diff} pixels${first}, so the face overlays will not fit it`)
     }
+    // Stand's whole head on her seat, the pose the others patch their arms onto: the portrait window from its top
+    // down to the face box's foot (below it the shoulders are the turned body's), hair and outline untouched.
+    const seat = seats.get('seat')
+    if (seat !== undefined) {
+      let diff = 0
+      let first = ''
+      for (let y = art.head.y; y < art.face.y + fh; y += 1)
+        for (let x = art.head.x; x < art.head.x + PW; x += 1) {
+          if (at(seat, x, y) === at(stand, x, y)) continue
+          diff += 1
+          if (first === '') first = ` (first at ${x},${y})`
+        }
+      if (diff > 0) problems.push(`feast pose seat: the head (the portrait window at ${art.head.x},${art.head.y}, ${PW} wide, down to row ${art.face.y + fh - 1}) differs from stand's in ${diff} pixels${first}: the heads are reused as they are`)
+    }
   }
 
   // The feast window holds all of her: the face, the hands, what she holds.
