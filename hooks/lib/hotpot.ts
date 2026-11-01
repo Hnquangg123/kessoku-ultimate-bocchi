@@ -593,6 +593,8 @@ export type HotpotFlags = {
   compactOff: boolean
   /** `$.prompt.read` is missing on this engine. */
   draftOff: boolean
+  /** A paid re-order's turn is under way: its feast stays drawn until the turn's first step books the cache warm. */
+  paying: boolean
 }
 
 /** Everything the pane's drawings read, built where the state is read. */
@@ -839,10 +841,14 @@ export function billRows(v: HotpotView): { title: string; rows: BillRow[]; foot:
 /** A seated member's loop: the feast family's states (`serve` is Nijika's); Bocchi plays her box (`box`) while cold. */
 export type FeastState = KessokuFeastState
 
-/** The phase the drawing shows: a paid re-order draws the feast back before its first step lands. */
-export function drawnPhase(v: Pick<HotpotView, 'feast' | 'hotpot' | 'now'>): { phase: FeastPhase; level: FeastLevel } {
+/**
+ * The phase the drawing shows: a moment that warms the pot draws the feast at once, and a paid re-order keeps it
+ * drawn past its moment while the cache is still cold, until the re-sent turn's first step books it warm.
+ */
+export function drawnPhase(v: Pick<HotpotView, 'feast' | 'hotpot' | 'now' | 'flags'>): { phase: FeastPhase; level: FeastLevel } {
   const m = v.hotpot.moment
   if (m !== null && v.now < m.until && (m.kind === 'paid' || m.kind === 'reheat' || m.kind === 'ping')) return { phase: 'feast', level: 5 }
+  if (v.flags.paying && v.feast.phase === 'cold') return { phase: 'feast', level: 5 }
   return { phase: v.feast.phase, level: v.feast.level }
 }
 
@@ -1747,7 +1753,7 @@ const MINI_AT: Readonly<Record<Member, { x: number; y: number }>> = { bocchi: { 
  * food by level, the flame while lit, the lid while nothing is cached; and
  * the minis by the phase's moods.
  */
-export function hotpotCells(v: Pick<HotpotView, 'feast' | 'hotpot' | 'now'>): { under: (string | null)[]; parts: SpritePart[]; w: number; h: number } {
+export function hotpotCells(v: Pick<HotpotView, 'feast' | 'hotpot' | 'now' | 'flags'>): { under: (string | null)[]; parts: SpritePart[]; w: number; h: number } {
   const { phase, level } = drawnPhase(v)
   const p = pix(CELLS_W, CELLS_H)
   const cold = phase === 'cold' || phase === 'held'

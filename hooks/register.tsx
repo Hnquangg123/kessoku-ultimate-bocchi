@@ -357,6 +357,8 @@ let pingsStopped = false
 let noSnapshot = false
 /** The session.compact hook ran for the compaction in progress (a Zosui press knows then that it drew and settled it). */
 let compactRan = false
+/** A paid re-order's turn is under way: the Hotpot keeps the feast drawn until its first step books it warm (or the turn ends). */
+let paying = false
 const badSleepers = new Set<string>()
 let lastStatus = ''
 let tickTimer: Timer | null = null
@@ -1825,6 +1827,8 @@ async function bookMain($: EngineInterface, step: MainStep): Promise<void> {
   if (o.isSwitch) gateEpoch += 1
   const l = await read($, ledger)
   const warmAt = o.warmAt
+  // The re-sent turn's first step has landed: the feast is drawn from the cache's own warmth from here (this write redraws).
+  paying = false
   await update($, cache, x => ({
     ...x,
     ...(warmAt === null ? {} : { lastWarmAt: o.isSwitch || warmAt === 0 ? warmAt : Math.max(x.lastWarmAt, warmAt) }),
@@ -1860,7 +1864,7 @@ async function hotpotViewOf($: EngineInterface, e: Site | null, now: number): Pr
     ttl,
     pick: pickMs(h),
     slip: feast.phase === 'held' ? { writeUsd: c.heldUsd, warmUsd: c.warmUsd, tokens: held.tokens, ageMs: held.ageMs } : null,
-    flags: { noSnapshot, compacting: isCompacting, working: b.isWorking, forkOut, compactOff: !features.compact, draftOff: !features.draft },
+    flags: { noSnapshot, compacting: isCompacting, working: b.isWorking, forkOut, compactOff: !features.compact, draftOff: !features.draft, paying },
     isTerminal: e?.surface === 'terminal',
     isFocused: e !== null && 'isFocused' in e.props ? e.props.isFocused === true : false,
   }
@@ -4171,6 +4175,8 @@ export const register: Register = (on, options) => {
       scheduleTail($, now + ENCORE_MS, now)
       return r
     }
+    // A paid re-order's turn that ended before any step booked: the scene goes back to the cache's own warmth (this write redraws).
+    paying = false
     const ended = bandOf(await update($, band, b => patchAgent({ ...b, isWorking: false }, 'main', a => ({ ...a, status: 'idle', endedAt: now }))))
     // The set's counters are read once and start over for the next set.
     const counted = await read($, tally)
@@ -4460,8 +4466,16 @@ export const register: Register = (on, options) => {
     const now = await $.clock.now()
     // The one held prompt, re-sent in time, passes (the re-order paid, the feast comes back); anything else is judged afresh.
     const isResend = c.isArmed && now - c.heldAt < HELD_PROMPT_MS && (c.heldText === '' || c.heldText === text)
+    // /bocchi tax's preview arms a hold of its own (its sample keeps the hold's time, as heldFigures reads it): the send
+    // after it passes, but nothing was held, so nothing is paid.
+    const h = await read($, hotpot)
+    const isPreview = h.sample !== null && h.sample.heldAt === c.heldAt
     if (c.isArmed) await update($, cache, x => ({ ...x, isArmed: false, heldAt: 0, heldText: '' }))
-    if (isResend) await playMoment($, 'paid')
+    if (isResend && !isPreview) {
+      // The feast stays drawn past the moment until this turn's first step books the re-written cache warm.
+      paying = true
+      await playMoment($, 'paid')
+    }
     // Cold by feastOf: a TTL or more since the cache was warmed, and never while caching is off (no pot to lose).
     if (!isResend && !b.isWorking && canResend(e.origin.kind) && c.contextTokens >= TAX_MIN_TOKENS && isCold(c, l, now)) {
       hasSurface = hasSurface || (await $.session.surfaces().catch(() => [])).length > 0

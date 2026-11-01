@@ -4360,6 +4360,68 @@ test('/bocchi tax touches neither the ledger nor the cache\'s model, context and
   expect((await stateOf(st, 'ledger')).tax.count).toBe(0)
 })
 
+test('a send after /bocchi tax plays no …paid.: the preview held nothing, before the first order or warm', async ($, on) => {
+  const seen = fresh()
+  const st = watchState(on)
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.command.run(cmd('bocchi', 'tax'))
+  expect(await stateOf(st, 'cache')).toMatchObject({ isArmed: true })
+  expect((await $.prompt.submit(typed('the first order'))).drop).toBeUndefined()
+  expect(await stateOf(st, 'cache')).toMatchObject({ isArmed: false })
+  expect((await stateOf(st, 'hotpot')).moment).toBeNull()
+  await aTurn($, 't1')
+  // and over a warm cache
+  await clock.advance(60_000)
+  await $.command.run(cmd('bocchi', 'tax'))
+  expect((await $.prompt.submit(typed('and a warm one'))).drop).toBeUndefined()
+  expect((await stateOf(st, 'hotpot')).moment).toBeNull()
+})
+
+test('a paid re-order keeps the feast on the table past its moment until the re-sent turn\'s first step books it; a turn that ends first lets it go cold', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  const steps: StepAnswer[] = [{ read: 300_000, write: 1000 }]
+  usageBottom(on, steps)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.prompt.submit(typed('warm up'))
+  await aTurn($, 't1')
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  const scene = async () => String((await pane.find({ type: 'Svg' }))?.props.source ?? '')
+  // An hour on, the send is held; sent again, it is paid, and its turn begins.
+  await clock.advance(61 * 60_000)
+  expect(await scene()).toContain('It went cold')
+  expect((await $.prompt.submit(typed('carry on'))).drop).toMatch(/CACHE TAX/)
+  expect((await $.prompt.submit(typed('carry on'))).drop).toBeUndefined()
+  await $.turn.start({ text: 'carry on', turnId: 't2' })
+  expect(await scene()).toContain('…paid.')
+  // The moment's 2.4 s are over and the first step has not booked yet: still the feast, no snow, no box.
+  await clock.advance(3000)
+  expect(await scene()).toContain('So photogenic!')
+  expect(await scene()).not.toContain('It went cold')
+  expect(await scene()).not.toContain('class="sn"')
+  // The step re-writes the cache: the feast from its own warmth now.
+  steps.push({ read: 0, write: 304_000 })
+  for await (const chunk of $.turn.step({ turnId: 't2', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })) void chunk
+  await $.turn.complete({ turnId: 't2', answer: 'ok', durationMs: 900, isAborted: false, reason: 'answer' })
+  expect(await scene()).toContain('So photogenic!')
+  // A paid re-order whose turn is stopped before any step: cold again once the turn is over.
+  await clock.advance(61 * 60_000)
+  expect((await $.prompt.submit(typed('once more'))).drop).toMatch(/CACHE TAX/)
+  expect((await $.prompt.submit(typed('once more'))).drop).toBeUndefined()
+  await $.turn.start({ text: 'once more', turnId: 't3' })
+  await clock.advance(3000)
+  expect(await scene()).toContain('So photogenic!')
+  await $.turn.complete({ turnId: 't3', answer: '', durationMs: 900, isAborted: true, reason: 'aborted' })
+  await clock.settle()
+  expect(await scene()).toContain('It went cold')
+  await pane.unmount()
+})
+
 test('the scene\'s alt and the wooden board\'s first line move with the clock by whole minutes; the source does not', async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })

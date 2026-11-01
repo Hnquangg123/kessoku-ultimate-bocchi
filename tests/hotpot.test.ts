@@ -81,7 +81,7 @@ const near = (got: number, want: number, digits = 6) => expect(Math.abs(got - wa
 
 const cacheAt = (ageMs: number, over: Partial<{ keepWarmUntil: number; contextTokens: number; model: string; heldAt: number }> = {}) => ({ lastWarmAt: ageMs < 0 ? 0 : NOW - ageMs, keepWarmUntil: 0, contextTokens: 168_000, model: OPUS, heldAt: 0, ...over })
 const HOTPOT: KessokuHotpot = { isOpen: true, inBand: false, isBillOpen: false, pick: 0, armed: null, moment: null, note: null, sample: null }
-const FLAGS = { noSnapshot: false, compacting: false, working: false, forkOut: false, compactOff: false, draftOff: false }
+const FLAGS = { noSnapshot: false, compacting: false, working: false, forkOut: false, compactOff: false, draftOff: false, paying: false }
 
 /** A view of the pane: a cache warmed `ageMs` ago (-1: nothing cached), the ledger P at 168k, a one-hour TTL assumed. */
 function viewOf(ageMs: number, over: Partial<HotpotView> = {}, cacheOver: Parameters<typeof cacheAt>[1] = {}, flags: Parameters<typeof feastOf>[3] = {}): HotpotView {
@@ -544,6 +544,22 @@ test('who plays what, the terminal’s heads, the kaomoji gauge and the speech, 
   expect(speechOf('cold', true, null)).toEqual([['nijika', 'The next order warms it.']])
   expect(speechOf('cold', false, { kind: 'reheat', until: NOW })).toEqual([['bocchi', 'I-it’s warm again…']])
   expect(speechOf('off', false, null)).toEqual([])
+})
+
+test('a paid re-order keeps the feast drawn past its moment while the cache is still cold, until its first step books (flags.paying)', async () => {
+  const paying = { ...FLAGS, paying: true }
+  // its moment draws the feast; after it, only `paying` does, and only over a cold cache
+  expect(drawnPhase(viewOf(74 * MIN, { hotpot: { ...HOTPOT, moment: { kind: 'paid', until: NOW + 1 } } }))).toEqual({ phase: 'feast', level: 5 })
+  expect(drawnPhase(viewOf(74 * MIN))).toEqual({ phase: 'cold', level: 0 })
+  expect(drawnPhase(viewOf(74 * MIN, { flags: paying }))).toEqual({ phase: 'feast', level: 5 })
+  expect(drawnPhase(viewOf(30 * MIN, { flags: paying })).phase).toBe('simmer')
+  expect(drawnPhase(viewOf(-1, { flags: paying })).phase).toBe('none')
+  // the scene and the terminal's backdrop follow it: no snow, no box, the feast's line
+  const svg = hotpotSvg(viewOf(74 * MIN, { flags: paying }), { width: 600 }).svg
+  expect(svg).not.toContain('class="sn"')
+  expect(svg).toContain('So photogenic!')
+  expect(svg).not.toContain('It went cold')
+  expect(hotpotCells(viewOf(74 * MIN, { flags: paying })).parts.map(p => p.id)).toEqual(hotpotCells(viewOf(5 * MIN)).parts.map(p => p.id))
 })
 
 test('the seats sit at the table’s side edges, each with the outer end of her waist on the edge at her row', async () => {
