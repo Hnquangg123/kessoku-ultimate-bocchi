@@ -510,7 +510,7 @@ test('session.start registers the commands, opens the panel and seats Bocchi in 
   const clock = mock.clock(on, { now: 1_000_000 })
   bottoms(on, clock, seen)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
-  expect(seen.commands.sort()).toEqual(['bocchi', 'cache-tax', 'filetree', 'keepwarm', 'kessoku', 'replay'])
+  expect(seen.commands.sort()).toEqual(['bocchi', 'cache-tax', 'filetree', 'hotpot', 'keepwarm', 'kessoku', 'replay'])
   expect(seen.opened).toContain('kessoku-band')
   expect(seen.status.at(-1)).toMatch(/bocchi/)
   // The band's agent types and the memo tool, for the model from the next turn on.
@@ -2431,11 +2431,12 @@ test('typeahead: /bocchi and /keepwarm complete their next word, and nothing els
     return { text, cursor: text.length, token: text.slice(start), start }
   }
   const texts = (text: string) => completions(at(text)).map(c => c.text)
-  expect(texts('/bocchi')).toEqual(['/bocchi theme', '/bocchi mood', '/bocchi demo', '/bocchi tax', '/bocchi crash', '/bocchi memo', '/bocchi setlist', '/bocchi recap', '/bocchi solo', '/bocchi strip', '/bocchi stats', '/bocchi help'])
+  expect(texts('/bocchi')).toEqual(['/bocchi theme', '/bocchi mood', '/bocchi demo', '/bocchi tax', '/bocchi crash', '/bocchi memo', '/bocchi setlist', '/bocchi recap', '/bocchi solo', '/bocchi strip', '/bocchi stats', '/bocchi hotpot', '/bocchi help'])
   expect(texts('/bocchi t')).toEqual(['theme', 'tax'])
   expect(texts('/bocchi T')).toEqual(['theme', 'tax'])
   expect(texts('/bocchi s')).toEqual(['setlist', 'solo', 'strip', 'stats'])
   expect(texts('/bocchi r')).toEqual(['recap'])
+  expect(texts('/bocchi h')).toEqual(['hotpot', 'help'])
   expect(texts('/bocchi stats ')).toEqual(['all'])
   expect(texts('/bocchi stats all x')).toEqual([])
   expect(texts('/bocchi solo')).toEqual([])
@@ -2449,9 +2450,10 @@ test('typeahead: /bocchi and /keepwarm complete their next word, and nothing els
   expect(texts('/bocchi memo proposed x')).toEqual([])
   expect(texts('/bocchi tax x')).toEqual([])
   expect(texts('/bocchi theme on x')).toEqual([])
-  expect(texts('/keepwarm')).toEqual(['/keepwarm 30m', '/keepwarm 1h', '/keepwarm 2h', '/keepwarm off'])
+  expect(texts('/keepwarm')).toEqual(['/keepwarm 30m', '/keepwarm 1h', '/keepwarm 2h', '/keepwarm 6h', '/keepwarm off'])
   expect(texts('/keepwarm 1')).toEqual(['1h'])
   expect(texts('/keepwarm o')).toEqual(['off'])
+  expect(texts('/keepwarm 6')).toEqual(['6h'])
   expect(texts('/keepwarm 1h 2')).toEqual([])
   for (const other of ['/boc', '/bocch', '/replay', '/kessoku', 'bocchi t', 'fix the /bocchi t', '/compact t']) expect(texts(other)).toEqual([])
   // Every row says what it does, in the help's words.
@@ -2531,11 +2533,14 @@ test('native notifications: the guard holding a command, a long set done, the ca
   await clock.advance(3 * 60_000)
   expect(seen.notified).toHaveLength(3)
   expect(seen.toasts.some(t => /goes cold/.test(t))).toBe(false)
-  // A set that stopped on an error is announced too; an interrupted one is not (the person was there).
+  // A set that stopped on an error is announced too; an interrupted one is not (the person was there). Each made a
+  // request first: no turn.complete warms the cache, its steps do.
   await $.turn.start({ text: 'again', turnId: 't3' })
+  for await (const chunk of $.turn.step({ turnId: 't3', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })) void chunk
   await $.turn.complete({ turnId: 't3', answer: '', durationMs: 40_000, isAborted: false, reason: 'error' })
   expect(seen.notified[3]?.text).toBe('Nijika: the set stopped on error after 0:40')
   await $.turn.start({ text: 'once more', turnId: 't4' })
+  for await (const chunk of $.turn.step({ turnId: 't4', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })) void chunk
   await $.turn.complete({ turnId: 't4', answer: '', durationMs: 40_000, isAborted: true, reason: 'aborted' })
   expect(seen.notified).toHaveLength(4)
   // No channel (the desktop app): the cold-cache notice becomes a toast; the guard and the set keep their screens.
@@ -2604,17 +2609,19 @@ test('/bocchi help opens with the mod and engine versions, and names what this e
   expect(isAtLeast('3.0.0', '2.1.287')).toBe(true)
   expect(isAtLeast('2.10.0', '2.9.9')).toBe(true)
   expect(isAtLeast('', '2.1.287')).toBe(false)
-  const allOn = { suggest: true, notify: true, version: true, agents: true, memo: true }
+  const allOn = { suggest: true, notify: true, version: true, agents: true, memo: true, compact: true, draft: true }
   expect(offLine(allOn)).toBe('')
   expect(offLine({ ...allOn, notify: false })).toBe('off on this engine: native notifications (no $.ui.notify)')
   expect(offLine({ ...allOn, suggest: false, version: false })).toBe('off on this engine: the Replay suggestion (no $.prompt.suggest), the engine version (no $.session.version)')
   expect(offLine({ ...allOn, agents: false, memo: false })).toBe('off on this engine: the band agent types (no $.agent.register), the memo tool (no $.tool.register)')
+  expect(offLine({ ...allOn, compact: false, draft: false })).toBe("off on this engine: the Hotpot's zosui (no $.session.compact), the Hotpot's draft check (no $.prompt.read)")
   // Help names the band types and the memo tool, and every /bocchi word the typeahead offers.
   expect(lines.some(l => l.startsWith('Band agent types:') && l.includes('kessoku-ultimate-bocchi:nijika'))).toBe(true)
   expect(lines.some(l => /memo tool/.test(l))).toBe(true)
   expect(lines.some(l => l.includes('/bocchi memo [proposed]'))).toBe(true)
   expect(lines.some(l => l.startsWith('/bocchi stats [all]'))).toBe(true)
   expect(lines.some(l => l.includes('/bocchi recap'))).toBe(true)
+  expect(lines.some(l => l.startsWith('/hotpot ') && l.includes('/bocchi hotpot'))).toBe(true)
 })
 
 test('a refused registration breaks nothing: the session starts, help names no missing call, band types still seat by name', { options: { applyTheme: false } }, async ($, on) => {
@@ -3014,7 +3021,7 @@ test('panelView: who plays, what each act does, its context, cost, tools and fai
   const v = panelView(band, cache, ui, now, 60 * 60_000)
   expect(v.members.map(m => m.member)).toEqual(['bocchi', 'nijika', 'ryo', 'kita'])
   expect(v).toMatchObject({ onAir: true, set: 3, setLength: '1:02', ctxPercent: 42, planPercent: 18, session: '$0.60', liveCount: 1, solo: null })
-  expect(v.amp).toEqual({ kind: 'warm', words: 'warm 59:00' })
+  expect(v.amp).toEqual({ kind: 'warm', words: 'warm, 59m left' })
   expect(v.nowPlaying).toEqual({ who: 'ryo', words: 'Find every call site of legacyQuery() · 0:48' })
   const [bocchi, nijika, ryo, kita] = v.members as [MemberView, MemberView, MemberView, MemberView]
   // Bocchi's first act is the main loop: the set's task, the session's context, its own tools.
@@ -3047,7 +3054,7 @@ test('panelView: who plays, what each act does, its context, cost, tools and fai
   expect(solo.members[2]?.acts.map(a => a.id)).toEqual(['r0', 'r1'])
   // A solo past its due is the mix; the cache cold, kept warm, or never warmed.
   expect(panelView(band, cache, { ...ui, solo: 'ryo', soloUntil: now - 1 }, now, 60 * 60_000).solo).toBeNull()
-  expect(panelView(band, { ...cache, lastWarmAt: now - 70 * 60_000 }, ui, now, 60 * 60_000).amp).toEqual({ kind: 'cold', words: 'cold 10:00' })
+  expect(panelView(band, { ...cache, lastWarmAt: now - 70 * 60_000 }, ui, now, 60 * 60_000).amp).toEqual({ kind: 'cold', words: 'cold for 10m' })
   expect(panelView(band, { ...cache, keepWarmUntil: now + 7_200_000 }, ui, now, 60 * 60_000).amp.kind).toBe('keepwarm')
   expect(panelView(band, { ...cache, lastWarmAt: 0 }, ui, now, 60 * 60_000).amp).toEqual({ kind: 'none', words: 'no cache yet' })
   // State an older version wrote (no set, no solo, no tally) reads whole.

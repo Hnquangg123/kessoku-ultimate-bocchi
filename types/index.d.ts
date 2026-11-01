@@ -230,6 +230,94 @@ export type KessokuTour = {
   view: KessokuTourView | null
 }
 
+/**
+ * The ♨ Hotpot pane: up or not, where, the bill, keepwarm's length, the one
+ * press waiting for its second, the moment playing, what a press said, and
+ * the /bocchi tax preview's sample.
+ */
+export type KessokuHotpot = {
+  isOpen: boolean
+  inBand: boolean
+  isBillOpen: boolean
+  /** Keepwarm's length for Keep the fire on, in milliseconds; 0 for the Keepwarm default option. */
+  pick: number
+  /** Re-heat, zosui or clear the table, pressed once at `at`: a second press within 10 s runs it. */
+  armed: { action: 'reheat' | 'zosui' | 'clear'; at: number } | null
+  /** A one-shot moment of the feast (a ping, a re-heat, keepwarm switched on, a paid re-order) until `until`. */
+  moment: { kind: 'ping' | 'reheat' | 'keepon' | 'paid'; until: number } | null
+  /** An action's outcome, in place of the wooden board's first tail until `until`. */
+  note: { text: string; until: number } | null
+  /** The /bocchi tax preview's model, size and age, stamped with its hold's `heldAt`. */
+  sample: { model: string; tokens: number; ageMs: number; heldAt: number } | null
+}
+
+/** One member's share of the prompt cache over this conversation's steps: tokens read from it, written to it, sent uncached. */
+export type KessokuCacheShare = { read: number; write: number; input: number }
+
+/**
+ * What the mod books about the prompt cache for this conversation (it starts
+ * over at /clear and an in-process /resume, the learned TTL kept): every
+ * step's tokens and cost, the tax, the pings, the re-heats, the compactions'
+ * summaries, and what the cache's truth rests on. A cache write is kept at
+ * its base (its tokens at the model's input price) and drawn at the TTL's
+ * write rate in force. Nothing in it grows with the conversation.
+ */
+export type KessokuLedger = {
+  /** When this book began. */
+  since: number
+  /** Steps booked: the main loop's and the seated acts'. */
+  steps: number
+  input: number
+  cacheRead: number
+  cacheWrite: number
+  output: number
+  /** Their costs, each step at its own model's prices. */
+  inputUsd: number
+  outputUsd: number
+  cacheReadUsd: number
+  /** The cache writes' base, and what the cache reads would have cost uncached. */
+  cacheWriteBase: number
+  cacheReadBase: number
+  /** Cache Tax paid: the cold re-writes (of them silent and mid-turn), the shortfall's tokens, its base, and the warm cost it replaced. */
+  tax: { count: number; silent: number; midTurn: number; tokens: number; base: number; warmUsd: number }
+  /** Keepwarm's pings and the top-ups (misses: found the cache cold), the re-heats, the compactions' summarizing requests: their cost but the writes, and the writes' base. */
+  pings: { count: number; misses: number; usd: number; writeBase: number }
+  reheats: { count: number; usd: number; writeBase: number }
+  summarizer: { count: number; usd: number; writeBase: number }
+  members: Record<KessokuMember, KessokuCacheShare>
+  /** P: the prompt tokens of the main loop's last request (input + cache read + cache write). */
+  prompt: number
+  /** The last main-loop response's output tokens: with P, what the next request re-sends. */
+  lastOutput: number
+  /** Whether a person sent the main loop's turn (the one running, or the last). */
+  isPersonTurn: boolean
+  /** Who sent the last prompt while idle, for the next main-loop turn to take: a person, someone else, or nothing recorded. */
+  nextTurn: 'person' | 'other' | 'none'
+  /** Main-loop steps with usage in the turn running: its end opens the fork gate when there was one. */
+  turnSteps: number
+  /** The engine's own price of a cache write per token (a model switch's estimate) and the model it priced. */
+  engine: { perToken: number; model: string } | null
+  /** Consecutive cacheless main-loop steps: three or more is caching off. */
+  cacheless: number
+  /** The TTL the engine or the evidence taught, kept for the session (`assumed`: the hour, until they speak). */
+  ttl: { ms: number; how: 'assumed' | 'engine' | 'seen' }
+  /** A pending five-minute sighting's time; 0 for none. */
+  sighting: number
+  /** The model and effort of the request that last warmed the pot. */
+  warmModel: string
+  warmEffort: string
+  /** The `lastWarmAt` a main-loop step or a fork of the mod's own set (the evidence measures from it); 0 when a resume or nothing set it. */
+  seenWarmAt: number
+  /** The last main-loop step's model, and whether a model switch came since it. */
+  lastModel: string
+  switched: boolean
+  /** The fork gate: a fork (keepwarm's ping, a top-up, a re-heat) may go out. */
+  canFork: boolean
+  /** /clear set it, until a main-loop step warms the cache again. */
+  cleared: boolean
+  lastStepAt: number
+}
+
 /** Which of the theme's drawings are up. */
 export type KessokuUi = {
   isPanelOpen: boolean
@@ -265,6 +353,10 @@ declare module 'claude-code' {
       tally: KessokuTally
       /** The /bocchi stats page. */
       tour: KessokuTour
+      /** The ♨ Hotpot pane. */
+      hotpot: KessokuHotpot
+      /** What the mod books about the prompt cache, this conversation. */
+      ledger: KessokuLedger
     }
   }
 }

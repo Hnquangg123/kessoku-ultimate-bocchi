@@ -272,9 +272,14 @@ function paintOf(code: number, isDim: boolean): string | null {
   return hit
 }
 
-/** Several sprites, each at its own frame for `now` and drawn at its zoom (a `dim` one shaded), laid on one canvas of `w` x `h` pixels. */
-export function composite(parts: readonly SpritePart[], w: number, h: number, now: number): (string | null)[] {
-  const px: (string | null)[] = Array.from({ length: w * h }, () => null)
+/**
+ * Several sprites, each at its own frame for `now` and drawn at its zoom (a
+ * `dim` one shaded), laid on one canvas of `w` x `h` pixels: over a still
+ * backdrop (`under`, the canvas's own pixels) when one is given, which every
+ * repaint lays first.
+ */
+export function composite(parts: readonly SpritePart[], w: number, h: number, now: number, under?: readonly (string | null)[]): (string | null)[] {
+  const px: (string | null)[] = Array.from({ length: w * h }, (_v, i) => under?.[i] ?? null)
   for (const part of parts) {
     const anim = SPRITES[part.id]
     const frame = decodedOf(part.id)?.frames[anim === undefined ? 0 : frameAt(anim, now)]

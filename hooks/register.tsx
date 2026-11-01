@@ -1,6 +1,6 @@
 // Kessoku Ultimate Bocchi Theme: the hooks module.
 //
-// One module, ten features, every `on(...)` and `$.noun.method(...)` spelled
+// One module, eleven features, every `on(...)` and `$.noun.method(...)` spelled
 // here so the host can read them off the source; the pure parts (the look,
 // the price table, the risk classifier, the diff, the notebook, the tree
 // shape) live under ./lib.
@@ -23,6 +23,15 @@
 //             card and in the strip.
 //   cache     Cache Tax: a cold prompt cache holds the next send once, with
 //             the re-write cost; `/keepwarm` pings keep it warm; `/cache-tax`.
+//             A ledger books every request's cache tokens (the main loop's,
+//             the seated acts', the pings', the summaries'), and the cache's
+//             truth is learned: the TTL from Claude Code or the evidence, a
+//             model switch as a new pot, a resume's pot, warmth from a step's
+//             start, caching off after three cacheless steps.
+//   hotpot    the ♨ Hotpot (`/hotpot`, ♨ on the strip and the board): the
+//             cache as the band's after-show hotpot, the feast running down
+//             with the TTL, a wooden board of prices, and the feast's actions
+//             (keep the fire on, top up, re-heat, zosui, clear the table, the bill).
 //   blast     Blast Radius: a risky Bash or PowerShell command (rm -rf,
 //             Remove-Item -Recurse, git reset --hard, force push, git clean,
 //             migrations, destroys) is held behind the dropped guitar screen
@@ -38,7 +47,7 @@
 //             the prompt (its counts, its MVP, Replay); every set joins its
 //             project's tour in the plugin's store, one line a night, which
 //             `/bocchi stats [all]` shows on the `♪ On Tour` page.
-//   bocchi    `/bocchi theme|demo|memo|tax|crash|setlist|recap|mood <m>|solo|strip|stats|help`
+//   bocchi    `/bocchi theme|demo|memo|tax|crash|setlist|recap|mood <m>|solo|strip|stats|hotpot|help`
 //             previews each piece so the look can be tweaked without waiting for the real thing.
 
 import { atom, read, update } from 'claude-code'
@@ -49,6 +58,8 @@ import type {
   KessokuBand,
   KessokuBlast,
   KessokuCache,
+  KessokuHotpot,
+  KessokuLedger,
   KessokuLight,
   KessokuMember,
   KessokuMemo,
@@ -107,6 +118,53 @@ import type { Unified } from './lib/diff'
 import { offLine, versionLine } from './lib/engine'
 import type { FeatureKey } from './lib/engine'
 import { MEMO_QUEUE_MAX, MEMO_TOOL, MEMO_TOOL_SPEC, appendRule, checkRule, cleanRule, looksLikeCorrection, memoAnswer, rulePrompt } from './lib/reflect'
+import {
+  ARM_MS,
+  CELLS_H,
+  CELLS_W,
+  HELD_PROMPT_MS,
+  INITIAL_LEDGER,
+  MOMENT_MS,
+  NOTE_MS,
+  TOP_UP_MIN_TOKENS,
+  ampKind,
+  billRows,
+  boardOf,
+  bookActStep,
+  bookFork,
+  bookMainStep,
+  bookSummary,
+  cachingOff,
+  drawnPhase,
+  enginePriceOf,
+  feastOf,
+  hitRate,
+  hotpotAlt,
+  hotpotButtons,
+  hotpotCells,
+  hotpotDue,
+  hotpotFaces,
+  hotpotLine,
+  hotpotSvg,
+  isTtlDefault,
+  keepwarmUsd,
+  lengthText,
+  minutesText,
+  newLedger,
+  nextPingAt,
+  pingsUsd,
+  potGauge,
+  railWords,
+  reorderUsd,
+  savedUsd,
+  stripWords,
+  taxPaidUsd,
+  topUpUsd,
+  ttlInForce,
+  warmthDue,
+  writePerToken,
+} from './lib/hotpot'
+import type { FeastFlags, ForkKind, HotpotView, MainStep, StepOutcome, StepUsage, TtlInForce } from './lib/hotpot'
 import { completions } from './lib/typeahead'
 import { boardFootSvg, boardHeadSvg, boardLayout, boardPlan, layoutFor, platesSvg, SCENE_COLORS, songDetailSvg, songLook, songSvg, stageSvg, stripSvg } from './lib/scene'
 import type { SceneSvg } from './lib/scene'
@@ -125,10 +183,11 @@ const TREE = 'kessoku-filetree'
 const BLAST = 'kessoku-blast-radius'
 const REPLAY = 'kessoku-replay'
 const TOUR = 'kessoku-tour'
+const HOTPOT = 'kessoku-hotpot'
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit'])
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
-const OWN_COMMANDS = new Set(['kessoku', 'filetree', 'replay', 'keepwarm', 'cache-tax', 'bocchi'])
+const OWN_COMMANDS = new Set(['kessoku', 'filetree', 'replay', 'keepwarm', 'cache-tax', 'hotpot', 'bocchi'])
 const HOLD_LIMIT_MS = 10 * 60 * 1000
 const POLL_SECONDS = '0.25'
 const POLL_MS = 400
@@ -137,7 +196,6 @@ const MAX_TRACK_LINES = 120
 const MAX_TRACKS = 40
 const MAX_AGENTS = 24
 const MEASURE_CAP = 5000
-const HELD_PROMPT_MS = 15 * 60_000
 /** Below this many context tokens a cold send is too cheap to hold for, or to warn about. */
 const TAX_MIN_TOKENS = 20_000
 /** A set at least this long may have been left to play alone: its end is worth a notification. */
@@ -210,6 +268,7 @@ const INITIAL_REPLAY: KessokuReplay = { tracks: [], index: 0, isOpen: false, inB
 const INITIAL_UI: KessokuUi = { isPanelOpen: false, isStripHidden: false, panelWhere: 'none', solo: null, soloAct: null, soloUntil: 0, soloChosen: false }
 const INITIAL_TALLY: KessokuTally = { set: 0, mainUsd: 0, errors: { bocchi: 0, nijika: 0, ryo: 0, kita: 0 }, held: 0, stopped: 0, commits: 0 }
 const INITIAL_TOUR: KessokuTour = { isOpen: false, inBand: false, scope: 'project', view: null }
+const INITIAL_HOTPOT: KessokuHotpot = { isOpen: false, inBand: false, isBillOpen: false, pick: 0, armed: null, moment: null, note: null, sample: null }
 
 const band = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'band' } as const, INITIAL_BAND)
 const cache = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'cache' } as const, INITIAL_CACHE)
@@ -223,6 +282,8 @@ const ui = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'ui' } as const, INITI
 const recap = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'recap' } as const, null)
 const tally = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'tally' } as const, INITIAL_TALLY)
 const tour = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'tour' } as const, INITIAL_TOUR)
+const hotpot = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'hotpot' } as const, INITIAL_HOTPOT)
+const ledger = atom({ plugin: 'kessoku-ultimate-bocchi', key: 'ledger' } as const, INITIAL_LEDGER)
 
 type Skin = 'full' | 'light' | 'none'
 type Toasts = 'all' | 'important' | 'none'
@@ -238,8 +299,8 @@ type Opts = {
   paint: boolean
   toolCards: 'all' | 'edits' | 'none'
   spinnerWords: boolean
-  ttlMs: number
-  isTtlDefault: boolean
+  /** The Cache TTL option in minutes as set (60, 0, empty or negative leave the TTL to Claude Code and the evidence). */
+  ttlMinutes: number
   keepWarmMs: number
   reflect: boolean
   openPanel: boolean
@@ -262,8 +323,7 @@ function readOptions(options: PluginOptions): Opts {
     paint: options.paintBackgrounds !== false,
     toolCards: cards === 'edits' || cards === 'none' ? cards : 'all',
     spinnerWords: options.spinnerWords !== false,
-    ttlMs: Math.max(1, ttl || 60) * 60_000,
-    isTtlDefault: !Number.isFinite(ttl) || ttl === 60,
+    ttlMinutes: Number.isFinite(ttl) ? ttl : 0,
     keepWarmMs: Math.max(1, Number(options.keepWarmMinutes) || 360) * 60_000,
     reflect: options.reflect !== false,
     openPanel: options.openPanelOnStart !== false,
@@ -282,7 +342,21 @@ let hasSurface = false
 let uiStarted = false
 let isLightTheme = false
 let cwd = ''
-let ttlOverrideMs: number | null = null
+/** The ledger's TTL facts, mirrored here so the TTL in force reads without a state read (rewritten at every ledger write and session.start). */
+let ttlSeen: Pick<KessokuLedger, 'ttl' | 'sighting'> = INITIAL_LEDGER
+/** When this module loaded: a five-minute sighting needs a gap with no reload in it. */
+let loadedAt = 0
+/** A fork of the mod's own (a ping, a top-up, a re-heat) is out: no other goes until it lands. */
+let forkOut = false
+/** Counts the fork gate's shutting: a fork that left before a shutting changes nothing when it lands. */
+let gateEpoch = 0
+/** Keepwarm's one retry after a 429, and the stop after a second, until a main-loop step warms the cache again. */
+let retryTimer: Timer | null = null
+let pingsStopped = false
+/** The host keeps no snapshot a fork may share (a fork answered nothing-to-fork with the gate open): Keep the fire on, Top up and Re-heat stay dim. */
+let noSnapshot = false
+/** The session.compact hook ran for the compaction in progress (a Zosui press knows then that it drew and settled it). */
+let compactRan = false
 const badSleepers = new Set<string>()
 let lastStatus = ''
 let tickTimer: Timer | null = null
@@ -309,7 +383,7 @@ let modVersion = ''
  * (`session.compact`, `prompt.autocomplete`) cannot be gated: an engine that
  * does not know an event refuses the whole module at load.
  */
-const features: Record<FeatureKey, boolean> = { suggest: true, notify: true, version: true, agents: true, memo: true }
+const features: Record<FeatureKey, boolean> = { suggest: true, notify: true, version: true, agents: true, memo: true, compact: true, draft: true }
 /** The band's agent types as the engine named them (`kessoku-ultimate-bocchi:ryo`), by member; filled at each session.start. */
 const bandTypes = new Map<string, string>()
 
@@ -319,7 +393,7 @@ const bandTypes = new Map<string, string>()
  * shows, `refusedAt` when the surface last turned a repaint down (0 while it
  * takes them), `triedAt` the last attempt.
  */
-type LiveSprite = { requestId: string; key: string; parts: SpritePart[]; w: number; h: number; mode: CellMode; bg: string | undefined; sig: string; gen: number; drawnAt: number; refusedAt: number; triedAt: number }
+type LiveSprite = { requestId: string; key: string; parts: SpritePart[]; w: number; h: number; mode: CellMode; bg: string | undefined; under: readonly (string | null)[] | undefined; sig: string; gen: number; drawnAt: number; refusedAt: number; triedAt: number }
 const liveSprites = new Map<string, LiveSprite>()
 /** How many times each site has drawn: a sprite that a site's latest drawing left out is gone. */
 const spriteSites = new Map<string, number>()
@@ -347,8 +421,30 @@ type Draw = JSX.Element
 
 // ---- Small helpers -----------------------------------------------------------
 
+/** The TTL in force: the Cache TTL option's when set, else what Claude Code or the evidence taught, else the hour assumed. */
+function ttlNow(): TtlInForce {
+  return ttlInForce(opts.ttlMinutes, ttlSeen)
+}
+
 function ttlMs(): number {
-  return ttlOverrideMs ?? opts.ttlMs
+  return ttlNow().ms
+}
+
+/** The ledger written (and its TTL facts mirrored). */
+async function writeLedger($: EngineInterface, fn: (l: KessokuLedger) => KessokuLedger): Promise<KessokuLedger> {
+  const l = await update($, ledger, fn)
+  ttlSeen = l
+  return l
+}
+
+/** What decides the feast's phase beyond the warmth: a send held, a compaction running, a cleared table, caching off. */
+function feastFlags(c: KessokuCache, l: KessokuLedger, now: number): FeastFlags {
+  return { held: c.heldAt > 0 && now - c.heldAt < HELD_PROMPT_MS, compacting: isCompacting, cleared: l.cleared, cachingOff: cachingOff(l) }
+}
+
+/** Whether the cache has lapsed: cold by `feastOf` (a TTL or more since it was warmed; never while caching is off). */
+function isCold(c: KessokuCache, l: KessokuLedger, now: number): boolean {
+  return feastOf(c, now, ttlMs(), { cachingOff: cachingOff(l) }).phase === 'cold'
 }
 
 /** The charcoal behind the theme's own boxes: only when asked, and never over a light theme. */
@@ -432,18 +528,24 @@ function setStatus($: EngineInterface, text: string): void {
   $.ui.status(text)
 }
 
-function warmth(c: KessokuCache, now: number): string {
-  if (c.lastWarmAt === 0) return 'cache: nothing cached yet'
-  const left = ttlMs() - (now - c.lastWarmAt)
-  if (left <= 0) return `cache COLD ${fmtDuration(-left)} ago`
+/** /cache-tax's state line: the warmth by `feastOf`, cold or warm. */
+function warmth(c: KessokuCache, l: KessokuLedger, now: number): string {
+  const fe = feastOf(c, now, ttlMs(), { cachingOff: cachingOff(l) })
+  if (fe.phase === 'off') return 'cache: off (prompt caching is off)'
+  if (c.lastWarmAt <= 0) return 'cache: nothing cached yet'
+  if (fe.phase === 'cold') return `cache COLD ${fmtDuration(-fe.leftMs)} ago`
   const keep = c.keepWarmUntil > now ? ` · keepwarm ${fmtDuration(c.keepWarmUntil - now)}` : ''
-  return `cache warm ${fmtDuration(left)}${keep}`
+  return `cache warm ${fmtDuration(fe.leftMs)}${keep}`
 }
 
-/** What re-writing the cache costs: the engine's own estimate for this model when it gave one, else the list price at the TTL's rate. */
-function coldWriteUsd(c: KessokuCache): number {
-  if (c.engineWriteUsd > 0 && c.engineModel !== '' && c.engineModel === c.model) return c.engineWriteUsd
-  return cacheWriteUsd(c.contextTokens, c.model || 'default', ttlMs())
+/** What re-writing the cache costs: a re-order at the engine's price per token while the cache's model is the one it priced, else at the TTL's list write rate. */
+function coldWriteUsd(c: KessokuCache, l: KessokuLedger): number {
+  return reorderUsd(c.contextTokens, c.model, l.engine, ttlMs())
+}
+
+/** Whether the engine's own price per token prices the cache's model now. */
+function isEnginePrice(c: KessokuCache, l: KessokuLedger): boolean {
+  return l.engine !== null && l.engine.model !== '' && l.engine.model === c.model
 }
 
 function readField(input: Record<string, unknown>, key: string): string {
@@ -585,19 +687,11 @@ async function setMood($: EngineInterface, mood: KessokuMood, detail = '', rever
 /** Bocchi's words while she waits out a cold cache in her box. */
 const COLD_HIDING = 'the cache went cold… in the box till your next prompt'
 
-/**
- * Whether the prompt cache has gone cold since a turn last warmed it. A
- * keepwarm that works moves `lastWarmAt` with each ping, so it never gets
- * here; an armed keepwarm never pings a cache that already lapsed.
- */
-function isColdRoom(c: KessokuCache, now: number): boolean {
-  return c.lastWarmAt > 0 && now - c.lastWarmAt >= ttlMs()
-}
-
 /** Bocchi's mood when nothing is happening to her: melting past 85 % or while a compaction runs, playing while the set runs, in her box while the cache is cold, else waiting. */
 async function revertMood($: EngineInterface): Promise<void> {
   const b = await read($, band)
-  const cold = !b.isWorking && isColdRoom(await read($, cache), await $.clock.now())
+  // A keepwarm that works moves `lastWarmAt` with each ping, so it never gets her into the box; an armed keepwarm never pings a cache that already lapsed.
+  const cold = !b.isWorking && isCold(await read($, cache), await read($, ledger), await $.clock.now())
   const mood: KessokuMood = isCompacting || b.contextPercent >= 85 ? 'melting' : b.isWorking ? 'focused' : cold ? 'hiding' : 'anxious'
   const detail = mood === 'melting' ? (isCompacting ? 'compacting the set…' : `ctx ${b.contextPercent}% full`) : mood === 'focused' ? b.mainTask : mood === 'hiding' ? COLD_HIDING : ''
   await update($, band, x => ({ ...x, mood }))
@@ -816,67 +910,173 @@ async function offerTheme($: EngineInterface): Promise<void> {
 
 // ---- Cache Tax ---------------------------------------------------------------
 
+/** A clock time where the hooks run, as the cold words name it: `14:32`. */
+function clockTime(ms: number): string {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/** How a fork of the mod's own went: sent or not, answered or why not (a 429's status too), what it warmed and cost. */
+type ForkSent = { sent: boolean; isAnswered: boolean; reason: string; status: number | null; warmed: boolean; miss: boolean; usd: number; read: number; write: number }
+const NOT_SENT: ForkSent = { sent: false, isAnswered: false, reason: '', status: null, warmed: false, miss: false, usd: 0, read: 0, write: 0 }
+
+/** The fork gate shuts: a fork out when it shut changes nothing when it lands. */
+async function shutGate($: EngineInterface, fn: (l: KessokuLedger) => KessokuLedger = l => l): Promise<KessokuLedger> {
+  gateEpoch += 1
+  return writeLedger($, l => ({ ...fn(l), canFork: false }))
+}
+
+/**
+ * One fork of the mod's own, sent now: keepwarm's ping, a top-up or a
+ * re-heat, one at a time and only through an open fork gate, from the clock
+ * read just before the call. Its usage is booked from whichever arm carries
+ * it, the warmth moves only as the ledger judges, and a `nothing-to-fork`
+ * that lands with the gate still open means the host keeps no snapshot.
+ */
+async function sendFork($: EngineInterface, kind: ForkKind): Promise<ForkSent> {
+  if (forkOut || noSnapshot) return NOT_SENT
+  if (!(await read($, ledger)).canFork) return NOT_SENT
+  forkOut = true
+  const epoch = gateEpoch
+  try {
+    const calledAt = await $.clock.now()
+    const r = await $.model.fork({ prompt: 'Kessoku keep-warm ping. Reply with one word: ok' })
+    const c = await read($, cache)
+    const gateOpen = (await read($, ledger)).canFork && gateEpoch === epoch
+    if (!r.isAnswered && r.reason === 'nothing-to-fork') {
+      if (gateOpen) {
+        noSnapshot = true
+        await update($, cache, x => ({ ...x, keepWarmUntil: 0 }))
+      }
+      return { ...NOT_SENT, sent: true, reason: r.reason }
+    }
+    const u = { input: r.usage.input_tokens, output: r.usage.output_tokens, read: r.usage.cache_read_input_tokens, write: r.usage.cache_creation_input_tokens }
+    let warmAt: number | null = null
+    let miss = false
+    let usd = 0
+    await writeLedger($, l => {
+      const o = bookFork(l, { kind, usage: u, calledAt, gateOpen, model: c.model }, { lastWarmAt: c.lastWarmAt, loadedAt, ttlMs: ttlMs() })
+      warmAt = o.warmAt
+      miss = o.miss
+      usd = o.usd
+      return o.ledger
+    })
+    const warmed = warmAt !== null
+    if (warmAt !== null) {
+      const at = warmAt
+      await update($, cache, x => ({ ...x, lastWarmAt: Math.max(x.lastWarmAt, at) }))
+    }
+    return { sent: true, isAnswered: r.isAnswered, reason: r.isAnswered ? '' : r.reason, status: !r.isAnswered && r.reason === 'api-error' ? r.status : null, warmed, miss, usd, read: u.read, write: u.write }
+  } finally {
+    forkOut = false
+  }
+}
+
+/** A press's outcome (or a ping's while the Hotpot is up), in place of the wooden board's first tail for its 6 s. */
+async function noteHotpot($: EngineInterface, text: string, always = true): Promise<void> {
+  const now = await $.clock.now()
+  await update($, hotpot, h => (always || h.isOpen ? { ...h, note: { text, until: now + NOTE_MS } } : h))
+}
+
+/** A moment of the feast (a ping, a re-heat, keepwarm switched on, a paid re-order), for 2.4 s. */
+async function playMoment($: EngineInterface, kind: NonNullable<KessokuHotpot['moment']>['kind']): Promise<void> {
+  const now = await $.clock.now()
+  await update($, hotpot, h => ({ ...h, moment: { kind, until: now + MOMENT_MS } }))
+}
+
+/**
+ * Keepwarm's minute tick: a ping once the cache is TTL - 90 s old, while
+ * keepwarm is armed, the session idle and nothing holds a ping back (a fork
+ * out, the gate shut, a retry waiting, a second 429's stop). A cache that
+ * already lapsed is not pinged: the next send warms it, the pings start then.
+ */
 async function keepWarmTick($: EngineInterface): Promise<void> {
   const c = await read($, cache)
   const b = await read($, band)
+  const l = await read($, ledger)
   const now = await $.clock.now()
-  if (c.keepWarmUntil <= now || b.isWorking || isCompacting || c.lastWarmAt === 0 || c.contextTokens < 1000) return
-  const age = now - c.lastWarmAt
-  const ttl = ttlMs()
-  if (age < ttl - 90_000) return
-  // Already cold (keepwarm armed late, or the card's "keep it warm after"): the next send warms it; the pings start then.
-  if (age > ttl) return
-  const r = await $.model.fork({ prompt: 'Kessoku keep-warm ping. Reply with one word: ok' })
-  if (r.isAnswered) {
-    const u = r.usage
-    const ping = costOf(
-      { input: u.input_tokens, output: u.output_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens },
-      c.model || 'default',
-    )
-    // The fork says whether the prefix came from the cache: near zero read, the entry had lapsed and the ping paid to re-write it.
-    const wasWarm = u.cache_read_input_tokens >= c.contextTokens * 0.5
-    const landed = await $.clock.now()
-    await update($, cache, x => ({
-      ...x,
-      lastWarmAt: landed,
-      pings: x.pings + 1,
-      misses: x.misses + (wasWarm ? 0 : 1),
-      pingUsd: x.pingUsd + ping,
-      lastPingNote: wasWarm
-        ? `ping ${x.pings + 1} read ${fmtTokens(u.cache_read_input_tokens)} from cache for ${fmtUsd(ping)}`
-        : `ping ${x.pings + 1} found the cache cold and re-wrote ${fmtTokens(u.cache_creation_input_tokens)} for ${fmtUsd(ping)}`,
-    }))
-    if (!wasWarm) toast($, `${MEMBERS.bocchi.faces.panic} keepwarm: the cache had gone cold; the ping re-wrote it (${fmtUsd(ping)})`)
-  } else {
-    await update($, cache, x => ({ ...x, lastPingNote: `ping failed: ${r.reason}` }))
+  if (c.keepWarmUntil <= now || b.isWorking || isCompacting || c.lastWarmAt === 0 || c.contextTokens < TOP_UP_MIN_TOKENS) return
+  if (forkOut || !l.canFork || noSnapshot || pingsStopped || retryTimer !== null) return
+  if (now - c.lastWarmAt < ttlMs() - 90_000 || isCold(c, l, now)) return
+  await keepWarmPing($, false)
+}
+
+/** Keepwarm's ping and what it says: a 429 retried once about 20 s later, a second one stopping the pings until a main-loop step warms the cache. */
+async function keepWarmPing($: EngineInterface, isRetry: boolean): Promise<void> {
+  const r = await sendFork($, 'ping')
+  if (!r.sent) return
+  const l = await read($, ledger)
+  const c = await read($, cache)
+  if (r.reason === 'nothing-to-fork') {
+    if (noSnapshot) {
+      const text = 'this host keeps no snapshot to fork'
+      await update($, cache, x => ({ ...x, lastPingNote: `ping failed: ${text}` }))
+      await noteHotpot($, `keepwarm off: ${text}`, false)
+      toast($, `${MEMBERS.nijika.faces.anxious} keepwarm off: ${text}`)
+    }
+    return
   }
+  if (r.status === 429) {
+    if (!isRetry) {
+      retryTimer = $.clock.after(20_000, () => {
+        retryTimer = null
+        void retryPing($).catch(() => undefined)
+      })
+      await update($, cache, x => ({ ...x, lastPingNote: 'ping rate-limited: trying again shortly' }))
+      return
+    }
+    pingsStopped = true
+    const text = `the cache lapses at ${clockTime(c.lastWarmAt + ttlMs())}; keepwarm resumes after your next send`
+    await update($, cache, x => ({ ...x, lastPingNote: `ping rate-limited: ${text}` }))
+    await noteHotpot($, text, false)
+    toast($, `${MEMBERS.nijika.faces.anxious} keepwarm: ${text}`)
+    return
+  }
+  const n = l.pings.count
+  const words = !r.isAnswered && !r.warmed ? `ping ${n} failed: ${r.reason}` : r.miss ? `ping ${n} found the cache cold and re-wrote ${fmtTokens(r.write)} for ${fmtUsd(r.usd)}` : `ping ${n} read ${fmtTokens(r.read)} from cache for ${fmtUsd(r.usd)}`
+  await update($, cache, x => ({ ...x, lastPingNote: words }))
+  if (r.warmed) await playMoment($, 'ping')
+  await noteHotpot($, words, false)
+  if (r.miss && !cachingOff(l)) toast($, `${MEMBERS.bocchi.faces.panic} keepwarm: the cache had gone cold; the ping re-wrote it (${fmtUsd(r.usd)})`)
+}
+
+/** The one retry after a 429: only while the cache has not lapsed and nothing else holds a ping back. */
+async function retryPing($: EngineInterface): Promise<void> {
+  const c = await read($, cache)
+  const b = await read($, band)
+  const l = await read($, ledger)
+  const now = await $.clock.now()
+  if (c.keepWarmUntil <= now || b.isWorking || isCompacting || forkOut || !l.canFork || noSnapshot || pingsStopped || c.lastWarmAt === 0 || isCold(c, l, now)) return
+  await keepWarmPing($, true)
 }
 
 /**
  * The cache about to go cold while the session is idle and keepwarm is off:
  * one notification a warm period, shortly before the TTL lapses, priced as
  * the tax would be; a toast where no channel could send it. Keepwarm's own
- * pings make it moot while they run.
+ * pings make it moot while they run; with caching off there is no pot to lose.
  */
 async function coldWatch($: EngineInterface): Promise<void> {
   const c = await read($, cache)
   const b = await read($, band)
+  const l = await read($, ledger)
   const now = await $.clock.now()
+  const cold = isCold(c, l, now)
   // The cache went cold between turns: Bocchi waits it out in her box until the next prompt brings her out. The write
   // takes her only from waiting, so a turn that started meanwhile keeps her playing.
-  if (b.mood === 'anxious' && !b.isWorking && !isCompacting && isColdRoom(c, now)) {
+  if (b.mood === 'anxious' && !b.isWorking && !isCompacting && cold) {
     const hid = await update($, band, x => (x.mood === 'anxious' && !x.isWorking ? { ...x, mood: 'hiding' as const } : x))
     if (hid.mood === 'hiding') setStatus($, statusLine('hiding', COLD_HIDING))
   }
-  // Warm again without a turn (the TTL changed with the model): she comes out. A timed hiding, an interruption's or a
-  // refusal's, ends on its own.
-  else if (b.mood === 'hiding' && moodTimer === null && !b.isWorking && !isColdRoom(c, now)) await revertMood($)
-  if (c.lastWarmAt === 0 || c.lastWarmAt === coldNoticeFor || b.isWorking || isCompacting || c.keepWarmUntil > now || c.contextTokens < TAX_MIN_TOKENS) return
+  // Warm again without a turn (the TTL changed with the model, a ping, a re-heat): she comes out. A timed hiding, an
+  // interruption's or a refusal's, ends on its own.
+  else if (b.mood === 'hiding' && moodTimer === null && !b.isWorking && !cold) await revertMood($)
+  if (c.lastWarmAt === 0 || c.lastWarmAt === coldNoticeFor || b.isWorking || isCompacting || c.keepWarmUntil > now || c.contextTokens < TAX_MIN_TOKENS || cachingOff(l)) return
   const ttl = ttlMs()
-  const left = ttl - (now - c.lastWarmAt)
+  const left = feastOf(c, now, ttl).leftMs
   if (left <= 0 || left > Math.min(COLD_NOTICE_MS, ttl / 2)) return
   coldNoticeFor = c.lastWarmAt
-  const text = `Cache Tax: the cache goes cold in ${fmtDuration(left)} · re-writing ${fmtTokens(c.contextTokens)} tokens would cost ≈${fmtUsd(coldWriteUsd(c))} · /keepwarm keeps it warm`
+  const text = `Cache Tax: the cache goes cold in ${fmtDuration(left)} · re-writing ${fmtTokens(c.contextTokens)} tokens would cost ≈${fmtUsd(coldWriteUsd(c, l))} · /keepwarm keeps it warm`
   if (!(await notify($, text))) toast($, `${MEMBERS.bocchi.faces.anxious} ${text}`)
 }
 
@@ -897,16 +1097,22 @@ function cacheTaxReason(c: KessokuCache, now: number): string {
  * the main agent's tokens are the compacted set's (0 when the engine did not
  * count it, so no stale figure survives; the next turn measures afresh), the
  * cache has no entry for the new transcript yet (nothing warm, the compacted
- * size to price the next write, no held prompt, no engine estimate for a
- * prefix that is gone), and Bocchi comes back to her real face.
+ * size to price the next write, no held prompt), the ledger keeps all but P
+ * (the compacted size), the fork gate and the cacheless run, and books the
+ * summarizer's request; and Bocchi comes back to her real face.
  */
-async function settleCompaction($: EngineInterface, before: number | undefined, after: number | undefined): Promise<void> {
+async function settleCompaction($: EngineInterface, before: number | undefined, after: number | undefined, usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number }): Promise<void> {
   const tokens = after ?? 0
   await update($, band, b => patchAgent({ ...b, contextPercent: after !== undefined && b.window > 0 ? Math.round((after / b.window) * 100) : 0 }, 'main', a => ({ ...a, context: tokens })))
-  await update($, cache, c => ({ ...c, lastWarmAt: 0, contextTokens: tokens, isArmed: false, heldAt: 0, heldText: '', heldUsd: 0, warmUsd: 0, engineWriteUsd: 0, engineModel: '' }))
+  const c = await update($, cache, x => ({ ...x, lastWarmAt: 0, contextTokens: tokens, isArmed: false, heldAt: 0, heldText: '', heldUsd: 0, warmUsd: 0 }))
+  await shutGate($, l => {
+    const kept = { ...l, prompt: tokens, lastOutput: 0, cacheless: 0 }
+    return usage === undefined ? kept : bookSummary(kept, { input: usage.input_tokens, output: usage.output_tokens, read: usage.cache_read_input_tokens, write: usage.cache_creation_input_tokens }, c.model)
+  })
   await revertMood($)
-  const shrank = before !== undefined && after !== undefined ? `: ${fmtTokens(before)} → ${fmtTokens(after)} tokens` : ''
-  toast($, `${MEMBERS.nijika.faces.happy} Nijika: the set is compacted${shrank}`, 'chatter')
+  const shrank = before !== undefined && after !== undefined ? `${fmtTokens(before)} → ${fmtTokens(after)} tokens` : ''
+  if (shrank !== '') await noteHotpot($, shrank, false)
+  toast($, `${MEMBERS.nijika.faces.happy} Nijika: the set is compacted${shrank === '' ? '' : `: ${shrank}`}`, 'chatter')
 }
 
 // ---- Blast Radius ------------------------------------------------------------
@@ -1595,6 +1801,227 @@ async function closeTour($: EngineInterface): Promise<void> {
   await $.ui.close({ id: TOUR }).catch(() => undefined)
 }
 
+// ---- The ♨ Hotpot: the ledger's bookings, the pane, the feast's actions ----------
+
+/** A main-loop step booked and judged (the ledger's arithmetic in hotpot.ts), its warmth, P and model written to the cache. */
+async function bookMain($: EngineInterface, step: MainStep): Promise<void> {
+  const c = await read($, cache)
+  let out: StepOutcome | null = null
+  await writeLedger($, l => {
+    const o = bookMainStep(l, step, { lastWarmAt: c.lastWarmAt, ttl: ttlNow(), loadedAt })
+    out = o
+    return o.ledger
+  })
+  const o = out as StepOutcome | null
+  if (o === null) return
+  // A step on another model that no switch reported: the fork gate shut with the new pot.
+  if (o.isSwitch) gateEpoch += 1
+  const l = await read($, ledger)
+  const warmAt = o.warmAt
+  await update($, cache, x => ({
+    ...x,
+    ...(warmAt === null ? {} : { lastWarmAt: o.isSwitch || warmAt === 0 ? warmAt : Math.max(x.lastWarmAt, warmAt) }),
+    ...(step.usage === null ? {} : { model: step.usage.model, ...(step.serverTools ? {} : { contextTokens: l.prompt + l.lastOutput }) }),
+  }))
+  // A main-loop step warmed the cache again: keepwarm, stopped by a second 429, may ping again.
+  if (warmAt !== null && warmAt > 0) pingsStopped = false
+}
+
+/** A seated act's step, booked to her member (an act the band has not seated, or a demo's, nowhere). */
+async function bookAct($: EngineInterface, agentId: string, u: StepUsage): Promise<void> {
+  if (agentId.startsWith('demo-')) return
+  const a = (await read($, band)).agents.find(x => x.id === agentId)
+  if (a === undefined) return
+  await writeLedger($, l => bookActStep(l, a.member, u))
+}
+
+/** Everything the Hotpot's drawings read, from the state (a drawing reading it redraws with it) and the module's flags. */
+async function hotpotViewOf($: EngineInterface, e: Site | null, now: number): Promise<HotpotView> {
+  const c = await read($, cache)
+  const l = await read($, ledger)
+  const h = await read($, hotpot)
+  const b = await read($, band)
+  const ttl = ttlNow()
+  const feast = feastOf(c, now, ttl.ms, feastFlags(c, l, now))
+  const held = heldFigures(c, h, now)
+  return {
+    now,
+    feast,
+    cache: c,
+    ledger: l,
+    hotpot: h,
+    ttl,
+    pick: pickMs(h),
+    slip: feast.phase === 'held' ? { writeUsd: c.heldUsd, warmUsd: c.warmUsd, tokens: held.tokens, ageMs: held.ageMs } : null,
+    flags: { noSnapshot, compacting: isCompacting, working: b.isWorking, forkOut, compactOff: !features.compact, draftOff: !features.draft },
+    isTerminal: e?.surface === 'terminal',
+    isFocused: e !== null && 'isFocused' in e.props ? e.props.isFocused === true : false,
+  }
+}
+
+/** The Hotpot opened: placed at any width when asked; where no surface places it (or it waits undrawn), above the prompt. */
+async function openHotpot($: EngineInterface): Promise<boolean> {
+  reopenSprites(HOTPOT)
+  const placed = await $.ui.open({ id: HOTPOT, title: '♨ Hotpot', focus: true, closeOnEscape: true, rows: 28, columns: 74 })
+  await update($, hotpot, x => ({ ...x, isOpen: true, inBand: !placed.isPlaced }))
+  return placed.isPlaced
+}
+
+async function closeHotpot($: EngineInterface): Promise<void> {
+  await update($, hotpot, x => ({ ...x, isOpen: false, inBand: false, armed: null, moment: null, note: null }))
+  // Always by id: a pane that waited undrawn in a narrow terminal is open to the engine too.
+  await $.ui.close({ id: HOTPOT }).catch(() => undefined)
+}
+
+/** `/hotpot`, `/bocchi hotpot` and the ♨ buttons: the pane opened or closed; with no screen, the wooden board as one line. */
+async function toggleHotpot($: EngineInterface): Promise<string> {
+  const now = await $.clock.now()
+  if (!canDraw()) return hotpotLine(await hotpotViewOf($, null, now))
+  if ((await read($, hotpot)).isOpen) {
+    await closeHotpot($)
+    return '♨ Hotpot: the table is cleared away.'
+  }
+  return (await openHotpot($)) ? '♨ Hotpot: the band sits down to eat.' : '♨ Hotpot: no room for a pane here, so the feast is drawn above the prompt.'
+}
+
+/** A button of the row, as hotpot.ts words it now: null when it is dim (it spends and arms nothing). */
+async function liveButton($: EngineInterface, key: string, now: number): Promise<HotpotView | null> {
+  const v = await hotpotViewOf($, null, now)
+  const b = hotpotButtons(v).find(x => x.key === key)
+  return b === undefined || b.reason !== '' ? null : v
+}
+
+/** Re-heat, zosui or clear: the first press arms (10 s), true on the second within them. */
+async function secondPress($: EngineInterface, action: 'reheat' | 'zosui' | 'clear', now: number): Promise<boolean> {
+  const armed = (await read($, hotpot)).armed
+  if (armed !== null && armed.action === action && now - armed.at < ARM_MS) {
+    await update($, hotpot, h => ({ ...h, armed: null }))
+    return true
+  }
+  await update($, hotpot, h => ({ ...h, armed: { action, at: now } }))
+  return false
+}
+
+/** Keep the fire on for the pick, or let it cool; on a cold or empty cache the pings start with the next send. */
+async function pressKeep($: EngineInterface): Promise<void> {
+  const now = await $.clock.now()
+  const c0 = await read($, cache)
+  if (c0.keepWarmUntil > now) {
+    await setKeepwarm($, 0)
+    await noteHotpot($, 'keepwarm off: the fire can cool')
+    return
+  }
+  const v = await liveButton($, 'hotpot-keep', now)
+  if (v === null) return
+  await setKeepwarm($, v.pick)
+  const c = await read($, cache)
+  const l = await read($, ledger)
+  const head = `keepwarm on for ${lengthText(v.pick)}`
+  if (c.lastWarmAt <= 0) await noteHotpot($, `${head}: nothing cached yet: the next send warms it, and the pings start then`)
+  else if (isCold(c, l, now)) await noteHotpot($, `${head}: the cache is cold: the next send warms it, and the pings start then`)
+  else await noteHotpot($, `${head}: Nijika tops it up before each lapse`)
+}
+
+/** Top up now (one ping, while warm), or re-heat now (a re-write paid on purpose, while cold, on a second press). */
+async function pressTopUp($: EngineInterface): Promise<void> {
+  const now = await $.clock.now()
+  const v = await liveButton($, 'hotpot-topup', now)
+  if (v === null) return
+  const isReheat = v.feast.phase === 'cold'
+  if (isReheat && !(await secondPress($, 'reheat', now))) return
+  const r = await sendFork($, isReheat ? 'reheat' : 'topup')
+  if (!r.sent) return
+  const c = await read($, cache)
+  const l = await read($, ledger)
+  if (r.reason === 'nothing-to-fork') {
+    if (noSnapshot) {
+      await noteHotpot($, 'this host keeps no snapshot to fork')
+      toast($, `${MEMBERS.nijika.faces.anxious} Hotpot: this host keeps no snapshot to fork`)
+    }
+    return
+  }
+  if (r.status === 429) {
+    const text = `rate-limited: the cache lapses at ${clockTime(c.lastWarmAt + ttlMs())}`
+    await noteHotpot($, isReheat ? 'rate-limited: could not re-heat' : text)
+    toast($, `${MEMBERS.nijika.faces.anxious} Hotpot: ${isReheat ? 'rate-limited: could not re-heat' : text}`)
+    return
+  }
+  if (isReheat) {
+    if (r.warmed) {
+      await playMoment($, 'reheat')
+      const words = `re-heated: ${fmtTokens(r.write)} re-written for ${fmtUsd(r.usd)}`
+      await noteHotpot($, words)
+      toast($, `${MEMBERS.bocchi.faces.happy} Hotpot: ${words}`, 'chatter')
+    } else {
+      const words = `could not re-heat${r.isAnswered ? '' : ` (${r.reason})`}; it cost ${fmtUsd(r.usd)}`
+      await noteHotpot($, words)
+      toast($, `${MEMBERS.bocchi.faces.panic} Hotpot: ${words}`)
+    }
+    return
+  }
+  if (r.warmed) await playMoment($, 'ping')
+  const n = l.pings.count
+  const words = !r.isAnswered && !r.warmed ? `top-up failed: ${r.reason}` : r.miss ? `the top-up found the cache cold and re-wrote ${fmtTokens(r.write)} for ${fmtUsd(r.usd)}` : `topped up: ${fmtTokens(r.read)} read from cache for ${fmtUsd(r.usd)}`
+  await update($, cache, x => ({ ...x, lastPingNote: `ping ${n}: ${words}` }))
+  await noteHotpot($, words)
+  const bad = !r.isAnswered || (r.miss && !cachingOff(l))
+  toast($, `${bad ? MEMBERS.bocchi.faces.panic : MEMBERS.nijika.faces.happy} Hotpot: ${words}`, bad ? 'important' : 'chatter')
+}
+
+/**
+ * Zosui: `$.session.compact()` on a second press. The session.compact hook
+ * draws the zosui and settles the cache; where it does not run (a managed
+ * install passes it over), the press does both from the call's own figures.
+ */
+async function pressZosui($: EngineInterface): Promise<void> {
+  const now = await $.clock.now()
+  if ((await liveButton($, 'hotpot-zosui', now)) === null) return
+  if (!(await secondPress($, 'zosui', now))) return
+  compactRan = false
+  isCompacting = true
+  await setMood($, 'melting', 'compacting the set…').catch(() => undefined)
+  try {
+    const r = await $.session.compact()
+    if (r.skip !== undefined) {
+      await noteHotpot($, `no zosui: ${r.skip}`)
+      if (!compactRan) {
+        isCompacting = false
+        await revertMood($)
+      }
+      return
+    }
+    if (!compactRan) {
+      isCompacting = false
+      await settleCompaction($, r.tokensBefore, r.tokensAfter, r.usage)
+    }
+  } catch (error) {
+    if (isMissingApi(error)) features.compact = false
+    if (!compactRan || isMissingApi(error)) {
+      isCompacting = false
+      await revertMood($).catch(() => undefined)
+    }
+    await noteHotpot($, isMissingApi(error) ? 'zosui needs a newer Claude Code' : `zosui failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/** Clear the table: /clear put in the box for the person to send; over a draft, a second press first. */
+async function pressClear($: EngineInterface): Promise<void> {
+  const now = await $.clock.now()
+  let isDraft = true
+  if (features.draft) {
+    try {
+      const box = await $.prompt.read()
+      isDraft = box.text.trim() !== '' && box.text.trim() !== '/clear'
+    } catch (error) {
+      if (isMissingApi(error)) features.draft = false
+    }
+  }
+  if (isDraft && !(await secondPress($, 'clear', now))) return
+  await update($, hotpot, h => ({ ...h, armed: null }))
+  const filled = await $.prompt.fill({ text: '/clear', mode: 'replace' }).catch(() => null)
+  await noteHotpot($, filled !== null && filled.isFilled ? '/clear is in the box: Esc, then Enter' : 'the box could not take /clear: type it')
+}
+
 // ---- The panel ---------------------------------------------------------------
 
 // `$.state` outlives a hot reload (`/reload-plugins`, an update), so a value written by an older version of the mod
@@ -1658,10 +2085,12 @@ async function togglePanel($: EngineInterface, isAsked: boolean): Promise<string
 /**
  * What a sprite drawing is: the sprites on one pixel canvas, how a terminal
  * packs them into cells, how large a remote surface shows each pixel, the
- * background a terminal paints under transparent pixels, and the words that
- * stand for it where no picture can be drawn.
+ * background a terminal paints under transparent pixels, a still backdrop of
+ * the canvas's own that every repaint lays first (the Hotpot's table and pot
+ * under the minis), and the words that stand for it where no picture can be
+ * drawn.
  */
-type SpriteSpec = { key: string; parts: SpritePart[]; w: number; h: number; mode: CellMode; scale: number; bg?: string; alt: string; stage?: StageLayer }
+type SpriteSpec = { key: string; parts: SpritePart[]; w: number; h: number; mode: CellMode; scale: number; bg?: string; alt: string; stage?: StageLayer; under?: readonly (string | null)[] }
 
 /** One sprite at the canvas origin. */
 function oneSprite(key: string, id: string, mode: CellMode, scale: number, alt: string, bgColor?: string): SpriteSpec {
@@ -1794,11 +2223,11 @@ function drawSprite($: EngineInterface, e: RenderInput, spec: SpriteSpec, now: n
   if (opts.characterArt !== 'sprites' || spec.w === 0 || spec.parts.every(p => animOf(p.id) === undefined)) return null
   if (e.surface === 'terminal') {
     const { Raster } = $.ui.resolve(e)
-    const { cells, columns, rows } = encodeCells(composite(spec.parts, spec.w, spec.h, now), spec.w, spec.h, spec.mode, spec.bg, isLightTheme)
+    const { cells, columns, rows } = encodeCells(composite(spec.parts, spec.w, spec.h, now, spec.under), spec.w, spec.h, spec.mode, spec.bg, isLightTheme)
     // A sprite that never changes needs no clock; neither does one of a pane that has closed.
     if (isAnimated(spec.parts) && !closedSites.has(e.requestId)) {
       const gen = spriteSites.get(e.requestId) ?? 0
-      liveSprites.set(`${e.requestId}\u0000${spec.key}`, { requestId: e.requestId, key: spec.key, parts: spec.parts, w: spec.w, h: spec.h, mode: spec.mode, bg: spec.bg, sig: frameSignature(spec.parts, now), gen, drawnAt: now, refusedAt: 0, triedAt: 0 })
+      liveSprites.set(`${e.requestId}\u0000${spec.key}`, { requestId: e.requestId, key: spec.key, parts: spec.parts, w: spec.w, h: spec.h, mode: spec.mode, bg: spec.bg, under: spec.under, sig: frameSignature(spec.parts, now), gen, drawnAt: now, refusedAt: 0, triedAt: 0 })
       ensureSpriteClock($)
     }
     return <Raster key={spec.key} columns={columns} rows={rows} cells={cells} />
@@ -1844,7 +2273,7 @@ function reopenSprites(requestId: string): void {
 }
 
 function isLastingSite(requestId: string): boolean {
-  return requestId === PANEL || requestId === TREE || requestId === BLAST || requestId === REPLAY || requestId === bandRequestId
+  return requestId === PANEL || requestId === TREE || requestId === BLAST || requestId === REPLAY || requestId === HOTPOT || requestId === bandRequestId
 }
 
 /**
@@ -1875,7 +2304,7 @@ async function spriteTick($: EngineInterface): Promise<void> {
     // A fresh drawing's first refusals are likely the surface still mounting it: retry at once for a second.
     const retryMs = now - s.drawnAt < SPRITE_RETRY_MS ? SPRITE_TICK_MS : SPRITE_RETRY_MS
     if (s.refusedAt > 0 ? now - s.triedAt < retryMs : sig === s.sig) continue
-    const { cells, columns, rows } = encodeCells(composite(s.parts, s.w, s.h, now), s.w, s.h, s.mode, s.bg, isLightTheme)
+    const { cells, columns, rows } = encodeCells(composite(s.parts, s.w, s.h, now, s.under), s.w, s.h, s.mode, s.bg, isLightTheme)
     s.triedAt = now
     let isTaken = false
     try {
@@ -1980,11 +2409,11 @@ function detailAlt(act: ActView): string {
  * above the prompt. Above the prompt the stage stays off and the board lists
  * three songs.
  */
-function drawScene($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache, u: KessokuUi, now: number, compact: boolean): Draw | null {
+function drawScene($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache, fl: FeastFlags, u: KessokuUi, now: number, compact: boolean): Draw | null {
   const table = $.ui.resolve(e)
   if (!('Svg' in table)) return null
   const { Box, Button, Svg } = table
-  const view = panelView(b, c, u, now, ttlMs())
+  const view = panelView(b, c, u, now, ttlMs(), fl)
   const layout = layoutFor(e.props.bodyColumns)
   // the board's pictures are drawn for the room inside its frame
   const board = boardLayout(layout)
@@ -2034,6 +2463,7 @@ function drawScene($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache,
       {view.members.map(m => (
         <Button key={`solo-${m.member}`} label={m.name} hotkey={m.hotkey} variant={m.isSolo ? 'primary' : undefined} onPress={() => void pressSolo($, m.member, null)} />
       ))}
+      <Button key="hotpot" label="♨ Hotpot" hotkey="o" onPress={() => void toggleHotpot($)} />
       {compact ? <Button key="panel-hide" label="Hide" hotkey="h" plain dimColor onPress={() => void update($, ui, x => ({ ...x, isPanelOpen: false, panelWhere: 'none' as const }))} /> : null}
     </Box>
   )
@@ -2056,12 +2486,14 @@ function drawScene($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache,
 }
 
 /** The strip above the prompt as the neon now-playing sign, its buttons beside it. */
-function drawStripScene($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: KessokuBand, c: KessokuCache, r: KessokuReplay, u: KessokuUi, now: number): Draw | null {
+function drawStripScene($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: KessokuBand, c: KessokuCache, fl: FeastFlags, r: KessokuReplay, u: KessokuUi, now: number, hotpotOpen = false): Draw | null {
   const table = $.ui.resolve(e)
   if (!('Svg' in table)) return null
   const { Box, Button, Svg } = table
   scheduleTail($, nextDue(b, uiOf(u), now), now)
-  const view = panelView(b, c, u, now, ttlMs())
+  // The warmth's words count whole minutes: a redraw at the next one, or the next level, last orders or cold.
+  scheduleTail($, warmthDue(c, now, ttlMs()), now)
+  const view = panelView(b, c, u, now, ttlMs(), fl)
   const sign = stripSvg(view, layoutFor(e.props.bodyColumns))
   const failed = view.members.reduce((n, m) => n + m.acts.filter(a => a.isFailed).length, 0)
   const playing = view.nowPlaying.who === null ? `between sets · ${view.nowPlaying.words}` : `now playing · ${MEMBERS[view.nowPlaying.who].name} · ${view.nowPlaying.words}`
@@ -2074,6 +2506,7 @@ function drawStripScene($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: Ke
       <Box flexDirection="row" gap="sm" paddingX="sm" paddingY="xs">
         {r.tracks.length > 0 && !r.isOpen ? <Button key="strip-replay" label={`Replay ${r.tracks.length}`} hotkey="r" plain onPress={() => void openReplay($)} /> : null}
         <Button key="strip-panel" label="Panel" hotkey="k" plain onPress={() => void togglePanel($, true)} />
+        {hotpotOpen ? null : <Button key="strip-hotpot" label="♨ Hotpot" hotkey="o" plain onPress={() => void toggleHotpot($)} />}
         <Button key="strip-hide" label="Hide" hotkey="h" plain dimColor onPress={() => void update($, ui, x => ({ ...x, isStripHidden: true }))} />
       </Box>
     </Box>
@@ -2086,11 +2519,13 @@ function drawStripScene($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: Ke
  * others folded to a strip each. Above the prompt (`compact`) the stage is
  * the heads only and the channels go one a row.
  */
-function drawPanel($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache, u: KessokuUi, now: number, compact: boolean): Draw {
+function drawPanel($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache, fl: FeastFlags, u: KessokuUi, now: number, compact: boolean): Draw {
   // An encore ending, a slime leaving the pit, a solo ending: the panel redraws then by itself.
   scheduleTail($, nextDue(b, uiOf(u), now), now)
+  // The warmth's words count whole minutes: a redraw at the next one, or the next level, last orders or cold.
+  scheduleTail($, warmthDue(c, now, ttlMs()), now)
   if (drawsScene(e)) {
-    const scene = drawScene($, e, b, c, u, now, compact)
+    const scene = drawScene($, e, b, c, fl, u, now, compact)
     if (scene !== null) return scene
   }
   const table = $.ui.resolve(e)
@@ -2432,10 +2867,11 @@ function drawPanel($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache,
     <Box flexDirection="row" gap={2}>
       <Text dimColor>{`solo ${BAND_ORDER.map(m => SOLO_KEYS[m]).join(' ')}`}</Text>
       {solo !== null ? <Button key="solo-mix" label="mix" hotkey="m" plain dimColor onPress={() => void update($, ui, x => ({ ...x, solo: null, soloAct: null, soloUntil: 0, soloChosen: false }))} /> : null}
+      <Button key="hotpot" label="♨ Hotpot" hotkey="o" plain onPress={() => void toggleHotpot($)} />
       {compact ? <Button key="panel-hide" label="Hide" hotkey="h" plain dimColor onPress={() => void update($, ui, x => ({ ...x, isPanelOpen: false, panelWhere: 'none' as const }))} /> : null}
     </Box>
   )
-  const amp = c.keepWarmUntil > now ? `● keepwarm ${fmtDuration(c.keepWarmUntil - now)}` : c.lastWarmAt > 0 && now - c.lastWarmAt > ttlMs() ? '❄ cold' : c.lastWarmAt > 0 ? `☀ warm ${fmtDuration(Math.max(0, ttlMs() - (now - c.lastWarmAt)))}` : '○ no cache yet'
+  const amp = railWords(feastOf(c, now, ttlMs(), fl), c, now)
   const rail = (
     <Text wrap="truncate-end">
       <Text dimColor>CTX </Text>
@@ -2492,9 +2928,10 @@ function stripSpec(b: KessokuBand, members: readonly KessokuMember[], now: numbe
  * the rows for them, as many as the width holds up to STRIP_SLIMES, then
  * `+n`. Otherwise the one-line strip.
  */
-function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: KessokuBand, c: KessokuCache, r: KessokuReplay, now: number, isRoomy: boolean, slimeRoom: boolean, u: KessokuUi = INITIAL_UI): Draw {
+function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: KessokuBand, c: KessokuCache, fl: FeastFlags, r: KessokuReplay, now: number, isRoomy: boolean, slimeRoom: boolean, u: KessokuUi = INITIAL_UI, hotpotOpen = false): Draw {
+  scheduleTail($, warmthDue(c, now, ttlMs()), now)
   if (drawsScene(e)) {
-    const sign = drawStripScene($, e, b, c, r, u, now)
+    const sign = drawStripScene($, e, b, c, fl, r, u, now, hotpotOpen)
     if (sign !== null) return sign
   }
   const { Box, Text, Button } = $.ui.resolve(e)
@@ -2541,11 +2978,12 @@ function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: Kessoku
           )}
         </Text>
         <Text dimColor wrap="truncate-end">
-          {words} · {fmtUsd(b.sessionUsd)} · {warmth(c, now)}
+          {words} · {fmtUsd(b.sessionUsd)} · cache {stripWords(feastOf(c, now, ttlMs(), fl), c, now)}
         </Text>
         <Box flexDirection="row" gap={2}>
           {r.tracks.length > 0 && !r.isOpen ? <Button key="strip-replay" label={`Replay ${r.tracks.length}`} hotkey="r" plain onPress={() => void openReplay($)} /> : null}
           <Button key="strip-panel" label="Panel" hotkey="k" plain onPress={() => void togglePanel($, true)} />
+        {hotpotOpen ? null : <Button key="strip-hotpot" label="♨ Hotpot" hotkey="o" plain onPress={() => void toggleHotpot($)} />}
           <Button key="strip-hide" label="Hide" hotkey="h" plain dimColor onPress={() => void update($, ui, x => ({ ...x, isStripHidden: true }))} />
         </Box>
       </Box>
@@ -2582,13 +3020,14 @@ function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: Kessoku
       })}
       <Box flexShrink={1} minWidth={8}>
         <Text dimColor wrap="truncate-end">
-          │ {words} · {fmtUsd(b.sessionUsd)} · {warmth(c, now)}
+          │ {words} · {fmtUsd(b.sessionUsd)} · cache {stripWords(feastOf(c, now, ttlMs(), fl), c, now)}
         </Text>
       </Box>
       {r.tracks.length > 0 && !r.isOpen ? (
         <Button key="strip-replay" label={`Replay ${r.tracks.length}`} hotkey="r" plain onPress={() => void openReplay($)} />
       ) : null}
       <Button key="strip-panel" label="Panel" hotkey="k" plain onPress={() => void togglePanel($, true)} />
+        {hotpotOpen ? null : <Button key="strip-hotpot" label="♨ Hotpot" hotkey="o" plain onPress={() => void toggleHotpot($)} />}
       <Button key="strip-hide" label="Hide" hotkey="h" plain dimColor onPress={() => void update($, ui, x => ({ ...x, isStripHidden: true }))} />
     </Box>
   )
@@ -2707,11 +3146,49 @@ function drawBlast($: EngineInterface, e: Site, s: KessokuBlast, now: number): D
   )
 }
 
-function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: KessokuCache, now: number): Draw {
+/** The /bocchi tax preview's sample while its hold stands, else the session's own model, size and age. */
+function heldFigures(c: KessokuCache, h: KessokuHotpot, now: number): { model: string; tokens: number; ageMs: number } {
+  const s = h.sample
+  if (s !== null && s.heldAt === c.heldAt && c.heldAt > 0) return { model: s.model, tokens: s.tokens, ageMs: s.ageMs }
+  return { model: c.model, tokens: c.contextTokens, ageMs: c.lastWarmAt > 0 ? now - c.lastWarmAt : 0 }
+}
+
+/** Keepwarm's length for Keep the fire on and Keep it warm after: the Hotpot's pick, else the Keepwarm default option. */
+function pickMs(h: KessokuHotpot): number {
+  return h.pick > 0 ? h.pick : opts.keepWarmMs
+}
+
+/** What keepwarm costs over a length: its pings in it, each a top-up of the context the cache knows. */
+function keepPriceOf(c: KessokuCache, l: KessokuLedger, ms: number): number {
+  return keepwarmUsd(ms, ttlMs(), topUpUsd(l.prompt > 0 ? l.prompt : c.contextTokens, c.model))
+}
+
+/** The Cache Tax card's and the Hotpot's `Keep it warm after`: one label, one press, one length. */
+function keepAfterLabel(c: KessokuCache, l: KessokuLedger, h: KessokuHotpot, now: number): string {
+  return c.keepWarmUntil > now ? 'Keep warm: on' : `Keep it warm after (${lengthText(pickMs(h))}) ≈${fmtUsd(keepPriceOf(c, l, pickMs(h)))}`
+}
+
+/** Keepwarm armed for a length from the clock read at the press (Nijika ties her headband on), or switched off. */
+async function setKeepwarm($: EngineInterface, ms: number): Promise<void> {
+  const now = await $.clock.now()
+  const was = (await read($, cache)).keepWarmUntil > now
+  await update($, cache, x => ({ ...x, keepWarmUntil: ms > 0 ? now + ms : 0 }))
+  if (ms > 0 && !was) await playMoment($, 'keepon')
+}
+
+/** The hold let go: nothing held, Bocchi out of her panic (into her box while the cache is cold); the prompt stays in the box, and the next send is judged afresh. */
+async function dismissHold($: EngineInterface): Promise<void> {
+  await update($, cache, x => ({ ...x, isArmed: false, heldAt: 0, heldText: '' }))
+  await revertMood($)
+}
+
+function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: KessokuCache, l: KessokuLedger, hp: KessokuHotpot, now: number): Draw {
   const { Box, Text, Button } = $.ui.resolve(e)
-  const age = c.lastWarmAt > 0 ? fmtDuration(now - c.lastWarmAt) : '?'
-  const { price, isExact } = priceInfo(c.model || 'default')
-  const rate = ttlMs() > 5 * 60_000 ? price.cacheWriteHour : price.cacheWrite
+  const held = heldFigures(c, hp, now)
+  const age = held.ageMs > 0 ? fmtDuration(held.ageMs) : '?'
+  const { isExact } = priceInfo(held.model || 'default')
+  const rate = writePerToken(held.model, l.engine, ttlMs()) * 1e6
+  const rateWords = isEnginePrice({ ...c, model: held.model }, l) ? "the engine's rate" : `${isExact ? '' : '~'}$${Number(rate.toFixed(2))}/MTok`
   // Bocchi panicking beside the bill: her mini in quadrants on a terminal (four rows), her portrait elsewhere.
   const sprite = drawSprite($, e, headSprite('tax-sprite', e, 'bocchi', 'panic', bg()), now)
   return (
@@ -2723,21 +3200,15 @@ function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: Kess
         </Text>
         <Text wrap="wrap">
           <Text color="text">Sending re-writes </Text>
-          <Text bold color={opts.accent}>{fmtTokens(c.contextTokens)} tokens</Text>
-          <Text color="text"> at {c.engineWriteUsd > 0 && c.engineModel === c.model ? "the engine's rate" : `${isExact ? '' : '~'}$${rate}/MTok`} ≈ </Text>
+          <Text bold color={opts.accent}>{fmtTokens(held.tokens)} tokens</Text>
+          <Text color="text"> at {rateWords} ≈ </Text>
           <Text bold color="error">{fmtUsd(c.heldUsd)}</Text>
           <Text dimColor> (a warm turn: ≈{fmtUsd(c.warmUsd)}). Your prompt is back in the box: press Enter to pay and send.</Text>
         </Text>
         <Box flexDirection="row" flexWrap="wrap" columnGap={2} marginTop={1}>
-          <Button
-            key="tax-keepwarm"
-            label={c.keepWarmUntil > now ? 'Keep warm: on' : `Keep it warm after (${fmtDuration(opts.keepWarmMs)})`}
-            hotkey="w"
-            plain
-            onPress={() => void update($, cache, x => ({ ...x, keepWarmUntil: now + opts.keepWarmMs }))}
-          />
+          <Button key="tax-keepwarm" label={keepAfterLabel(c, l, hp, now)} hotkey="w" plain onPress={() => void setKeepwarm($, pickMs(hp))} />
           <Button key="tax-clear" label="Start fresh (/clear)" hotkey="f" plain onPress={() => void $.prompt.fill({ text: '/clear', mode: 'replace' })} />
-          <Button key="tax-dismiss" label="Dismiss" hotkey="d" plain dimColor onPress={() => void update($, cache, x => ({ ...x, heldAt: 0 }))} />
+          <Button key="tax-dismiss" label="Dismiss" hotkey="d" plain dimColor onPress={() => void dismissHold($)} />
         </Box>
       </Box>
     </Box>
@@ -2863,6 +3334,124 @@ function drawRecap($: EngineInterface, e: RenderInput<'AbovePrompt'>, r: Kessoku
           <Button key="recap-dismiss" label="Dismiss" hotkey="x" plain dimColor onPress={() => void update($, recap, () => null)} />
         </Box>
       </Box>
+    </Box>
+  )
+}
+
+/** The wooden board's paint and its cream inks: its own colours, which a light theme does not darken. */
+const WOOD = { board: '#3a2419', word: '#ffe7bf', tail: '#ecd3aa', line: '#cfb48e' } as const
+
+/**
+ * The ♨ Hotpot: the feast (one Svg where the surface draws them; in a
+ * terminal with room, the minis at the pot's corners as one Raster over the
+ * table and the pot; else, and with kaomoji everywhere, the faces round a
+ * text gauge), the wooden board's two lines, the buttons by key, and the
+ * bill when it is open. Above the prompt the same, where no pane was placed.
+ */
+function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Draw {
+  const table = $.ui.resolve(e)
+  const { Box, Text, Button } = table
+  const isTerminal = e.surface === 'terminal'
+  const { phase, level } = drawnPhase(v)
+  // Nothing redraws on a clock: the next minute a count shows, a level step, a moment's or a note's end.
+  scheduleTail($, hotpotDue(v.cache, v.hotpot, now, v.ttl.ms), now)
+  let feast: Draw | null = null
+  if (opts.characterArt === 'sprites' && !isTerminal && 'Svg' in table) {
+    const { Svg } = table
+    // An image, not a frame: it scales to the pane's width, and its SMIL and CSS still play.
+    const scene = hotpotSvg(v, layoutFor(e.props.bodyColumns))
+    feast = (
+      <Box key="hotpot-scene" flexDirection="column">
+        <Svg source={scene.svg} alt={scene.alt} />
+      </Box>
+    )
+  } else if (opts.characterArt === 'sprites' && isTerminal) {
+    // Half blocks (70 x 17 cells) with 74 columns and 24 rows to spare; quadrants (35 x 9) from 36 columns; else text.
+    const rows = 'maxRows' in e.props ? e.props.maxRows : e.props.scroll.bodyRows
+    const mode: CellMode | null = e.props.bodyColumns >= 74 && rows >= 24 ? 'half' : e.props.bodyColumns >= 36 ? 'quad' : null
+    if (mode !== null) {
+      const cells = hotpotCells(v)
+      feast = drawSprite($, e, { key: 'hotpot-scene', parts: cells.parts, w: cells.w, h: cells.h, mode, scale: 1, alt: hotpotAlt(v), under: cells.under }, now)
+    }
+  }
+  if (feast === null) {
+    const faces = hotpotFaces(phase)
+    const face = (m: KessokuMember) => <Text color={MEMBERS[m].color}>{faces[m]}</Text>
+    feast = (
+      <Box key="hotpot-faces" flexDirection="column">
+        <Box flexDirection="row" gap={6}>
+          {face('bocchi')}
+          {face('ryo')}
+        </Box>
+        <Box flexDirection="row" paddingX={4}>
+          <Text color={phase === 'cold' || phase === 'held' ? 'error' : PALETTE.peach}>{potGauge(phase, level)}</Text>
+        </Box>
+        <Box flexDirection="row" gap={6}>
+          {face('nijika')}
+          {face('kita')}
+        </Box>
+      </Box>
+    )
+  }
+  const board = boardOf(v)
+  const presses: Readonly<Record<string, () => void>> = {
+    'hotpot-keep': () => void pressKeep($),
+    'hotpot-topup': () => void pressTopUp($),
+    'hotpot-zosui': () => void pressZosui($),
+    'hotpot-clear': () => void pressClear($),
+    'hotpot-bill': () => void update($, hotpot, h => ({ ...h, isBillOpen: !h.isBillOpen })),
+    'hotpot-close': () => void closeHotpot($),
+    'hotpot-tax-keep': () => void setKeepwarm($, v.pick),
+    'hotpot-tax-clear': () => void $.prompt.fill({ text: '/clear', mode: 'replace' }),
+    'hotpot-tax-dismiss': () => void dismissHold($),
+  }
+  const bill = v.hotpot.isBillOpen ? billRows(v) : null
+  return (
+    <Box flexDirection="column" backgroundColor={isTerminal ? bg() : SCENE_COLORS.wall}>
+      {feast}
+      <Box key="hotpot-board" flexDirection="column" backgroundColor={WOOD.board} paddingX={1} paddingY={0}>
+        <Text wrap="wrap">
+          <Text color={WOOD.word} weight="semibold" size="heading">
+            {board.word}
+          </Text>
+          <Text color={WOOD.tail}>{`  ${board.tail}`}</Text>
+        </Text>
+        <Text color={WOOD.line} size="footnote" tabular wrap="wrap">
+          {board.line}
+        </Text>
+      </Box>
+      <Box key="hotpot-buttons" flexDirection="row" flexWrap="wrap" columnGap={2} paddingX={1}>
+        {hotpotButtons(v).map(b => {
+          if (b.pick !== undefined) {
+            const ms = b.pick
+            return <Button key={b.key} label={b.label} variant={b.isOn === true ? 'primary' : undefined} onPress={() => void update($, hotpot, h => ({ ...h, pick: ms }))} />
+          }
+          // A button that cannot act now is dim, and its press spends and arms nothing (the board says why).
+          if (b.reason !== '') return <Button key={b.key} label={b.label} hotkey={b.hotkey} dimColor onPress={() => undefined} />
+          return <Button key={b.key} label={b.label} hotkey={b.hotkey} onPress={presses[b.key] ?? (() => undefined)} />
+        })}
+      </Box>
+      {bill === null ? null : (
+        <Box key="hotpot-bill-rows" flexDirection="column" paddingX={1}>
+          <Text color={WOOD.word} weight="semibold">
+            {bill.title}
+          </Text>
+          {bill.rows.map(r => (
+            <Box key={`bill-${r.label}`} flexDirection="row" justifyContent="space-between" gap={2}>
+              <Text wrap="truncate-end">
+                <Text color="text">{r.label}</Text>
+                <Text dimColor>{r.detail === '' ? '' : ` · ${r.detail}`}</Text>
+              </Text>
+              <Text tabular color={r.tone === 'good' ? 'success' : r.tone === 'bad' ? 'error' : 'text'}>
+                {r.figure}
+              </Text>
+            </Box>
+          ))}
+          <Text dimColor size="caption">
+            {bill.foot}
+          </Text>
+        </Box>
+      )}
     </Box>
   )
 }
@@ -3152,24 +3741,30 @@ async function demoMemo($: EngineInterface, proposed: boolean): Promise<string> 
   return 'Reflect: a sample band memo is above the prompt (Save writes a real line to CLAUDE.md).'
 }
 
+/**
+ * `/bocchi tax`: a sample hold. The cache's figures and the ledger stay as
+ * they are (an empty session is not drawn a cold pot, nor its next step booked
+ * as tax): the sample's model, size and age, the session's own where it has
+ * them, go to the Hotpot's `sample` under the hold's time, which the card and
+ * the pane draw from while it stands; the hold itself is armed, so the next
+ * send clears it.
+ */
 async function demoTax($: EngineInterface): Promise<string> {
   const now = await $.clock.now()
-  const model = 'claude-sonnet-5-5'
-  await update($, cache, c => {
-    const tokens = c.contextTokens || 330_316
-    const m = c.model || model
-    return {
-      ...c,
-      model: m,
-      contextTokens: tokens,
-      lastWarmAt: c.lastWarmAt || now - 2 * ttlMs(),
-      heldAt: now,
-      heldText: '',
-      isArmed: true,
-      heldUsd: cacheWriteUsd(tokens, m, ttlMs()),
-      warmUsd: (tokens * priceInfo(m).price.cacheRead) / 1_000_000,
-    }
-  })
+  const c = await read($, cache)
+  const l = await read($, ledger)
+  const model = c.model || 'claude-sonnet-5-5'
+  const tokens = c.contextTokens || 330_316
+  const ageMs = c.lastWarmAt > 0 ? now - c.lastWarmAt : 2 * ttlMs()
+  await update($, hotpot, h => ({ ...h, sample: { model, tokens, ageMs, heldAt: now } }))
+  await update($, cache, x => ({
+    ...x,
+    heldAt: now,
+    heldText: '',
+    isArmed: true,
+    heldUsd: reorderUsd(tokens, model, l.engine, ttlMs()),
+    warmUsd: (tokens * priceInfo(model).price.cacheRead) / 1_000_000,
+  }))
   return 'Cache Tax: a sample cold-cache warning is above the prompt (nothing is held; your next send clears it).'
 }
 
@@ -3239,8 +3834,9 @@ const HELP_LINES = [
   '/kessoku          toggle the Kessoku Band panel (subagents as Nijika, Ryo, Kita; Bocchi is the main loop)',
   '/filetree         toggle the file tree: pink while Claude edits a file, neon green once a commit lands',
   '/replay           step through the last turn\'s edits as a setlist, one diff at a time',
-  '/keepwarm [90m|2h|off]   keep the prompt cache warm with cheap pings (default from config)',
+  '/keepwarm [90m|2h|6h|off]   keep the prompt cache warm with cheap pings (default from config)',
   '/cache-tax        is the cache warm, and what would a cold send cost?',
+  "/hotpot           the prompt cache as the band's after-show hotpot: the feast runs down with the TTL; keep the fire on, top up, re-heat, zosui (compact), clear the table, the bill (/bocchi hotpot too; ♨ Hotpot, o, on the strip and under the chalkboard)",
   '/bocchi theme [on|off|status]   switch Claude Code\'s own theme to Kessoku Bocchi (the light twin on a light theme), or back',
   '/bocchi strip     hide or show the band strip above the prompt',
   "/bocchi stats [all]   the tour: this project's sets, nights, spend, members and records across sessions (all: every project); a set of half a minute or more ends with Nijika's recap above the prompt",
@@ -3291,6 +3887,11 @@ async function startUi($: EngineInterface): Promise<void> {
   if (r.isOpen && !r.inBand && !panes.some(p => p.id === REPLAY)) await update($, replay, x => ({ ...x, isOpen: false }))
   const tp = await read($, tour)
   if (tp.isOpen && !tp.inBand && !panes.some(p => p.id === TOUR)) await update($, tour, x => ({ ...x, isOpen: false }))
+  // The Hotpot as the engine has it: listed, where it is drawn; gone (and not drawn above the prompt), closed.
+  const hpane = panes.find(p => p.id === HOTPOT)
+  const hp = await read($, hotpot)
+  if (hpane !== undefined) await update($, hotpot, x => ({ ...x, isOpen: true, inBand: !hpane.isPlaced }))
+  else if (hp.isOpen && !hp.inBand) await update($, hotpot, x => ({ ...x, isOpen: false, armed: null, moment: null, note: null }))
   await update($, blast, () => null)
   // A memo already answered, or a face set with a timer, does not survive the reload that lost the timer.
   const m = await read($, memo)
@@ -3326,12 +3927,17 @@ export const register: Register = (on, options) => {
     isInteractive = e.isInteractive
     hasSurface = e.surface !== null
     uiStarted = false
+    // A reload keeps $.state (the ledger and its learned TTL) and forgets the module: mirror the TTL, note when we loaded.
+    if (loadedAt === 0) loadedAt = await $.clock.now()
+    ttlSeen = await read($, ledger)
     await $.command.register({ name: 'kessoku', description: 'Kessoku Band: toggle the live agent panel' })
     await $.command.register({ name: 'filetree', description: 'Kessoku: toggle the concert-lit file tree' })
     await $.command.register({ name: 'replay', description: 'Replay Theater: step through the last turn\'s edits as a setlist' })
     await $.command.register({ name: 'keepwarm', description: 'Cache Tax: keep the prompt cache warm (e.g. /keepwarm 90m, /keepwarm off)', argumentHint: '[duration|off]' })
     await $.command.register({ name: 'cache-tax', description: 'Cache Tax: is the cache warm, and what would a cold send cost?' })
-    await $.command.register({ name: 'bocchi', description: 'Kessoku theme: help, the engine theme, previews, moods, the strip', argumentHint: '[help|theme on|off|strip|stats [all]|solo <member|off>|mood <m>|demo|memo [proposed]|tax|crash|setlist|recap]' })
+    // Immediate: it only opens or closes the pane (or prints a line where nothing can draw), so it works mid-turn.
+    await $.command.register({ name: 'hotpot', description: '♨ Hotpot: the prompt cache as the band\'s hotpot (keepwarm, top up, re-heat, zosui, the bill)', immediate: true })
+    await $.command.register({ name: 'bocchi', description: 'Kessoku theme: help, the engine theme, previews, moods, the strip', argumentHint: '[help|theme on|off|strip|stats [all]|hotpot|solo <member|off>|mood <m>|demo|memo [proposed]|tax|crash|setlist|recap]' })
     await readEngine($).catch(() => undefined)
     // What the model can do with the band: delegate to a member by name, and propose a rule for Nijika's card.
     await registerBand($).catch(() => undefined)
@@ -3349,11 +3955,13 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
 
-  // -- /clear: the conversation ends and the process goes on; nothing of the old one should hold the new one ----
+  // -- /clear and an in-process /resume: the conversation ends and the process goes on; nothing of the old one should
+  //    hold the new one (the learned TTL stays: it is the session's) ----
   on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear') {
+    if (e.reason === 'clear' || e.reason === 'resume') {
+      const now = await $.clock.now()
       pendingTracks = []
-      await update($, cache, c => ({ ...INITIAL_CACHE, keepWarmUntil: c.keepWarmUntil, engineWriteUsd: c.engineWriteUsd, engineModel: c.engineModel, model: c.model }))
+      await update($, cache, c => ({ ...INITIAL_CACHE, keepWarmUntil: c.keepWarmUntil, model: c.model }))
       await update($, band, () => INITIAL_BAND)
       // the status line starts over with the band: no box, melt or panic left from the set before
       await setMood($, 'anxious')
@@ -3363,6 +3971,10 @@ export const register: Register = (on, options) => {
       await update($, memo, () => null)
       await update($, proposals, () => [])
       await update($, recap, () => null)
+      // The book starts over (the fork gate shut with it); /clear's table reads cleared until a step warms it again.
+      gateEpoch += 1
+      await writeLedger($, l => ({ ...newLedger(now, l), cleared: e.reason === 'clear' }))
+      await update($, hotpot, h => ({ ...h, armed: null, moment: null, note: null }))
       if (memoTimer !== null) {
         memoTimer.cancel()
         memoTimer = null
@@ -3379,34 +3991,48 @@ export const register: Register = (on, options) => {
     const r = await read($, replay)
     return { text: opened ? `Replay Theater: ${r.tracks.length} ${r.tracks.length === 1 ? 'track' : 'tracks'} on the setlist.` : 'Replay Theater: no edits on the last setlist.' }
   })
+  on('command.run', { command: 'hotpot' }, async $ => ({ text: await toggleHotpot($) }))
   on('command.run', { command: 'keepwarm' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
-    const now = await $.clock.now()
     if (arg === 'off' || arg === 'stop') {
-      await update($, cache, c => ({ ...c, keepWarmUntil: 0 }))
+      await setKeepwarm($, 0)
       return { text: 'keepwarm off.' }
     }
     const ms = arg === '' ? opts.keepWarmMs : parseDuration(arg)
     if (ms === null) return { text: `keepwarm: couldn't read "${e.args.trim()}". Try /keepwarm 90m, /keepwarm 2h, or /keepwarm off.` }
-    await update($, cache, c => ({ ...c, keepWarmUntil: now + ms }))
+    await setKeepwarm($, ms)
     const c = await read($, cache)
-    const ping = (c.contextTokens * priceInfo(c.model || 'default').price.cacheRead) / 1_000_000
-    return { text: `keepwarm on for ${fmtDuration(ms)}: a cheap ping (≈${fmtUsd(ping)} at ${fmtTokens(c.contextTokens)} tokens) lands shortly before the ${fmtDuration(ttlMs())} cache would lapse, while the session is idle.` }
+    const l = await read($, ledger)
+    const now = await $.clock.now()
+    const head = `keepwarm on for ${fmtDuration(ms)}`
+    // The pings run on the minute timer, which only a session with a screen keeps.
+    if (!canDraw()) return { text: `${head}, but nothing will ping: keepwarm's minute timer runs only in a session with a screen.` }
+    if (c.lastWarmAt <= 0) return { text: `${head}: nothing cached yet: the next send warms it, and the pings start then.` }
+    if (isCold(c, l, now)) return { text: `${head}: the cache is cold: the next send warms it, and the pings start then.` }
+    const P = l.prompt > 0 ? l.prompt : c.contextTokens
+    return { text: `${head}: a cheap ping (≈${fmtUsd(topUpUsd(P, c.model))} at ${fmtTokens(P)} tokens) lands shortly before the ${fmtDuration(ttlMs())} cache would lapse, while the session is idle.` }
   })
   on('command.run', { command: 'cache-tax' }, async $ => {
     const c = await read($, cache)
+    const l = await read($, ledger)
     const now = await $.clock.now()
-    const write = coldWriteUsd(c)
+    const ttl = ttlMs()
+    const write = coldWriteUsd(c, l)
     const warm = (c.contextTokens * priceInfo(c.model || 'default').price.cacheRead) / 1_000_000
+    const saved = savedUsd(l, ttl)
+    const rate = hitRate(l)
     const lines = [
-      `${MEMBERS.bocchi.faces[c.lastWarmAt > 0 && now - c.lastWarmAt > ttlMs() ? 'panic' : 'anxious']} Cache Tax`,
-      `state      ${warmth(c, now)} (TTL ${fmtDuration(ttlMs())})`,
+      `${MEMBERS.bocchi.faces[isCold(c, l, now) ? 'panic' : 'anxious']} Cache Tax`,
+      `state      ${warmth(c, l, now)} (TTL ${fmtDuration(ttl)})`,
       `context    ${fmtTokens(c.contextTokens)} tokens on ${c.model || 'the session model'}`,
-      `cold send  ≈ ${fmtUsd(write)} to re-write the cache${c.engineWriteUsd > 0 && c.engineModel === c.model ? " (the engine's own estimate)" : ''} · warm send ≈ ${fmtUsd(warm)}`,
-      `keepwarm   ${c.keepWarmUntil > now ? `on, ${fmtDuration(c.keepWarmUntil - now)} left` : 'off (/keepwarm to arm it)'} · ${c.pings} pings so far (≈${fmtUsd(c.pingUsd)}${c.misses > 0 ? `, ${c.misses} found it cold` : ''})${c.lastPingNote ? ` · ${c.lastPingNote}` : ''}`,
+      `cold send  ≈ ${fmtUsd(write)} to re-write the cache${isEnginePrice(c, l) ? " (the engine's own estimate)" : ''} · warm send ≈ ${fmtUsd(warm)}`,
+      `keepwarm   ${c.keepWarmUntil > now ? `on, ${fmtDuration(c.keepWarmUntil - now)} left` : 'off (/keepwarm to arm it)'} · ${l.pings.count} pings so far (≈${fmtUsd(pingsUsd(l, ttl))}${l.pings.misses > 0 ? `, ${l.pings.misses} found it cold` : ''})${c.lastPingNote ? ` · ${c.lastPingNote}` : ''}`,
+      `saved      ${saved >= 0 ? `≈${fmtUsd(saved)}` : `cost ≈${fmtUsd(-saved)} more`} this conversation, against sending it all uncached${rate === null ? '' : ` · hit rate ${Math.round(rate * 100)}%`}`,
+      `tax paid   ≈${fmtUsd(taxPaidUsd(l, ttl))} · ${l.tax.count} cold re-write${l.tax.count === 1 ? '' : 's'}${l.tax.silent > 0 ? `, ${l.tax.silent} silent` : ''}${l.tax.midTurn > 0 ? `, ${l.tax.midTurn} mid-turn` : ''}`,
     ]
     return { text: lines.join('\n') }
   })
+
   on('command.run', { command: 'bocchi' }, async ($, e) => {
     const [verb = 'help', ...rest] = e.args.trim().split(/\s+/)
     const arg = rest.join(' ').toLowerCase()
@@ -3452,6 +4078,8 @@ export const register: Register = (on, options) => {
         return { text: await demoReplay($) }
       case 'recap':
         return { text: await demoRecap($) }
+      case 'hotpot':
+        return { text: await toggleHotpot($) }
       case 'stats': {
         const scope = arg === 'all' ? ('all' as const) : ('project' as const)
         // Where nobody can see a page (a -p run), the line alone.
@@ -3478,6 +4106,8 @@ export const register: Register = (on, options) => {
     await update($, recap, () => null)
     const spent = started.agents.find(a => a.id === 'main')?.cost ?? 0
     await update($, tally, t => ({ ...t, set: started.set, mainUsd: spent }))
+    // Whose turn this is (a person's, or a background report's, a schedule's): the last prompt sent while idle says.
+    await writeLedger($, l => ({ ...l, isPersonTurn: l.nextTurn === 'person', nextTurn: 'none', turnSteps: 0 }))
     // The main loop is Bocchi's act: a chosen solo of hers holds while it plays.
     await update($, ui, raw => {
       const x = uiOf(raw)
@@ -3489,18 +4119,25 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.step', async function* ($, e, next) {
-    const r = yield* next(e)
+    // The TTL runs from when the request is processed: the clock before it goes, kept once its response began.
+    const startedAt = await $.clock.now()
+    const stream = next(e)
+    let responded = false
+    for await (const chunk of stream) {
+      if (chunk.kind !== 'engine') responded = true
+      yield chunk
+    }
+    const r = await stream.result
     const u = r.usage
     if (u !== null && u !== undefined) {
       const delta: KessokuUsage = { input: u.input_tokens, output: u.output_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens }
       const context = u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
       const id = e.agentId ?? 'main'
       await update($, band, b => (b.agents.some(a => a.id === id) ? patchAgent(b, id, a => ({ ...a, usage: addUsage(a.usage, delta), context, steps: a.steps + 1, model: u.model, cost: a.cost + costOf(delta, u.model) })) : b))
-      if (e.agentId === undefined) {
-        const now = await $.clock.now()
-        await update($, cache, c => ({ ...c, lastWarmAt: now, contextTokens: context + u.output_tokens, model: u.model }))
-      }
     }
+    const stepUsage: StepUsage | null = u === null || u === undefined ? null : { input: u.input_tokens, output: u.output_tokens, read: u.cache_read_input_tokens, write: u.cache_creation_input_tokens, model: u.model }
+    if (e.agentId === undefined) await bookMain($, { usage: stepUsage, startedAt, index: e.index, effort: e.effort === undefined ? '' : String(e.effort), serverTools: (r.serverToolUses?.length ?? 0) > 0, responded, now: await $.clock.now() })
+    else if (stepUsage !== null) await bookAct($, e.agentId, stepUsage)
     return r
   })
 
@@ -3554,7 +4191,9 @@ export const register: Register = (on, options) => {
       const setlist = await update($, replay, x => ({ ...x, tracks, index: 0, setlist: x.setlist + 1 }))
       if (e.reason === 'answer' && !setlist.isOpen && canDraw()) suggestReplay($, tracks.length)
     }
-    await update($, cache, c => ({ ...c, lastWarmAt: now }))
+    // A turn that had a step with usage ran to its end: the session holds a snapshot a fork may share (the fork gate).
+    // Its warmth is its steps' own: a turn that ended on an error or an interrupt warmed nothing more.
+    await writeLedger($, l => (l.turnSteps > 0 ? { ...l, canFork: true } : l))
     // A long set may have played to an empty room (an interrupted one had the person there): its end is announced,
     // and Nijika's recap of it stands above the prompt for whoever is at a screen; toasts none keeps both quiet.
     const isLong = e.durationMs >= SET_AWAY_MS && e.reason !== 'aborted'
@@ -3574,13 +4213,30 @@ export const register: Register = (on, options) => {
 
   on('session.measure', async ($, e, next) => {
     await applyUsage($, e).catch(() => undefined)
+    // After a main-loop turn the engine counts the prompt the next request re-sends: P, and with the last answer the context.
+    const tokens = e.context.tokens
+    if (typeof tokens === 'number' && tokens > 0) {
+      const l = await writeLedger($, x => ({ ...x, prompt: tokens })).catch(() => null)
+      if (l !== null) await update($, cache, c => ({ ...c, contextTokens: tokens + l.lastOutput })).catch(() => undefined)
+    }
     return next(e)
   })
 
-  // -- compaction: Bocchi melts while the set is compacted; afterwards the figures are the compacted set's ----
+  // -- compaction: zosui while the set is compacted; afterwards the figures are the compacted set's ----
   on('session.compact', async ($, e, next) => {
-    // A subagent's transcript, or the engine's precompute pass (it installs nothing): not the band's business.
-    if (e.agentId !== undefined || e.trigger === 'precompute') return next(e)
+    // A subagent's transcript: not the band's business.
+    if (e.agentId !== undefined) return next(e)
+    // The engine's precompute pass installs nothing: its summary's request is booked, no zosui drawn.
+    if (e.trigger === 'precompute') {
+      const r = await next(e)
+      if (r.skip === undefined && r.usage !== undefined) {
+        const usage = r.usage
+        const model = (await read($, cache)).model
+        await writeLedger($, l => bookSummary(l, { input: usage.input_tokens, output: usage.output_tokens, read: usage.cache_read_input_tokens, write: usage.cache_creation_input_tokens }, model)).catch(() => undefined)
+      }
+      return r
+    }
+    compactRan = true
     isCompacting = true
     await setMood($, 'melting', 'compacting the set…').catch(() => undefined)
     const r = await next(e).catch(async (error: unknown) => {
@@ -3591,7 +4247,7 @@ export const register: Register = (on, options) => {
     })
     isCompacting = false
     try {
-      if (r.skip === undefined) await settleCompaction($, r.tokensBefore, r.tokensAfter)
+      if (r.skip === undefined) await settleCompaction($, r.tokensBefore, r.tokensAfter, r.usage)
       else await revertMood($)
     } catch {
       // the figures could not be reset here; the next measurement sets them
@@ -3599,18 +4255,46 @@ export const register: Register = (on, options) => {
     return r
   }).catch(($, e, next) => next(e))
 
+  // -- the cache's truth: a model switch is a new pot; a resume knows its pot ----
   on('classic.PostModelSwitch', async ($, e, next) => {
-    // The engine's TTL wins only while the person kept the default; a configured TTL is theirs.
-    if (opts.isTtlDefault) ttlOverrideMs = e.cache_ttl === '5m' ? 5 * 60_000 : 60 * 60_000
-    // The engine priced the re-cache itself; Cache Tax prefers that figure while the model matches.
+    const isResume = e.source === 'resume'
+    // The engine's TTL, on every switch (a resume's too); a configured Cache TTL still wins over it.
+    await shutGate($, l => ({
+      ...l,
+      ttl: { ms: e.cache_ttl === '5m' ? 5 * 60_000 : 60 * 60_000, how: 'engine' as const },
+      sighting: 0,
+      switched: true,
+      // A resume's estimate is not read; any other switch prices the re-order with its own, if taken, else none.
+      engine: isResume ? null : enginePriceOf(e),
+      ...(isResume ? {} : { cacheless: 0 }),
+    }))
+    // A switch to another model forfeits the entry, whatever prompt_cache_warm says; a resume restores the model the
+    // transcript was cached on and forfeits nothing (its warmth and context come from classic.SessionStart).
     await update($, cache, c => ({
       ...c,
       model: e.to_model || c.model,
-      engineModel: e.to_model || c.engineModel,
-      engineWriteUsd: typeof e.estimated_cache_write_usd === 'number' ? e.estimated_cache_write_usd : c.engineWriteUsd,
-      contextTokens: typeof e.context_tokens === 'number' && e.context_tokens > 0 ? e.context_tokens : c.contextTokens,
-      lastWarmAt: e.prompt_cache_warm === false ? 0 : c.lastWarmAt,
+      ...(isResume ? {} : { contextTokens: typeof e.context_tokens === 'number' && e.context_tokens > 0 ? e.context_tokens : c.contextTokens }),
+      ...(!isResume && e.to_model !== e.from_model ? { lastWarmAt: 0 } : {}),
     }))
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('classic.SessionStart', async ($, e, next) => {
+    if (e.source === 'resume' || e.source === 'fork') {
+      const now = await $.clock.now()
+      const s = e.seconds_since_last_response
+      const expired = e.prompt_cache_likely_expired
+      // Between five minutes and an hour the engine's flag says which TTL it measured the lapse against.
+      if (typeof s === 'number' && typeof expired === 'boolean' && s > 300 && s <= 3600) await writeLedger($, l => ({ ...l, ttl: { ms: expired ? 5 * 60_000 : 60 * 60_000, how: 'engine' as const }, sighting: 0 }))
+      // Each figure only when present: the age a lower bound (it ran from the last request's start), cold when the
+      // engine says it lapsed whatever TTL is in force.
+      await update($, cache, c => ({
+        ...c,
+        ...(typeof s === 'number' && s >= 0 ? { lastWarmAt: expired === true ? Math.min(now - s * 1000, now - ttlMs()) : now - s * 1000 } : {}),
+        ...(typeof e.context_tokens === 'number' && e.context_tokens > 0 ? { contextTokens: e.context_tokens } : {}),
+        ...(typeof e.model === 'string' && e.model !== '' ? { model: e.model } : {}),
+      }))
+    }
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -3757,18 +4441,23 @@ export const register: Register = (on, options) => {
 
   // -- prompts: Cache Tax and Reflect --------------------------------------------
   on('prompt.submit', async ($, e, next) => {
+    // Whose the next main-loop turn is: the last prompt sent while idle, a person's or not (a background report, a schedule).
+    if (e.turnId === undefined) await writeLedger($, l => ({ ...l, nextTurn: isPersonPrompt(e.origin.kind) ? ('person' as const) : ('other' as const) })).catch(() => undefined)
     if (!isPersonPrompt(e.origin.kind)) return next(e)
     const text = e.text
     const c = await read($, cache)
+    const l = await read($, ledger)
     const b = await read($, band)
     const now = await $.clock.now()
-    // The one held prompt, re-sent in time, passes; anything else is judged afresh.
+    // The one held prompt, re-sent in time, passes (the re-order paid, the feast comes back); anything else is judged afresh.
     const isResend = c.isArmed && now - c.heldAt < HELD_PROMPT_MS && (c.heldText === '' || c.heldText === text)
     if (c.isArmed) await update($, cache, x => ({ ...x, isArmed: false, heldAt: 0, heldText: '' }))
-    if (!isResend && !b.isWorking && canResend(e.origin.kind) && c.lastWarmAt > 0 && c.contextTokens >= TAX_MIN_TOKENS && now - c.lastWarmAt > ttlMs()) {
+    if (isResend) await playMoment($, 'paid')
+    // Cold by feastOf: a TTL or more since the cache was warmed, and never while caching is off (no pot to lose).
+    if (!isResend && !b.isWorking && canResend(e.origin.kind) && c.contextTokens >= TAX_MIN_TOKENS && isCold(c, l, now)) {
       hasSurface = hasSurface || (await $.session.surfaces().catch(() => [])).length > 0
       if (!canDraw()) return next(e)
-      const heldUsd = coldWriteUsd(c)
+      const heldUsd = coldWriteUsd(c, l)
       const warmUsd = (c.contextTokens * priceInfo(c.model || 'default').price.cacheRead) / 1_000_000
       const next_ = await update($, cache, x => ({ ...x, isArmed: true, heldAt: now, heldText: text, heldUsd, warmUsd }))
       await setMood($, 'panic', `cache tax ≈${fmtUsd(heldUsd)}!!`)
@@ -3812,6 +4501,7 @@ export const register: Register = (on, options) => {
     else if (e.id === TREE) await update($, tree, x => ({ ...x, isOpen: false, isBand: false }))
     else if (e.id === REPLAY) await update($, replay, x => ({ ...x, isOpen: false, inBand: false }))
     else if (e.id === TOUR) await update($, tour, x => ({ ...x, isOpen: false, inBand: false }))
+    else if (e.id === HOTPOT) await update($, hotpot, x => ({ ...x, isOpen: false, inBand: false, armed: null, moment: null, note: null }))
     else if (e.id === BLAST && e.origin.kind !== 'unload' && held !== null && held.decision === null) held.decision = 'closed'
     const r = await next(e)
     // Once it is closed: a drawing that was on its way registers nothing for it either.
@@ -4034,7 +4724,7 @@ export const register: Register = (on, options) => {
     const c = await read($, cache)
     const u = await read($, ui)
     beginSprites(e)
-    return drawPanel($, e, b, c, soloNow(u, now), now, false)
+    return drawPanel($, e, b, c, feastFlags(c, await read($, ledger), now), soloNow(u, now), now, false)
   })
   on('ui.render', { component: 'Pane', requestId: TREE }, async ($, e) => {
     const now = await $.clock.now()
@@ -4061,6 +4751,12 @@ export const register: Register = (on, options) => {
     return drawReplay($, e, r, false, now)
   })
   on('ui.render', { component: 'Pane', requestId: TOUR }, async ($, e) => drawTour($, e, await read($, tour)))
+  on('ui.render', { component: 'Pane', requestId: HOTPOT }, async ($, e) => {
+    const now = await $.clock.now()
+    const v = await hotpotViewOf($, e, now)
+    beginSprites(e)
+    return drawHotpot($, e, v, now)
+  })
 
   // -- drawing: the band above the prompt, by priority ---------------------------------
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -4076,10 +4772,13 @@ export const register: Register = (on, options) => {
       return drawBlast($, e, s, now)
     }
     const c = await read($, cache)
+    const l = await read($, ledger)
+    const hp = await read($, hotpot)
     if (c.heldAt > 0 && now - c.heldAt < HELD_PROMPT_MS) {
       beginSprites(e)
-      return drawCacheTax($, e, c, now)
+      return drawCacheTax($, e, c, l, hp, now)
     }
+    const fl = feastFlags(c, l, now)
     const m = await read($, memo)
     if (m !== null && m.status !== 'skipped') {
       beginSprites(e)
@@ -4104,8 +4803,9 @@ export const register: Register = (on, options) => {
     beginSprites(e)
     if (r.isOpen && r.inBand) return stack(drawReplay($, e, r, true, now))
     if (tp.isOpen && tp.inBand) return stack(drawTour($, e, tp))
+    if (hp.isOpen && hp.inBand) return stack(drawHotpot($, e, await hotpotViewOf($, e, now), now))
     if (t.isOpen && t.isBand) return stack(drawTree($, e, t, beat, now))
-    if (u.isPanelOpen && u.panelWhere === 'band') return stack(drawPanel($, e, b, c, soloNow(u, now), now, true))
+    if (u.isPanelOpen && u.panelWhere === 'band') return stack(drawPanel($, e, b, c, fl, soloNow(u, now), now, true))
     if (u.isStripHidden) return below
     // The last set's recap stands in the strip's place until the next set starts or it is dismissed.
     if (rc !== null) return stack(drawRecap($, e, rc, r, now))
@@ -4115,6 +4815,6 @@ export const register: Register = (on, options) => {
     const hasBelow = below.type !== 'engine'
     const isRoomy = e.surface !== 'terminal' || e.props.maxRows >= (hasBelow ? 10 : 6)
     const slimeRoom = e.surface !== 'terminal' || e.props.maxRows >= (hasBelow ? 11 : 7)
-    return stack(drawStrip($, e, b, c, r, now, isRoomy, slimeRoom, u))
+    return stack(drawStrip($, e, b, c, fl, r, now, isRoomy, slimeRoom, u, hp.isOpen))
   })
 }

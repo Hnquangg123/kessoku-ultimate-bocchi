@@ -1,0 +1,530 @@
+// Kessoku Ultimate Bocchi Theme: the ♨ Hotpot's arithmetic and drawing (hooks/lib/hotpot.ts), tested directly.
+//
+// The phase the strip, the chalkboard's foot, the rail and the pane share;
+// when the next redraw is due; the ledger's booking and judging and its
+// figures; the wooden board, the bill and the buttons' words; the scene's
+// seats, sizes and memo. The hooks that write the state and draw the pane are
+// tested in kessoku.test.ts.
+
+import { expect, test } from 'claude-code/testing'
+
+import type { KessokuHotpot, KessokuLedger } from '../types'
+import {
+  FEAST_TOP,
+  FEAST_WAIST,
+  HELD_PROMPT_MS,
+  INITIAL_LEDGER,
+  SEAT_ORDER,
+  SEAT_ROW,
+  SEAT_SIDE,
+  TABLE,
+  billRows,
+  boardOf,
+  bookActStep,
+  bookFork,
+  bookMainStep,
+  bookSummary,
+  edgeL,
+  edgeR,
+  enginePriceOf,
+  feastOf,
+  hitRate,
+  hotpotAlt,
+  hotpotButtons,
+  hotpotCells,
+  hotpotDue,
+  hotpotLine,
+  hotpotSvg,
+  judgeStep,
+  keepwarmUsd,
+  minutesText,
+  miniMoods,
+  newLedger,
+  pingsADay,
+  potGauge,
+  railWords,
+  reheatUsd,
+  reorderUsd,
+  savedUsd,
+  seatAt,
+  seatStates,
+  speechOf,
+  stripWords,
+  topUpUsd,
+  ttlInForce,
+  ttlMark,
+  warmthDue,
+  writeRate,
+} from '../hooks/lib/hotpot'
+import type { HotpotView, MainStep, StepContext, StepUsage, TtlInForce } from '../hooks/lib/hotpot'
+import { SVG_LIMIT } from '../hooks/lib/sprite'
+
+const MIN = 60_000
+const HOUR = 60 * MIN
+const NOW = 1_800_000_000_000
+const OPUS = 'claude-opus-5-5'
+const ASSUMED: TtlInForce = { ms: HOUR, how: 'assumed', sighting: 0 }
+/** Two prices within half a unit of the given decimal place. */
+const near = (got: number, want: number, digits = 6) => expect(Math.abs(got - want)).toBeLessThan(0.5 * 10 ** -digits)
+
+const cacheAt = (ageMs: number, over: Partial<{ keepWarmUntil: number; contextTokens: number; model: string; heldAt: number }> = {}) => ({ lastWarmAt: ageMs < 0 ? 0 : NOW - ageMs, keepWarmUntil: 0, contextTokens: 168_000, model: OPUS, heldAt: 0, ...over })
+const HOTPOT: KessokuHotpot = { isOpen: true, inBand: false, isBillOpen: false, pick: 0, armed: null, moment: null, note: null, sample: null }
+const FLAGS = { noSnapshot: false, compacting: false, working: false, forkOut: false, compactOff: false, draftOff: false }
+
+/** A view of the pane: a cache warmed `ageMs` ago (-1: nothing cached), the ledger P at 168k, a one-hour TTL assumed. */
+function viewOf(ageMs: number, over: Partial<HotpotView> = {}, cacheOver: Parameters<typeof cacheAt>[1] = {}, flags: Parameters<typeof feastOf>[3] = {}): HotpotView {
+  const cache = cacheAt(ageMs, cacheOver)
+  const ttl = over.ttl ?? ASSUMED
+  return {
+    now: NOW,
+    feast: feastOf(cache, NOW, ttl.ms, flags),
+    cache,
+    ledger: { ...INITIAL_LEDGER, prompt: 168_000, canFork: true, steps: 3 },
+    hotpot: HOTPOT,
+    ttl,
+    pick: 2 * HOUR,
+    slip: null,
+    flags: FLAGS,
+    isTerminal: false,
+    isFocused: true,
+    ...over,
+  }
+}
+
+const step = (u: Partial<StepUsage>, over: Partial<MainStep> = {}): MainStep => ({ usage: { input: 2000, output: 500, read: 0, write: 0, model: OPUS, ...u }, startedAt: NOW, index: 0, effort: 'high', serverTools: false, responded: true, now: NOW + 1000, ...over })
+const ctxOf = (lastWarmAt: number, over: Partial<StepContext> = {}): StepContext => ({ lastWarmAt, ttl: ASSUMED, loadedAt: 0, ...over })
+/** A ledger after a warm step of 168k on Opus at `at`, as the mod saw it. */
+const warmed = (at: number, over: Partial<KessokuLedger> = {}): KessokuLedger => ({ ...newLedger(0), prompt: 168_000, lastModel: OPUS, warmModel: OPUS, warmEffort: 'high', seenWarmAt: at, canFork: true, ...over })
+
+// ---- the phase ----------------------------------------------------------------------------------------
+
+test('the feast steps by the warmth left: more than 84 % and two thirds a feast, a third simmering, then running low, last orders, cold', async () => {
+  const at = (age: number, ttl = HOUR, keep = 0) => feastOf(cacheAt(age, { keepWarmUntil: keep }), NOW, ttl)
+  expect(at(0)).toMatchObject({ phase: 'feast', level: 5, leftMs: HOUR })
+  expect(at(0.16 * HOUR - 1)).toMatchObject({ phase: 'feast', level: 5 })
+  expect(at(0.16 * HOUR)).toMatchObject({ phase: 'feast', level: 4 })
+  expect(at(HOUR / 3 - 1)).toMatchObject({ phase: 'feast', level: 4 })
+  expect(at(HOUR / 3)).toMatchObject({ phase: 'simmer', level: 3 })
+  expect(at((2 * HOUR) / 3 - 1).level).toBe(3)
+  expect(at((2 * HOUR) / 3)).toMatchObject({ phase: 'low', level: 2 })
+  // last orders: the cold notice's window, the last five minutes of an hour, half of five minutes
+  expect(at(55 * MIN - 1)).toMatchObject({ phase: 'low', level: 2 })
+  expect(at(55 * MIN)).toMatchObject({ phase: 'last', level: 1, leftMs: 5 * MIN })
+  expect(at(2.5 * MIN - 1, 5 * MIN).phase).toBe('simmer')
+  expect(at(2.5 * MIN, 5 * MIN)).toMatchObject({ phase: 'last', level: 1 })
+  // cold means now - lastWarmAt >= TTL
+  expect(at(HOUR - 1)).toMatchObject({ phase: 'last' })
+  expect(at(HOUR)).toMatchObject({ phase: 'cold', level: 0, leftMs: 0 })
+  expect(at(74 * MIN)).toMatchObject({ phase: 'cold', leftMs: -14 * MIN, ageMs: 74 * MIN })
+  // keepwarm turns last orders into Nijika's
+  expect(at(57 * MIN, HOUR, NOW + HOUR)).toMatchObject({ phase: 'tend', level: 1 })
+  expect(at(70 * MIN, HOUR, NOW + HOUR).phase).toBe('cold')
+  // nothing cached, cleared
+  expect(feastOf(cacheAt(-1), NOW, HOUR)).toMatchObject({ phase: 'none', level: 0 })
+  expect(feastOf(cacheAt(-1), NOW, HOUR, { cleared: true }).phase).toBe('cleared')
+})
+
+test('compacting, a held send and caching off win over the warmth, in that order', async () => {
+  const c = cacheAt(70 * MIN)
+  expect(feastOf(c, NOW, HOUR, { compacting: true, held: true, cachingOff: true })).toMatchObject({ phase: 'zosui', level: 5 })
+  expect(feastOf(c, NOW, HOUR, { held: true, cachingOff: true })).toMatchObject({ phase: 'held', level: 0 })
+  expect(feastOf(c, NOW, HOUR, { cachingOff: true, cleared: true })).toMatchObject({ phase: 'off', level: 0 })
+  expect(feastOf(cacheAt(-1), NOW, HOUR, { cleared: true, cachingOff: true }).phase).toBe('off')
+})
+
+test('the strip, the foot and the rail read their words off the phase, in whole minutes', async () => {
+  const words = (age: number, flags: Parameters<typeof feastOf>[3] = {}, keep = 0) => {
+    const c = cacheAt(age, { keepWarmUntil: keep })
+    const fe = feastOf(c, NOW, HOUR, flags)
+    return [stripWords(fe, c, NOW), railWords(fe, c, NOW)]
+  }
+  expect(words(-1)).toEqual(['no cache yet', '○ no cache yet'])
+  expect(words(-1, { cleared: true })).toEqual(['no cache yet', '○ no cache yet'])
+  expect(words(-1, { cachingOff: true })).toEqual(['no cache here (caching off)', '○ caching off'])
+  expect(words(12 * MIN)).toEqual(['warm, 48m left', '☀ warm 48m'])
+  expect(words(12 * MIN, {}, NOW + 5 * HOUR + 12 * MIN)).toEqual(['kept warm, 5h 12m left', '● keepwarm 5h12m'])
+  expect(words(57 * MIN)).toEqual(['last orders, cold in 3m', '☀ last orders 3m'])
+  expect(words(72 * MIN)).toEqual(['cold for 12m', '❄ cold'])
+  expect(words(72 * MIN, {}, NOW + HOUR)).toEqual(['cold for 12m · keepwarm on', '❄ cold · keepwarm on'])
+  expect(words(72 * MIN, { held: true })).toEqual(['cold for 12m · a send is held', '❄ cold · held'])
+  expect(words(12 * MIN, { compacting: true })).toEqual(['zosui (compacting)', '〆 zosui'])
+  expect(minutesText(59_999)).toBe('under 1m')
+  expect(minutesText(48 * MIN + 59_999)).toBe('48m')
+  expect(minutesText(5 * HOUR)).toBe('5h')
+})
+
+// ---- when to redraw ----------------------------------------------------------------------------------
+
+test('warmthDue is the next minute of the count, a level step, last orders or cold; hotpotDue adds the moments, notes, presses and the hold', async () => {
+  // 12m 30s old at an hour: 47m 30s left, so the count drops to 47m in 30 s
+  expect(warmthDue(cacheAt(12.5 * MIN), NOW, HOUR)).toBe(NOW + 30_000 + 1)
+  // just before the level step at 16 % (9m 36s): the step comes first
+  expect(warmthDue(cacheAt(9.5 * MIN), NOW, HOUR)).toBe(NOW + 6000)
+  // in the last minute the count says under 1m: the next change is cold
+  expect(warmthDue(cacheAt(HOUR - 20_000), NOW, HOUR)).toBe(NOW + 20_000)
+  // cold for 12m 10s: the count rises to 13m in 50 s
+  expect(warmthDue(cacheAt(72 * MIN + 10_000), NOW, HOUR)).toBe(NOW + 50_000)
+  // nothing cached and keepwarm off: nothing is due
+  expect(warmthDue(cacheAt(-1), NOW, HOUR)).toBe(0)
+  // keepwarm's own count and end
+  expect(warmthDue(cacheAt(-1, { keepWarmUntil: NOW + 90_000 }), NOW, HOUR)).toBe(NOW + 30_000 + 1)
+  const c = cacheAt(70 * MIN + 30_000)
+  const h = (over: Partial<KessokuHotpot>) => ({ ...HOTPOT, ...over })
+  expect(hotpotDue(c, h({}), NOW, HOUR)).toBe(NOW + 30_000)
+  expect(hotpotDue(c, h({ moment: { kind: 'ping', until: NOW + 2400 } }), NOW, HOUR)).toBe(NOW + 2400)
+  expect(hotpotDue(c, h({ note: { text: 'x', until: NOW + 6000 } }), NOW, HOUR)).toBe(NOW + 6000)
+  expect(hotpotDue(c, h({ armed: { action: 'reheat', at: NOW - 4000 } }), NOW, HOUR)).toBe(NOW + 6000)
+  expect(hotpotDue({ ...c, heldAt: NOW - HELD_PROMPT_MS + 5000 }, h({}), NOW, HOUR)).toBe(NOW + 5000)
+  // keepwarm on, warm: the next ping (at TTL - 90 s) and its count
+  expect(hotpotDue(cacheAt(58 * MIN + 10_000, { keepWarmUntil: NOW + 2 * HOUR + 50_000 }), h({}), NOW, HOUR)).toBe(NOW + 20_000)
+})
+
+// ---- the TTL --------------------------------------------------------------------------------------------
+
+test('the TTL in force: the option when set (not 60, 0, empty or negative), else what the engine or the evidence taught, else the hour assumed', async () => {
+  const learned = { ttl: { ms: 5 * MIN, how: 'seen' as const }, sighting: 0 }
+  expect(ttlInForce(30, learned)).toEqual({ ms: 30 * MIN, how: 'option', sighting: 0 })
+  for (const m of [60, 0, -5, Number.NaN]) expect(ttlInForce(m, learned)).toEqual({ ms: 5 * MIN, how: 'seen', sighting: 0 })
+  expect(ttlInForce(0, INITIAL_LEDGER)).toEqual({ ms: HOUR, how: 'assumed', sighting: 0 })
+  expect(ttlMark({ ms: HOUR, how: 'assumed', sighting: 0 })).toBe('TTL 1h?')
+  expect(ttlMark({ ms: HOUR, how: 'assumed', sighting: NOW })).toBe('TTL 5m?')
+  expect(ttlMark({ ms: HOUR, how: 'seen', sighting: 0 })).toBe('')
+  expect(ttlMark({ ms: 5 * MIN, how: 'engine', sighting: 0 })).toBe('')
+  expect(writeRate(HOUR)).toBe(2)
+  expect(writeRate(5 * MIN)).toBe(1.25)
+})
+
+// ---- the ledger -----------------------------------------------------------------------------------------
+
+test('a main-loop step is judged against P: warm, cold, cacheless or partial; one that ran server tools is booked, not judged, and leaves P alone', async () => {
+  expect(judgeStep({ input: 10, read: 0.9 * 168_000, write: 0 }, 168_000)).toBe('warm')
+  expect(judgeStep({ input: 10, read: 0.49 * 168_000, write: 0.5 * 168_000 }, 168_000)).toBe('cold')
+  expect(judgeStep({ input: 10, read: 0, write: 0 }, 168_000)).toBe('cacheless')
+  expect(judgeStep({ input: 10, read: 0.6 * 168_000, write: 0.3 * 168_000 }, 168_000)).toBe('partial')
+  const l = warmed(NOW - 2 * MIN)
+  const warm = bookMainStep(l, step({ read: 170_000, write: 3000 }), ctxOf(NOW - 2 * MIN))
+  expect(warm.kind).toBe('warm')
+  expect(warm.warmAt).toBe(NOW)
+  expect(warm.ledger).toMatchObject({ prompt: 175_000, lastOutput: 500, steps: 1, cacheRead: 170_000, cacheWrite: 3000, turnSteps: 1, seenWarmAt: NOW })
+  expect(warm.ledger.members.bocchi).toEqual({ read: 170_000, write: 3000, input: 2000 })
+  const server = bookMainStep(l, step({ read: 400_000, write: 9000 }, { serverTools: true }), ctxOf(NOW - 2 * MIN))
+  expect(server.kind).toBe('unjudged')
+  expect(server.ledger.prompt).toBe(168_000)
+  expect(server.ledger.steps).toBe(1)
+  // a step refused before any chunk leaves the warmth where it was; one cut mid-answer still counts
+  expect(bookMainStep(l, { ...step({}), usage: null, responded: false }, ctxOf(NOW - 2 * MIN)).warmAt).toBeNull()
+  expect(bookMainStep(l, { ...step({}), usage: null, responded: true }, ctxOf(NOW - 2 * MIN)).warmAt).toBe(NOW)
+  // one that read and wrote no cache does not warm it
+  expect(bookMainStep(l, step({ read: 0, write: 0 }), ctxOf(NOW - 2 * MIN)).warmAt).toBeNull()
+})
+
+test('Cache Tax is booked from a cold step a TTL after the warmth (five minutes while assumed): mid-turn, silent, or a person’s paid re-order', async () => {
+  const l = warmed(NOW - 70 * MIN, { isPersonTurn: true })
+  const paid = bookMainStep(l, step({ read: 0, write: 170_000 }), ctxOf(NOW - 70 * MIN))
+  expect(paid.tax).toMatchObject({ tokens: 168_000, silent: false, midTurn: false })
+  near(paid.tax?.usd ?? 0, 168_000 * 8 / 1e6, 6)
+  expect(paid.ledger.tax).toMatchObject({ count: 1, silent: 0, midTurn: 0, tokens: 168_000 })
+  near(paid.ledger.tax.warmUsd, 168_000 * 0.2 / 1e6, 6)
+  const silent = bookMainStep({ ...l, isPersonTurn: false }, step({ read: 0, write: 170_000 }), ctxOf(NOW - 70 * MIN))
+  expect(silent.ledger.tax).toMatchObject({ count: 1, silent: 1, midTurn: 0 })
+  const mid = bookMainStep(l, step({ read: 0, write: 170_000 }, { index: 3 }), ctxOf(NOW - 70 * MIN))
+  expect(mid.ledger.tax).toMatchObject({ count: 1, silent: 0, midTurn: 1 })
+  // assumed hour: six minutes is enough, the step's own write being the proof; a learned hour needs the hour
+  expect(bookMainStep(l, step({ read: 0, write: 170_000 }), ctxOf(NOW - 6 * MIN)).tax).not.toBeNull()
+  expect(bookMainStep(l, step({ read: 0, write: 170_000 }), ctxOf(NOW - 6 * MIN, { ttl: { ms: HOUR, how: 'seen', sighting: 0 } })).tax).toBeNull()
+  // a partial step pays the shortfall, at most its write
+  const partial = bookMainStep(l, step({ read: 100_000, write: 40_000 }), ctxOf(NOW - 70 * MIN))
+  expect(partial.tax?.tokens).toBe(40_000)
+  // nothing cached, a warm step, or a step taken as a switch: no tax
+  expect(bookMainStep(l, step({ read: 0, write: 170_000 }), ctxOf(0)).tax).toBeNull()
+  expect(bookMainStep(l, step({ read: 168_000, write: 100 }), ctxOf(NOW - 70 * MIN)).tax).toBeNull()
+  expect(bookMainStep(l, step({ read: 0, write: 170_000, model: 'claude-sonnet-5-5' }), ctxOf(NOW - 70 * MIN)).tax).toBeNull()
+})
+
+test('a step on another model that no switch reported is a new pot: its first write, no tax or evidence, the engine price dropped, the fork gate shut', async () => {
+  const l = warmed(NOW - 10 * MIN, { engine: { perToken: 1e-5, model: OPUS } })
+  const o = bookMainStep(l, step({ read: 0, write: 170_000, model: 'claude-sonnet-5-5' }), ctxOf(NOW - 10 * MIN))
+  expect(o).toMatchObject({ isSwitch: true, kind: 'unjudged', tax: null, taught: null, warmAt: NOW })
+  expect(o.ledger).toMatchObject({ engine: null, canFork: false, lastModel: 'claude-sonnet-5-5' })
+  // a reported switch since the last step: the next step on the new model is not taken as one
+  expect(bookMainStep({ ...l, switched: true }, step({ read: 0, write: 170_000, model: 'claude-sonnet-5-5' }), ctxOf(NOW - 10 * MIN)).isSwitch).toBe(false)
+})
+
+test('the TTL is learned from what the steps show: a warm step after 6 minutes teaches an hour, two cold sightings five minutes', async () => {
+  // one hour: read 90 % of P and wrote under half, more than 5.5 minutes after a warmth the mod saw
+  const hour = bookMainStep(warmed(NOW - 6 * MIN), step({ read: 168_000, write: 1000 }), ctxOf(NOW - 6 * MIN))
+  expect(hour.taught).toBe('1h')
+  expect(hour.ledger.ttl).toEqual({ ms: HOUR, how: 'seen' })
+  // with server tools: nothing
+  expect(bookMainStep(warmed(NOW - 6 * MIN), step({ read: 168_000, write: 1000 }, { serverTools: true }), ctxOf(NOW - 6 * MIN)).taught).toBeNull()
+  // five minutes: a cold step after 10 minutes on the same model and effort is a sighting (TTL 5m?), a second settles it
+  const first = bookMainStep(warmed(NOW - 10 * MIN), step({ read: 0, write: 170_000 }), ctxOf(NOW - 10 * MIN))
+  expect(first.taught).toBe('sighting')
+  expect(first.ledger.sighting).toBe(NOW)
+  expect(first.ledger.ttl.how).toBe('assumed')
+  const second = bookMainStep({ ...first.ledger, seenWarmAt: NOW + 1000 }, step({ read: 0, write: 170_000 }, { startedAt: NOW + 11 * MIN }), ctxOf(NOW + 1000))
+  expect(second.taught).toBe('5m')
+  expect(second.ledger).toMatchObject({ ttl: { ms: 5 * MIN, how: 'seen' }, sighting: 0 })
+  // one-hour evidence between them clears the first
+  const cleared = bookMainStep({ ...first.ledger, seenWarmAt: NOW + 1000 }, step({ read: 170_000, write: 100 }, { startedAt: NOW + 8 * MIN }), ctxOf(NOW + 1000))
+  expect(cleared.ledger).toMatchObject({ ttl: { ms: HOUR, how: 'seen' }, sighting: 0 })
+  // a sighting needs the same model and effort, no reload in the gap, and a warmth the mod saw (never a resume's)
+  expect(bookMainStep(warmed(NOW - 10 * MIN), step({ read: 0, write: 170_000 }, { effort: 'low' }), ctxOf(NOW - 10 * MIN)).taught).toBeNull()
+  expect(bookMainStep(warmed(NOW - 10 * MIN), step({ read: 0, write: 170_000 }), ctxOf(NOW - 10 * MIN, { loadedAt: NOW - 5 * MIN })).taught).toBeNull()
+  expect(bookMainStep(warmed(NOW - 10 * MIN, { seenWarmAt: 0 }), step({ read: 0, write: 170_000 }), ctxOf(NOW - 10 * MIN)).taught).toBeNull()
+  // while the engine has spoken, no evidence
+  expect(bookMainStep(warmed(NOW - 6 * MIN, { ttl: { ms: 5 * MIN, how: 'engine' } }), step({ read: 168_000, write: 1000 }), ctxOf(NOW - 6 * MIN)).taught).toBeNull()
+})
+
+test('three cacheless main-loop steps in a row turn caching off; a cached step ends the run', async () => {
+  let l = warmed(NOW)
+  for (let i = 0; i < 3; i += 1) l = bookMainStep(l, step({ read: 0, write: 0 }), ctxOf(NOW)).ledger
+  expect(l.cacheless).toBe(3)
+  l = bookMainStep(l, step({ read: 10, write: 0 }), ctxOf(NOW)).ledger
+  expect(l.cacheless).toBe(0)
+})
+
+test('a seated act’s step is booked to her member; a fork books a ping, a miss or a re-heat and warms only as judged', async () => {
+  const act = bookActStep(warmed(NOW), 'ryo', { input: 100, output: 50, read: 20_000, write: 1000, model: 'claude-sonnet-5-5' })
+  expect(act.members.ryo).toEqual({ read: 20_000, write: 1000, input: 100 })
+  expect(act.steps).toBe(1)
+  expect(act.prompt).toBe(168_000)
+  const l = warmed(NOW - 58 * MIN)
+  const ctx = { lastWarmAt: NOW - 58 * MIN, loadedAt: 0, ttlMs: HOUR }
+  const ping = bookFork(l, { kind: 'ping', usage: { input: 30, output: 8, read: 168_000, write: 0 }, calledAt: NOW, gateOpen: true, model: OPUS }, ctx)
+  expect(ping).toMatchObject({ warmAt: NOW, miss: false })
+  expect(ping.ledger.pings).toMatchObject({ count: 1, misses: 0 })
+  near(ping.usd, topUpUsd(168_000, OPUS), 6)
+  const miss = bookFork(l, { kind: 'topup', usage: { input: 30, output: 8, read: 0, write: 168_000 }, calledAt: NOW, gateOpen: true, model: OPUS }, ctx)
+  expect(miss).toMatchObject({ warmAt: NOW, miss: true })
+  expect(miss.ledger.pings.misses).toBe(1)
+  // a fork that read and wrote too little warms nothing; one that landed after the gate shut changes nothing else
+  expect(bookFork(l, { kind: 'reheat', usage: { input: 30, output: 8, read: 10, write: 10 }, calledAt: NOW, gateOpen: true, model: OPUS }, ctx).warmAt).toBeNull()
+  const shut = bookFork(l, { kind: 'reheat', usage: { input: 30, output: 8, read: 0, write: 168_000 }, calledAt: NOW, gateOpen: false, model: OPUS }, ctx)
+  expect(shut.warmAt).toBeNull()
+  expect(shut.ledger.reheats.count).toBe(1)
+  expect(shut.taught).toBeNull()
+  // never back: a fork called before the last warmth leaves it
+  expect(bookFork(warmed(NOW + 5000), { kind: 'ping', usage: { input: 30, output: 8, read: 168_000, write: 0 }, calledAt: NOW, gateOpen: true, model: OPUS }, { ...ctx, lastWarmAt: NOW + 5000 }).warmAt).toBe(NOW + 5000)
+  const summary = bookSummary(l, { input: 168_000, output: 4000, read: 0, write: 0 }, OPUS)
+  expect(summary.summarizer.count).toBe(1)
+  near(summary.summarizer.usd, (168_000 * 4 + 4000 * 20) / 1e6, 6)
+})
+
+test('the engine’s price per token is taken from a catalog switch with tokens to price, never at 0, at another pricing or on a resume', async () => {
+  const sw = { source: 'command', context_tokens: 300_000, estimated_cache_write_usd: 1.5, pricing: 'catalog', to_model: OPUS }
+  expect(enginePriceOf(sw)).toEqual({ perToken: 1.5 / 300_000, model: OPUS })
+  expect(enginePriceOf({ ...sw, context_tokens: 0 })).toBeNull()
+  expect(enginePriceOf({ ...sw, pricing: 'configured' })).toBeNull()
+  expect(enginePriceOf({ ...sw, pricing: 'default' })).toBeNull()
+  expect(enginePriceOf({ ...sw, source: 'resume' })).toBeNull()
+  const engine = enginePriceOf(sw)
+  near(reorderUsd(200_000, OPUS, engine, HOUR), 1.0, 6)
+  // another model, or no estimate: the TTL's list write rate
+  near(reorderUsd(200_000, 'claude-sonnet-5-5', engine, HOUR), 200_000 * 4 / 1e6, 6)
+  near(reorderUsd(200_000, OPUS, null, 5 * MIN), 200_000 * 5 / 1e6, 6)
+})
+
+test('the figures: hit rate, the saving (negative early), writes at the TTL’s rate, a top-up and a re-heat from P, a day of keepwarm', async () => {
+  const l: KessokuLedger = { ...warmed(NOW), input: 0, cacheRead: 1_320_000, cacheWrite: 226_000, cacheReadUsd: 0.264, cacheReadBase: 5.28, cacheWriteBase: 0.904, pings: { count: 3, misses: 0, usd: 0.1, writeBase: 0 }, reheats: { count: 1, usd: 1.34, writeBase: 0 } }
+  near(hitRate(l) ?? 0, 1_320_000 / 1_546_000, 6)
+  expect(hitRate(INITIAL_LEDGER)).toBeNull()
+  near(savedUsd(l, HOUR), 2.672, 3)
+  // the writes re-priced once the TTL is learned to be five minutes
+  near(savedUsd(l, 5 * MIN), 5.016 - 0.904 * 0.25 - 1.44, 3)
+  expect(savedUsd({ ...l, cacheRead: 0, cacheReadUsd: 0, cacheReadBase: 0 }, HOUR)).toBeLessThan(0)
+  near(topUpUsd(168_000, OPUS), 0.03388, 5)
+  near(reheatUsd(168_000, OPUS, null, HOUR), 168_000 * 8 / 1e6 + 0.00028, 5)
+  near(pingsADay(HOUR), 1440 / 59, 6)
+  expect(pingsADay(5 * MIN)).toBe(360)
+  near(pingsADay(HOUR) * topUpUsd(168_000, OPUS), 0.827, 3)
+  near(keepwarmUsd(2 * HOUR, HOUR, topUpUsd(168_000, OPUS)), 0.0689, 4)
+})
+
+// ---- what the pane says ---------------------------------------------------------------------------------
+
+test('the wooden board in every phase: the state in a word and its tail, then the context and its prices, the TTL’s mark while unsettled', async () => {
+  const board = (v: HotpotView) => [boardOf(v).word, boardOf(v).tail]
+  expect(board(viewOf(9 * MIN))).toEqual(['♨ Bubbling', '51m of feast left'])
+  expect(board(viewOf(30 * MIN))).toEqual(['Simmering', '30m of feast left'])
+  expect(board(viewOf(45 * MIN))).toEqual(['Running low', '15m of feast left'])
+  expect(board(viewOf(57 * MIN))).toEqual(['Last orders!', 'cold in 3m'])
+  expect(board(viewOf(56 * MIN, {}, { keepWarmUntil: NOW + HOUR }))).toEqual(['Nijika has the pot', 'she tops it up in 2m'])
+  expect(board(viewOf(74 * MIN))).toEqual(['❄ Gone cold', '14m ago: the next send re-orders everything'])
+  expect(board(viewOf(74 * MIN, { slip: { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 14 * MIN } }, {}, { held: true }))).toEqual(['The bill came', 'your prompt waits: re-ordering costs ≈$1.34'])
+  expect(board(viewOf(9 * MIN, {}, {}, { compacting: true }))).toEqual(['〆 Zosui', 'compacting 168k tokens'])
+  expect(board(viewOf(-1))).toEqual(['The table is set', 'the first order warms the pot'])
+  expect(board(viewOf(-1, {}, {}, { cleared: true }))).toEqual(['A fresh table', 'nothing cached yet: the next prompt is the first order'])
+  expect(board(viewOf(-1, {}, {}, { cachingOff: true }))).toEqual(['No cache here', 'prompt caching is off'])
+  // a note stands in for the tail for its 6 s
+  expect(boardOf(viewOf(9 * MIN, { hotpot: { ...HOTPOT, note: { text: '168k → 40k tokens', until: NOW + 1 } } })).tail).toBe('168k → 40k tokens')
+  expect(boardOf(viewOf(9 * MIN)).line).toBe('168k on the table · a re-order ≈$1.34 · a top-up ≈$0.03 · a day of keepwarm ≈$0.83 · keepwarm off · TTL 1h?')
+  expect(boardOf(viewOf(9 * MIN, { ttl: { ms: HOUR, how: 'assumed', sighting: NOW } })).line).toMatch(/ · TTL 5m\?$/)
+  expect(boardOf(viewOf(9 * MIN, { ttl: { ms: HOUR, how: 'engine', sighting: 0 } })).line).not.toMatch(/TTL/)
+  const kept = viewOf(9 * MIN, { ledger: { ...INITIAL_LEDGER, prompt: 168_000, canFork: true, steps: 3, pings: { count: 3, misses: 0, usd: 0.1, writeBase: 0 } } }, { keepWarmUntil: NOW + 5 * HOUR + 12 * MIN })
+  expect(boardOf(kept).line).toMatch(/ · keepwarm 5h12m · 3 pings ≈\$0\.10 · TTL 1h\?$/)
+  // a dim button's reason, and the terminal's hint while the pane does not hold the keys
+  expect(boardOf(viewOf(9 * MIN, { flags: { ...FLAGS, working: true } })).line).toMatch(/ · a turn is running$/)
+  expect(boardOf(viewOf(9 * MIN, { isTerminal: true, isFocused: false })).line).toMatch(/ · ctrl\+x tab for its keys$/)
+  expect(boardOf(viewOf(74 * MIN, { slip: { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 } }, {}, { held: true })).line).toBe('your prompt is back in the box: Enter pays and sends it, Start fresh puts /clear in its place')
+  expect(hotpotLine(viewOf(9 * MIN))).toBe('♨ Hotpot · bubbling, 51m of feast left · 168k on the table · a re-order ≈$1.34 · a top-up ≈$0.03 · a day of keepwarm ≈$0.83 · keepwarm off · TTL 1h?')
+  expect(hotpotAlt(viewOf(9 * MIN))).toBe("the band's hotpot · bubbling, 51m left")
+  expect(hotpotAlt(viewOf(57 * MIN))).toBe("the band's hotpot · last orders, cold in 3m")
+  expect(hotpotAlt(viewOf(72 * MIN))).toBe("the band's hotpot · cold for 12m")
+  expect(hotpotAlt(viewOf(-1))).toBe("the band's hotpot · the table is set")
+  expect(hotpotAlt(viewOf(9 * MIN, {}, {}, { compacting: true }))).toBe("the band's hotpot · zosui")
+})
+
+test('the buttons say their prices and what is armed, and a dim one names why, in its order of reasons', async () => {
+  const keys = (v: HotpotView) => hotpotButtons(v).map(b => `${b.key}:${b.label}${b.reason === '' ? '' : ` [${b.reason}]`}`)
+  expect(keys(viewOf(9 * MIN))).toEqual([
+    'hotpot-keep:Keep the fire on · 2h ≈$0.07',
+    'hotpot-pick-30m:30m',
+    'hotpot-pick-1h:1h',
+    'hotpot-pick-2h:2h',
+    'hotpot-pick-6h:6h',
+    'hotpot-topup:Top up now ≈$0.03 (≈$0.84 if the cache lives 5m)',
+    'hotpot-zosui:Zosui (compact) · the next send writes the smaller pot',
+    'hotpot-clear:Clear the table (/clear) · the next send writes a fresh pot',
+    'hotpot-bill:The bill',
+    'hotpot-close:Close',
+  ])
+  expect(keys(viewOf(4 * MIN))[5]).toBe('hotpot-topup:Top up now ≈$0.03')
+  expect(keys(viewOf(9 * MIN, {}, { keepWarmUntil: NOW + HOUR }))[0]).toBe('hotpot-keep:Let it cool (keepwarm off)')
+  expect(keys(viewOf(9 * MIN, {}, { keepWarmUntil: NOW + HOUR })).find(k => k.startsWith('hotpot-clear'))).toBe('hotpot-clear:Clear the table (/clear) · the next send writes a fresh pot · keepwarm stays on')
+  expect(keys(viewOf(74 * MIN))[5]).toBe('hotpot-topup:Re-heat now ≈$1.34')
+  expect(keys(viewOf(74 * MIN, { hotpot: { ...HOTPOT, armed: { action: 'reheat', at: NOW - 1000 } } }))[5]).toBe('hotpot-topup:Press again: re-write ≈$1.34')
+  expect(keys(viewOf(9 * MIN, { hotpot: { ...HOTPOT, armed: { action: 'zosui', at: NOW - 1000 } } }))[6]).toBe('hotpot-zosui:Press again: compact 168k tokens · one summarizing request')
+  expect(keys(viewOf(9 * MIN, { hotpot: { ...HOTPOT, armed: { action: 'clear', at: NOW - 1000 } } }))[7]).toBe('hotpot-clear:Press again: your draft gives way to /clear')
+  // the armed window is ten seconds
+  expect(keys(viewOf(74 * MIN, { hotpot: { ...HOTPOT, armed: { action: 'reheat', at: NOW - 10_000 } } }))[5]).toBe('hotpot-topup:Re-heat now ≈$1.34')
+  const reason = (v: HotpotView) => hotpotButtons(v).find(b => b.key === 'hotpot-topup')?.reason
+  expect(reason(viewOf(9 * MIN, { flags: { ...FLAGS, noSnapshot: true, working: true } }))).toBe('this host keeps no snapshot to fork')
+  expect(reason(viewOf(9 * MIN, { flags: { ...FLAGS, compacting: true, working: true } }))).toBe('compacting')
+  expect(reason(viewOf(9 * MIN, { flags: { ...FLAGS, forkOut: true } }))).toBe('a top-up is on its way')
+  expect(reason(viewOf(9 * MIN, { ledger: { ...INITIAL_LEDGER, prompt: 168_000, canFork: false, cleared: true } }))).toBe('the table was cleared')
+  expect(reason(viewOf(9 * MIN, { ledger: { ...INITIAL_LEDGER, prompt: 168_000, canFork: false, steps: 4 } }))).toBe('nothing to top up until the next turn ends')
+  expect(reason(viewOf(9 * MIN, { ledger: { ...INITIAL_LEDGER, prompt: 168_000, canFork: false } }))).toBe('nothing to top up yet: the first turn has not ended')
+  expect(reason(viewOf(9 * MIN, {}, { contextTokens: 800 }))).toBe('under 1k tokens')
+  const off = viewOf(9 * MIN, { ledger: { ...INITIAL_LEDGER, prompt: 168_000, canFork: true, cacheless: 3 } })
+  expect(hotpotButtons(off).filter(b => b.reason === 'prompt caching is off').map(b => b.key)).toEqual(['hotpot-keep', 'hotpot-topup'])
+  expect(hotpotButtons(viewOf(9 * MIN, { flags: { ...FLAGS, compactOff: true } })).find(b => b.key === 'hotpot-zosui')?.reason).toBe('needs a newer Claude Code')
+  // during a hold: the Cache Tax card's three, then the bill and close
+  const held = viewOf(74 * MIN, { slip: { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 } }, {}, { held: true })
+  expect(keys(held)).toEqual(['hotpot-tax-keep:Keep it warm after (2h) ≈$0.07', 'hotpot-tax-clear:Start fresh (/clear)', 'hotpot-tax-dismiss:Dismiss', 'hotpot-bill:The bill', 'hotpot-close:Close'])
+})
+
+test('the bill: reads, writes and the tax among them, pings, re-heats, compaction, the saving, the hit rate by member, a re-order, a day of keepwarm', async () => {
+  const ledger: KessokuLedger = {
+    ...INITIAL_LEDGER,
+    prompt: 168_000,
+    input: 0,
+    cacheRead: 1_320_000,
+    cacheWrite: 226_000,
+    cacheReadUsd: 0.264,
+    cacheReadBase: 5.28,
+    cacheWriteBase: 0.904,
+    tax: { count: 1, silent: 1, midTurn: 0, tokens: 110_000, base: 0.44, warmUsd: 0.022 },
+    pings: { count: 3, misses: 1, usd: 0.1, writeBase: 0 },
+    reheats: { count: 1, usd: 1.34, writeBase: 0 },
+    summarizer: { count: 1, usd: 0.14, writeBase: 0 },
+    members: { bocchi: { read: 880, write: 100, input: 20 }, nijika: { read: 71, write: 29, input: 0 }, ryo: { read: 0, write: 0, input: 0 }, kita: { read: 64, write: 36, input: 0 } },
+  }
+  const bill = billRows(viewOf(9 * MIN, { ledger }))
+  expect(bill.title).toBe("お会計 · this conversation's cache")
+  expect(bill.foot).toBe('cost ≈ list prices × tokens, not your bill')
+  expect(bill.rows.map(r => [r.label, r.detail, r.figure])).toEqual([
+    ['Read from cache', '1.3M × $0.20/M', '$0.26'],
+    ['Written to cache', '226k × $8.00/M', '$1.81'],
+    ['of which Cache Tax', '1 cold re-write · 1 silent (a background report)', '$0.88'],
+    ['Keepwarm', '3 pings · 1 found it cold', '$0.10'],
+    ['Re-heats', '1', '$1.34'],
+    ['Compaction', '1 zosui', '$0.14'],
+    ['Saved by the cache', 'vs. sending it all uncached', '$2.67'],
+    ['Hit rate', 'read ÷ everything the steps sent', '85%'],
+    ['By member', 'Bocchi 88% · Nijika 71% · Kita 64%', ''],
+    ['If it goes cold', 're-order 168k', '$1.34'],
+    ['A day of keepwarm', '≈24 pings at a 1h TTL, assumed · ≈$12.2 if it lives 5m', '$0.83'],
+  ])
+  expect(bill.rows.find(r => r.label === 'Saved by the cache')?.tone).toBe('good')
+  // nothing to say: no pings, no re-heats, no compaction, no members; a negative saving in red; a learned TTL names no 5m price
+  const bare = billRows(viewOf(9 * MIN, { ledger: { ...INITIAL_LEDGER, prompt: 168_000, cacheWrite: 100_000, cacheWriteBase: 0.4 }, ttl: { ms: HOUR, how: 'seen', sighting: 0 } }))
+  expect(bare.rows.map(r => r.label)).toEqual(['Read from cache', 'Written to cache', 'of which Cache Tax', 'Saved by the cache', 'Hit rate', 'If it goes cold', 'A day of keepwarm'])
+  expect(bare.rows.find(r => r.label === 'Saved by the cache')).toMatchObject({ figure: 'cost $0.40 more', tone: 'bad' })
+  expect(bare.rows.find(r => r.label === 'of which Cache Tax')?.detail).toBe('no cold re-writes')
+  expect(bare.rows.find(r => r.label === 'A day of keepwarm')?.detail).toBe('≈24 pings at a 1h TTL')
+})
+
+test('who plays what, the terminal’s heads, the kaomoji gauge and the speech, by phase and moment', async () => {
+  expect(seatStates('feast', null)).toEqual({ bocchi: 'eat', nijika: 'eat', ryo: 'eat', kita: 'eat' })
+  expect(seatStates('zosui', null).ryo).toBe('eat')
+  expect(seatStates('simmer', null).kita).toBe('calm')
+  expect(seatStates('tend', null).nijika).toBe('calm')
+  expect(seatStates('last', null).ryo).toBe('worry')
+  expect(seatStates('cold', null)).toEqual({ bocchi: 'box', nijika: 'cold', ryo: 'cold', kita: 'cold' })
+  expect(seatStates('held', null).bocchi).toBe('shock')
+  expect(seatStates('none', null).kita).toBe('wait')
+  expect(seatStates('feast', { kind: 'ping', until: NOW }).nijika).toBe('serve')
+  expect(miniMoods('feast').bocchi).toBe('happy')
+  expect(miniMoods('tend')).toEqual({ bocchi: 'focused', nijika: 'happy', ryo: 'focused', kita: 'focused' })
+  expect(miniMoods('cold')).toEqual({ bocchi: 'hiding', nijika: 'melting', ryo: 'anxious', kita: 'melting' })
+  expect(miniMoods('held').kita).toBe('panic')
+  expect(miniMoods('off').nijika).toBe('focused')
+  expect(potGauge('feast', 3)).toBe('♨ ▰▰▰▱▱')
+  expect(potGauge('cold', 0)).toBe('❄ ▱▱▱▱▱')
+  expect(speechOf('feast', false, null)).toEqual([['kita', 'So photogenic!'], ['ryo', 'Seconds.']])
+  expect(speechOf('cold', true, null)).toEqual([['nijika', 'The next order warms it.']])
+  expect(speechOf('cold', false, { kind: 'reheat', until: NOW })).toEqual([['bocchi', 'I-it’s warm again…']])
+  expect(speechOf('off', false, null)).toEqual([])
+})
+
+test('the seats sit at the table’s side edges, each with the outer end of her waist on the edge at her row', async () => {
+  expect(SEAT_ORDER).toEqual(['bocchi', 'ryo', 'nijika', 'kita'])
+  for (const m of SEAT_ORDER) {
+    const s = seatAt(m)
+    const waist = { x: s.x + FEAST_WAIST[m].x, y: s.y + FEAST_WAIST[m].y }
+    const edge = SEAT_SIDE[m] === 'left' ? edgeL(SEAT_ROW[m]) : edgeR(SEAT_ROW[m])
+    expect(waist.y).toBe(SEAT_ROW[m])
+    expect(Math.abs(waist.x - edge)).toBeLessThan(1)
+    // the feast window starts at row 6 of her canvas
+    expect(s.y + FEAST_TOP).toBeGreaterThan(0)
+  }
+  expect(SEAT_SIDE.bocchi).toBe('left')
+  expect(SEAT_SIDE.nijika).toBe('left')
+  expect(SEAT_ROW.bocchi).toBeLessThan(SEAT_ROW.nijika)
+  expect(seatAt('ryo').x).toBeGreaterThan(TABLE.farL)
+})
+
+test('the terminal’s table and pot: opaque backdrop cells under the minis at the pot’s corners, the moods by phase', async () => {
+  const cells = hotpotCells(viewOf(9 * MIN))
+  expect(cells.w).toBe(70)
+  expect(cells.h).toBe(34)
+  expect(cells.under.every(c => c !== null)).toBe(true)
+  expect(cells.parts).toEqual([
+    { id: 'bocchi-happy-mini', x: 0, y: 0 },
+    { id: 'nijika-happy-mini', x: 0, y: 18 },
+    { id: 'ryo-happy-mini', x: 54, y: 0 },
+    { id: 'kita-happy-mini', x: 54, y: 18 },
+  ])
+  expect(hotpotCells(viewOf(74 * MIN)).parts.map(p => p.id)).toEqual(['bocchi-hiding-mini', 'nijika-melting-mini', 'ryo-anxious-mini', 'kita-melting-mini'])
+  // cold reads blue
+  expect(hotpotCells(viewOf(74 * MIN)).under[0]).not.toBe(cells.under[0])
+})
+
+test('the scene: the same key gives the same string; the alt moves with the clock while the source does not', async () => {
+  const a = hotpotSvg(viewOf(9 * MIN), { width: 600 })
+  const b = hotpotSvg({ ...viewOf(9 * MIN), now: NOW + 30_000, feast: feastOf(cacheAt(9 * MIN), NOW + 30_000, HOUR) }, { width: 600 })
+  expect(b.svg).toBe(a.svg)
+  expect(a.alt).toBe("the band's hotpot · bubbling, 51m left")
+  expect(b.alt).toBe("the band's hotpot · bubbling, 50m left")
+  expect(a.svg.length).toBeLessThanOrEqual(SVG_LIMIT)
+  expect(a.svg).toMatch(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 288 184" width="1152" height="736">/)
+  // a level step, keepwarm, the platter's step or a moment changes it
+  expect(hotpotSvg(viewOf(30 * MIN), { width: 600 }).svg).not.toBe(a.svg)
+  expect(hotpotSvg(viewOf(9 * MIN, {}, { keepWarmUntil: NOW + HOUR }), { width: 600 }).svg).not.toBe(a.svg)
+  expect(hotpotSvg(viewOf(9 * MIN, {}, { contextTokens: 300_000 }), { width: 600 }).svg).not.toBe(a.svg)
+  expect(hotpotSvg(viewOf(9 * MIN, { hotpot: { ...HOTPOT, moment: { kind: 'keepon', until: NOW + 1000 } } }), { width: 600 }).svg).not.toBe(a.svg)
+  // reduced motion stops the room's motion (the steam, the flames, the speech's turn)
+  expect(a.svg).toContain('@media (prefers-reduced-motion:reduce){*{animation:none!important}}')
+  expect(a.svg).not.toContain('mix-blend-mode')
+})
