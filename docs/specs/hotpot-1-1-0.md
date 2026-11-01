@@ -131,30 +131,33 @@ were read only in the 2.1.308 declarations (the 2.1.299 ones are no longer at ha
 ### The feast, state by state
 
 The table is square and seen from its empty side: Bocchi (far) and Nijika (near) at its left edge, Ryo (far) and Kita
-(near) at its right, each from the waist up, her body turned about 35° toward the pot and her face to us; the table's
-side edges hide their laps. Eating, they look at the pot; reacting (last orders, a held send), at us. How each is
-drawn is Art's and The drawing's; the table below gives what each state shows.
+(near) at its right, each from the waist up, her body turned 30° to 45° toward the pot (about 35°: past 45°, under a
+face to us, it reads as a twisted neck) and her face to us; the table's side edges hide their laps. Eating, they look
+at the pot, but for the bite (the eyes at us as the chopsticks reach the mouth), the chewing (`happy`) and a blink;
+reacting (last orders, a held send), at us on every beat. How each is drawn is Art's and The drawing's; the table
+below gives what each state shows.
 
 | The cache | The feast |
 | --- | --- |
-| nothing cached yet (`none`, `cleared`) | the table set, the lid on the pot, the stove out; Nijika: `What shall we order?` (after `/clear`, Kita: `Fresh table!`) |
+| nothing cached yet (`none`, `cleared`) | the table set, the platter full (as the context fills it), the lid on the pot, the stove out; all four wait, hands on the table; Nijika: `What shall we order?` (after `/clear`, Kita: `Fresh table!`) |
 | level 5 and 4 | a bubbling pot, steam, the platter as full as the context fills it; Bocchi eats shyly and Ryo fast, Nijika serves with her ladle, Kita leans in to photograph the pot (a flash, sparkles); Kita: `So photogenic!`, Ryo: `Seconds.` |
 | level 3 | simmering: half the food, slower chopsticks; Nijika: `Plenty left!` |
 | level 2 | the last few pieces; Bocchi: `It's going…` |
 | level 1, keepwarm off | last orders: a LAST ORDER sign goes up, the flame sputters, one piece of meat is left; all four look up at us, Ryo's chopsticks still at it: `That one's mine.`, Bocchi sweats |
 | cold | an empty, frosted pot, no flame, blue light, snow, gloom lines; Bocchi in her box under a rain cloud, Ryo chewing a weed, Nijika and Kita slumped with melting faces; Nijika: `It went cold…`, Ryo: `…grass.` |
-| keepwarm on | Nijika wears the nabe-bugyō headband (switched on, she ties it on: `Nabe-bugyō, reporting!`) and the stove's knob glows; at level 1 she has the pot: `Leave the pot to me!`; cold, she slumps over the empty pot, the headband still on: `The next order warms it.` |
-| caching off (`off`) | the lid stays on |
-| a ping warms the pot (keepwarm's or a top-up) | Nijika ladles broth in: `Topping it up~`; the food comes back to level 5 |
+| keepwarm on | Nijika wears the nabe-bugyō headband (switched on, it is on: `Nabe-bugyō, reporting!`) and the stove's knob glows; at level 1 she has the pot: `Leave the pot to me!`; cold, she slumps over the empty pot, the headband still on: `The next order warms it.` |
+| caching off (`off`) | the lid stays on, the platter full (as the context fills it), all four waiting as before the first order; no line |
+| a ping warms the pot (keepwarm's or a top-up) | Nijika ladles broth in (broth spilling over her ladle cup's lip into the pot, a ripple stepping out where it lands): `Topping it up~`; the food comes back to level 5 |
 | a re-heat warms the pot | the flame and the food come back to level 5; Bocchi leaves her box: `I-it's warm again…` |
-| a send held by Cache Tax | the bill on the table with the re-write's price and a warm turn's; all four look up at us, Bocchi in a seated panic, hands up; Kita: `The BILL?!` |
-| a held send is paid | the slip goes, the feast comes back; Bocchi: `…paid.` |
+| a send held by Cache Tax | the slip on the table with the re-write's price and a warm turn's; all four look up at us, Bocchi in a seated panic, hands up; Kita: `The BILL?!` |
+| a held send is paid | the slip goes and the feast comes back, staying while the re-sent turn's first step runs (until it books the cache warm); Bocchi: `…paid.` |
 | compacting | zosui: rice and egg swirling in the broth, heavy steam, the four eating it; Nijika: `Zosui time!` |
-| context size | the platter holds about half its pieces under 40k tokens, two thirds to 120k, all from 120k, and a meat tower on top from 250k; the pieces go as the level drops |
+| context size | the platter holds about half its pieces under 40k tokens, two thirds to 120k, all from 120k, and a meat tower on top from 250k; full before the first order and while caching is off, the pieces go as the level drops, none left from last orders on |
 
 One speech line shows at a time, two alternating every 3.5 s where a row names two; the first shows by default and
 only the second's turn is animated, so reduced motion keeps the first. One-shot moments (a ping, a re-heat, keepwarm
-switched on, a paid re-order) last 2.4 s.
+switched on, a paid re-order) last 2.4 s; a paid re-order's feast stays drawn after it until the re-sent turn's first
+step books.
 
 ### The pane (`kessoku-hotpot`)
 
@@ -550,6 +553,10 @@ output tokens ≈ $0.0339, so a day of keepwarm is 24.4 × that ≈ $0.83, and a
 The figures go through the studio and `npm run sprites` like every sprite, drawn on the reference grid; the room, the
 table and every prop no one holds or wears are drawn in `hooks/lib` (below).
 
+The person's bar for the figures: "Re-drawing the characters is ok, just make it pretty and gorgeous." Below stand's
+head anything may be drawn anew (the shoulders, arms and torso); the heads and all their faces are reused as they
+are, and the four feast faces are the only new face art (`bite` is `idle` with its mouth open).
+
 - **A new family, not new moods.** `FeastState` = `eat`, `calm`, `worry`, `wait`, `cold`, `shock`, plus Nijika's
   `serve`. `studio/src/anim/feast.ts` holds the timelines (as `slimes.ts` does), `loadStudio` in
   `studio/scripts/studio.mjs` exports it (so `npm run check` runs its checks), `Root.tsx` registers the compositions,
@@ -559,43 +566,54 @@ table and every prop no one holds or wears are drawn in `hooks/lib` (below).
   her phone) in `feast` (levels 5 and 4) and `zosui`; `calm` in `simmer`, `low` and `tend`; `worry` at `last` (Ryo's
   on `seatPoint`); `cold` once cold; `shock` while `held`. Nijika plays `serve` for a `ping` moment while the other
   three keep theirs.
-- **Four front seats, from the waist up**, seated as under The feast, state by state (a stronger turn than its 35°,
-  under a face to us, reads as a twisted neck). `MemberArt` gains an optional `feast: { side: 'left' | 'right'; waist;
+- **Four front seats, from the waist up**, seated as under The feast, state by state (turned 30° to 45°, about 35°;
+  past 45°, under a face to us, it reads as a twisted neck). `MemberArt` gains an optional `feast: { side: 'left' | 'right'; waist;
   poses; faces; headband? }` (`side` is her edge of the table), and `checkArt` checks what each member has:
   - **Poses**, each keeping stand's head untouched: `seat`, patched on `stand` (the instrument and its headstock gone,
     the torso turned toward the pot, both hands resting on the table); then, patched on `seat`, arms only: `seatPot`
     (her torizara in the near hand, the chopsticks in the far hand in the pot: the far two reach over its back rim,
-    the near two across its side), `seatBowl` (the chopsticks at the bowl) and `seatUp` (at her mouth); and each
-    one's own: Bocchi's `seatPanic` (both hands up), Ryo's `seatPoint` (her chopsticks at the last piece), Nijika's
-    `seatLadle` (the ladle in the pot), Kita's `seatPhone` (the phone held out over the pot in both hands, her
-    shoulders leaning in), and Nijika's and Kita's `seatSlump` (shoulders and arms dropped on the table, the head
-    where `seat` has it). Below her waist only her hair is drawn (Bocchi's falls past it), in a window of rows 6 to
-    69 at the canvas's full width. `waist` is the outer end of her waist, the same in every seat pose.
+    the chopsticks angled down into the broth, the near two across its side), `seatBowl` (the chopsticks at the
+    bowl) and `seatUp` (at her mouth); and each one's own: Bocchi's `seatPanic` (both hands up), Ryo's `seatPoint`
+    (her chopsticks down over the back rim at the last piece), Nijika's `seatLadle` (the ladle in the pot), Kita's
+    `seatPhone` (the phone carried out and down over the pot's right rim in both hands, its lens at the rim, her
+    shoulders and upper torso leaning toward it), and Nijika's and Kita's `seatSlump` (shoulders and arms dropped on
+    the table, the head where `seat` has it). Below her waist only her hair (Bocchi's falls past it) and the far two's
+    chopsticks reaching into the pot are drawn, in a window of rows 6 to 69 at the canvas's full width. `waist` is
+    the outer end of her waist, the same in every seat pose.
   - **The eyes**: `faces` holds feast-only overlays at the face's place: `idlePot`, `halfPot` and `focusPot`, for
     eating (those faces with each iris moved within its eye's whites toward the pot: our right for Bocchi and Nijika,
     our left for Ryo and Kita), and `bite` (the mouth open as the chopsticks reach it, the eyes at us); the chewing
     after a bite is `happy`. These faces are studio art (drawn variants, or an iris shift the studio applies), never
     a runtime trick; the minis gain none.
   - Held props are part of the poses or effects: the torizara, the chopsticks and the food on them (`tips` extended
-    to the seat poses, a new effect `morsel`, colored per food), Kita's phone and its flash (a new effect `flash`),
-    Nijika's ladle, Ryo's weed.
+    to the seat poses, a new effect `morsel`, colored per food), Kita's phone and its flash (a new effect `flash`, on
+    her lens, which the drawing keeps as `KITA_LENS`), Nijika's ladle, Ryo's weed (a new effect `weed`, dipping a row
+    on each chew). The top-up's pour is the drawing's (below), at the ladle's cup.
   - Nijika's headband is `feast.headband`, a patch (its grid and its place on her hair), exported once as the still
     `nijika-feast-headband` on the feast window and drawn over whatever she plays while keepwarm runs (no headband
     copies of her loops).
   - **The checks** (`npm run check`): each seat pose's face region is stand's, checked as the `HEAD_POSES` are (so
-    every face overlay and feast face fits); each seat pose's waist ends at `waist` on her outer side; the window
-    holds the face, the hands and the bowl; a pot-look face differs from the face it comes from only inside the eyes,
-    each iris toward the pot; the tips stay on the canvas; the headband covers only pixels that every seat pose of
-    Nijika's has the same (as the sway is checked); the loops' lengths.
-- **Loops move arms and faces only**: no dx, dy or squash, so each figure stays near 10k to 16k characters at level
-  0 (the prototype's largest is 14.4k) and the four come to 40k to 64k of the 131,072-character Svg. Each state has
-  one length for the members who loop it, beats staggered, as the moods are; `cold` keeps its own: Bocchi's box its
-  3 s loop, Nijika's and Kita's slumps stills, Ryo chewing her weed on a loop of her own (`half` over `seat`).
+    every face overlay and feast face fits), and `seat` keeps stand's whole head (the portrait window down to the
+    face box's foot, hair and outline untouched); each seat pose's waist ends at `waist` on her outer side, with only
+    hair and chopsticks below it; the window holds the face, the hands and the bowl; a pot-look face differs from the
+    face it comes from only inside the eyes, each iris toward the pot; the tips stay on the canvas; the headband
+    covers only pixels that every seat pose of Nijika's has the same (as the sway is checked); the loops' lengths; and
+    the faces each loop plays: in `worry` and `shock` no pot look and no `glance`, in `eat`, `calm` and `serve` only a
+    pot look, `bite`, `happy`, a blink with its half lids beside it and at most one `glance`.
+- **Loops move arms, shoulders and faces only**, by changing pose and face: the head and the waist never move (no dx,
+  dy or squash), so each figure stays near 10k to 16k characters at level 0 (the prototype's largest is 14.4k) and the
+  four come to 40k to 64k of the 131,072-character Svg. A bite goes: into the pot (`seatPot` under a pot look, the
+  food caught on the tips), to the torizara (`seatBowl`), up to the mouth (`seatUp`, `bite`), back at the bowl chewing
+  (`happy`) and a blink, then a pot look again. `wait` is `seat`, both hands resting on the table. Each state has one
+  length for the members who loop it, beats staggered, as the moods are (no two members blink, bite or look round on
+  the same frame); Ryo bites twice to Bocchi's once in the one length, her beats shorter. `cold` keeps its own:
+  Bocchi's box its 3 s loop, Nijika's and Kita's slumps stills, Ryo chewing her weed on a loop of her own (`half` over
+  `seat`).
 - **Reused as they are**: Bocchi's box (`bocchi-hiding`, 12.1k) for her `cold`, at her seat raised 10 rows from where
   her seat poses' 96×96 canvas lies (`box.ts` draws stand's head 20 rows down, so unraised its rim, row 57, would
   fall below her waist), its rim at her chest and her eyes just over it; the faces `idle` and `focus` with sweat for
-  `worry`, the eyes at us (`glance`, a look aside, at most a beat of a loop), `melt` for Nijika's and Kita's `cold`,
-  `panic` for `shock` (Bocchi's over `seatPanic`, not the 51.6k `bocchi-panic`).
+  `worry`, the eyes at us on every beat (no `glance`, no pot look), `melt` for Nijika's and Kita's `cold`, `panic`
+  for `shock` (Bocchi's over `seatPanic`, not the 51.6k `bocchi-panic`).
 - **Growth**: about 24 loops (Bocchi 5, Ryo 6, Nijika 7, Kita 6, the two slumps stills) at about 10 KB each, and the
   headband's still: `sprites.gen.ts` grows from 557 KB to about 800 KB, and about 24 colors of the 100 the alphabet
   still has. No feast minis in 1.1.0.
@@ -612,12 +630,16 @@ table and every prop no one holds or wears are drawn in `hooks/lib` (below).
   and the alt words.
 - The props are pixel art: the room's wall, shoji, plaques, flyer, the LAST ORDER sign (up at last orders), lantern
   and the lamp over the pot as pixel-aligned rects; the donabe, broth at each level, lid, stove, glasses, the platter,
-  ten ingredients, the four zabuton (drawn under the table, each one's corner showing past its edge), the three gig
+  ten ingredients, the four zabuton (drawn under the table, each one's corner showing past its edge, the far two's
+  further out, clear of the near two's heads), the three gig
   bags (Bocchi's guitar, Ryo's bass and Kita's guitar, leaning on the wall) and Bocchi's rain cloud (over her box
   while cold) as `Pix`, built once and memoised the way `kitArt` is, the broth per level and the food (in the pot by
   level, on the platter by level and context) in a small memo. The table is one polygon, so the seats' clips follow
   its side edges exactly. Steam, bubbles, flames, the lantern's sway, sparkles, snow, the cloud's drips and the gloom
-  lines are CSS-classed layers, which the reduced-motion rule stops (the band's SMIL loops play on).
+  lines are CSS-classed layers, which the reduced-motion rule stops (the band's SMIL loops play on); so is the
+  top-up's pour, drawn for a `ping` moment only: whole-pixel rects of broth spilling over the lip of Nijika's ladle's
+  cup (`NIJIKA_CUP`, the studio's tip) toward the pot's middle and a ripple stepping out three rings wide where it
+  lands, played once over the moment (reduced motion keeps the spill and the middle ring as a still).
   Lighting is plain alpha overlays (the room a shade darker than the table under the lamp), never a
   `mix-blend-mode`, which darkens the whole picture in Chromium.
 - Each seat is placed so the outer end of her waist (`feast.waist`, kept in `hotpot.ts` as constants, as `scene.ts`
@@ -625,11 +647,17 @@ table and every prop no one holds or wears are drawn in `hooks/lib` (below).
   is drawn through a clip of everything but the table nearer than her waist (a wrap per seat, as the kit clips Nijika
   on stage), so the table hides her lap and her hair beside it still shows. Bocchi's box takes her seat's place and
   clip.
-- The parts go Bocchi, Ryo, Nijika, the headband (while keepwarm runs), Kita, fitted with one `fitSprites` call given
-  the budget left after the room (as `drawStage` does), so the largest gives up frames first; the headband goes with
-  Nijika when the fit leaves her out. The stove, the pot and what is in it are spliced in after Ryo (`spliceAfter`),
-  so the far two reach over the pot's back rim and the near two sit in front of it; the near glasses, the platter,
-  the steam and the slip come after the band. A `capped` fallback draws the room and the pot without the band.
+- The parts go Bocchi, Ryo, Nijika, the headband (while keepwarm runs), Kita: all four, and the headband while
+  keepwarm runs, drawn whole at `fitSprites`' level 0, none left out and never `capped`, in every phase × platter ×
+  keepwarm × moment (the room leaves the band some 50,000 characters it never needs). One `fitSprites` call given the
+  budget left after the room (as `drawStage` does) stays as the guard: should it ever bind, the largest gives up
+  frames first, and the headband goes with Nijika if the fit leaves her out.
+- The paint order: the stove, the pot and what is in it first, laid inside the band's group under all four; then the
+  far two, who reach over the pot's back rim: while they eat, simmer or watch the last piece their lap clips open again
+  over the pot (`OVER_POT`: the table behind its middle from their waists' row down to the rim's middle, and the
+  rim's lower half), so their chopsticks show crossing the back rim and their tips in the broth; then the near two,
+  in front of it. The near glasses, the platter, the steam, the pour and the slip come after the band. A `capped`
+  fallback draws the room and the pot without the band.
 - `Pix`, `pix`, `pxAt`, `put`, `block`, `oval`, `pline`, `rim`, `layOn`, `pairOf`, `pixPaths`, `Px4`, `boxPaths`,
   `placedArt` and `spliceAfter` (with `DIM_GHOST`) move unchanged from `scene.ts` into a leaf `hooks/lib/pixart.ts`,
   and the text helpers (`f`, `esc`, `svgDoc`, `capped`, the fonts and `TEXT_CSS`, `Face` with `GLYPHS`, `ADV`,
@@ -655,7 +683,8 @@ table and every prop no one holds or wears are drawn in `hooks/lib` (below).
   version never wrote. `KessokuCache` and `KessokuAgent` gain nothing, so the tests' literals of both stand.
 - Module state, which a reload forgets (keepwarm may then ping once more): the fork in flight, the 429 retry's
   timer, the stop after a second 429, a host found to keep no snapshot, the flag by which a Zosui press knows the
-  `session.compact` hook ran, and when the module loaded (for the five-minute evidence's "no reload").
+  `session.compact` hook ran, when the module loaded (for the five-minute evidence's "no reload"), and a paid
+  re-order's turn under way (`paying`: the feast stays drawn until its first step books, or the turn ends).
 
 ## Testing Decisions
 
@@ -670,11 +699,16 @@ The seams, agreed before any test is written:
    P, a day of keepwarm); the wooden board's two lines in every phase, the TTL marks too; the bill's rows and the rows
    left out; the seats and eyes in every phase, Bocchi's box too (Bocchi and Nijika at the table's left edge, Ryo and
    Kita at its right, each placed so the outer end of her waist lies on the table's side edge and the table covers
-   what is below it; the `feast.waist` constants against the sprites' pixels; the far two drawn before the pot, the
-   near two after; no headband without Nijika); every figure the feast draws (the feast family and Bocchi's box)
-   whole, at level 0, within 24,000 characters; the scene under `SVG_LIMIT` with the band in it (never the `capped`
-   fallback) for every phase × platter × keepwarm × moment; the same key giving the same string; the alt words.
-   Catches the arithmetic and the drawing's bounds; misses the wiring and how the picture looks.
+   what is below it; the `feast.waist` constants against the sprites' pixels; the pot under all four, the far two's
+   chopsticks ending in its opening and wholly inside their clips' window over it, the window only theirs and only
+   while they eat; Kita's flash whole and centred on `KITA_LENS`, over the pot; the pour during a ping only, whole
+   pixels from Nijika's cup (`NIJIKA_CUP`, held to the serve loop's cup), played once; each zabuton's corner showing,
+   100 pixels or more clear of the table and the band; no headband without Nijika); every figure the feast draws (the
+   feast family and Bocchi's box) whole, at level 0, within 24,000 characters; the scene under `SVG_LIMIT` with all
+   four (and the headband exactly while keepwarm runs) whole at level 0 in it, never the `capped` fallback, for every
+   phase × platter × keepwarm × moment, and its largest 40,000 characters or more under the limit; the same key
+   giving the same string; the alt words. Catches the arithmetic and the drawing's bounds; misses the wiring and how
+   the picture looks.
 2. **The hooks module through `claude plugin test`**, at public events only: the ♨ button on all three strips and
    under the chalkboard opening the pane (placed, or above the prompt with `unplaced`); the pane on the terminal, the
    desktop and kaomoji (the feast, the wooden board's two lines, the buttons by key); keep the fire on, let it cool
@@ -683,8 +717,9 @@ The seams, agreed before any test is written:
    re-heat warms the pot, from the clock read before the call, only when its read and write reach 0.9 × P, a written
    prefix or a live entry read; zosui's second press calls `$.session.compact`, which the mod's own hook draws and
    settles for the `plugin` trigger); clear fills `/clear`, on the second press over a draft, and arms nothing on
-   `isFilled: false`; the bill (`b`) shows the figures nothing else in the pane does; a paid held send books the tax,
-   and a cold `task-notification` turn a silent one; acts' steps, a `fork: true` act's included, land on their members
+   `isFilled: false`; the bill (`b`) shows the figures nothing else in the pane does; a paid held send books the tax
+   and keeps the feast drawn until its first step books it warm, a send after `/bocchi tax`'s preview plays no
+   `…paid.`, and a cold `task-notification` turn books a silent one; acts' steps, a `fork: true` act's included, land on their members
    (`demo-` acts' nowhere) and never move `lastWarmAt`, so after a long background act the main loop's next step is
    held, or booked as a silent re-order when it is the act's report; `/clear`, and `session.end` with reason `resume`,
    reset the ledger, the band and the cache, drop the engine's price per token and keep the learned TTL and its
@@ -716,9 +751,10 @@ The seams, agreed before any test is written:
    transcript: the kit refuses an empty compaction). Catches wiring, the band's priority and the redraw schedule;
    misses the desktop's paint, the engine's real fork and a missing hook or call.
 3. **The studio**: `npm run check` with Art's feast checks (the seat poses held to stand's face region as
-   `HEAD_POSES` are, the window holding the face, the hands and the bowl, the pot-look eyes, and the rest it lists),
-   one loop length per state (`cold` and `serve` excepted) and the palette, `FEAST_FX_COLORS`
-   included, against the 268-character alphabet.
+   `HEAD_POSES` are and `seat` to stand's whole head, the window holding the face, the hands and the bowl, the
+   pot-look eyes, and the rest it lists), one loop length per state (`cold` and `serve` excepted), the faces each loop
+   plays (reacting at us, eating on the pot) and the palette, `FEAST_FX_COLORS` included, against the 268-character
+   alphabet.
 
 Existing tests that change: the command list, the `/bocchi` verbs and the `/keepwarm` offers in the typeahead tests;
 the help test (help names `/hotpot` and `/bocchi hotpot`; `allOn` gains `compact` and `draft`); the sprite count (98,
