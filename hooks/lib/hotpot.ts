@@ -22,8 +22,9 @@ import { MEMBERS } from './palette'
 import { block, oval, pix, pixPaths, placedArt, pline, put, pxAt, rim, spliceAfter } from './pixart'
 import type { Pix } from './pixart'
 import type { SceneLayout, SceneSvg } from './scene'
-import { animOf, fitSprites, spriteId, SVG_LIMIT } from './sprite'
-import type { SpritePart } from './sprite'
+import { fitSprites, spriteId, SVG_LIMIT } from './sprite'
+import type { SpritePart, SpriteTable } from './sprite'
+import { SPRITES } from './sprites.gen'
 import { capped, esc, f, SANS, sparkle, svgDoc, textWidth } from './svgtext'
 
 type Member = KessokuMember
@@ -973,11 +974,13 @@ export const SEAT_ROW: Readonly<Record<Member, number>> = { bocchi: 112, ryo: 11
  * held by a test to the sprites' own pixels.
  */
 export const FEAST_WAIST: Readonly<Record<Member, { x: number; y: number }>> = {
-  bocchi: { x: 37, y: 53 },
+  bocchi: { x: 37, y: 56 },
   nijika: { x: 38, y: 57 },
-  ryo: { x: 61, y: 57 },
-  kita: { x: 57, y: 53 },
+  ryo: { x: 60, y: 56 },
+  kita: { x: 60, y: 56 },
 }
+/** Kita's phone's lens on her canvas while she holds it out (the studio's `tips.seatPhone`), where her sprite's flash bursts. */
+export const KITA_LENS = { x: 23, y: 31 } as const
 /** The feast view: rows 6 to 69 of her canvas, its full width. */
 export const FEAST_TOP = 6
 export const FEAST_H = 64
@@ -986,17 +989,21 @@ export const BOX_RAISE = 10
 /** The paint order of the band: the far two, then the pot, then the near two. */
 export const SEAT_ORDER: readonly Member[] = ['bocchi', 'ryo', 'nijika', 'kita']
 
-/** Her canvas's top left in the scene: the outer end of her waist on her edge of the table, at her row. */
+/**
+ * Her canvas's top left in the scene: the outer end of her waist on her edge
+ * of the table at her row, the outer side of that pixel on the edge's line
+ * (its left side at the left edge, its right side at the right).
+ */
 export function seatAt(m: Member): { x: number; y: number } {
   const row = SEAT_ROW[m]
-  const edge = Math.round(SEAT_SIDE[m] === 'left' ? edgeL(row) : edgeR(row))
-  return { x: edge - FEAST_WAIST[m].x, y: row - FEAST_WAIST[m].y }
+  const end = SEAT_SIDE[m] === 'left' ? Math.round(edgeL(row)) : Math.round(edgeR(row)) - 1
+  return { x: end - FEAST_WAIST[m].x, y: row - FEAST_WAIST[m].y }
 }
 
-/** The middle of her face in the scene (the face box's middle, 49.5, 34.5 on her canvas). */
+/** The middle of her face in the scene (the face box, 16x10 at 42,30 on her canvas). */
 export function headAt(m: Member): { x: number; y: number } {
   const s = seatAt(m)
-  return { x: s.x + 49.5, y: s.y + 34.5 }
+  return { x: s.x + 50, y: s.y + 35 }
 }
 
 /** The donabe's top left (80 x 33), on the stove in the table's middle; the platter's, in front of it. */
@@ -1477,12 +1484,12 @@ function rainCloud(x: number, y: number): string {
   return s
 }
 
-/** Sparkles round Kita's phone and its flash's glow while she photographs the pot. */
+/** Sparkles on the pot between Kita's phone and the food while she photographs it (the flash is her sprite's, on its lens). */
 function photoSparkles(): string {
-  const h = headAt('kita')
-  const x = h.x - 30
-  const y = h.y + 2
-  return sparkle(x - 8, y - 6, 2.4, '#fff6c0', 'sk') + sparkle(x + 10, y - 10, 1.9, '#ffffff', 'sk') + sparkle(x - 2, y - 14, 1.7, '#ffd6e6', 'sk') + `<circle class="fb" cx="${f(x)}" cy="${f(y)}" r="6" fill="#ffffff" opacity="0"/>`
+  const k = seatAt('kita')
+  const x = k.x + KITA_LENS.x
+  const y = k.y + KITA_LENS.y
+  return sparkle(x - 12, y - 5, 2.4, '#fff6c0', 'sk') + sparkle(x - 5, y - 13, 1.9, '#ffffff', 'sk') + sparkle(x - 21, y - 11, 1.7, '#ffd6e6', 'sk')
 }
 
 /** A speech bubble over her head; of two, the second shows in turn. */
@@ -1517,7 +1524,6 @@ const SCENE_CSS =
   '.zs{transform-box:fill-box;transform-origin:50% 50%;animation:zs 6s linear infinite}@keyframes zs{to{transform:rotate(360deg)}}' +
   '.lt{transform-origin:10px 0;animation:lt 4.8s ease-in-out infinite alternate}@keyframes lt{from{transform:rotate(-3deg)}to{transform:rotate(3deg)}}' +
   '.sk{animation:sk 2.2s ease-in-out infinite}@keyframes sk{0%,100%{opacity:.2}50%{opacity:1}}' +
-  '.fb{animation:fb 2.8s linear infinite}@keyframes fb{0%,70%{opacity:0}74%{opacity:.85}86%,100%{opacity:0}}' +
   '.sn{animation:sn 6s linear infinite}@keyframes sn{from{transform:translateY(-8px)}to{transform:translateY(120px)}}' +
   '.dr{animation:dr 1.1s linear infinite}@keyframes dr{from{transform:translateY(0);opacity:1}to{transform:translateY(8px);opacity:0}}' +
   '.gm{animation:gm 2.4s ease-in-out infinite}@keyframes gm{0%,100%{opacity:.5}50%{opacity:1}}' +
@@ -1525,6 +1531,9 @@ const SCENE_CSS =
   '.sa{animation:sa 7s steps(1,end) infinite}@keyframes sa{0%{opacity:1}50%{opacity:0}}' +
   '.sb{opacity:0;animation:sb 7s steps(1,end) infinite}@keyframes sb{0%{opacity:0}50%{opacity:1}}' +
   '@media (prefers-reduced-motion:reduce){*{animation:none!important}}'
+
+/** Nijika's headband: one still on the feast window, drawn over whatever she plays while keepwarm runs. */
+export const HEADBAND = 'nijika-feast-headband'
 
 /** The band's parts, in paint order (Bocchi, Ryo, Nijika, the headband while keepwarm runs, Kita), each with her lap's clip. */
 export function bandParts(phase: FeastPhase, moment: KessokuHotpot['moment'], keepwarm: boolean): { parts: SpritePart[]; wraps: string[] } {
@@ -1537,11 +1546,33 @@ export function bandParts(phase: FeastPhase, moment: KessokuHotpot['moment'], ke
     parts.push(state === 'box' ? { id: seatSpriteId(m, state), x: s.x, y: s.y - BOX_RAISE } : { id: seatSpriteId(m, state), x: s.x, y: s.y + FEAST_TOP })
     wraps.push(`clip-path="url(#lp${m[0]})"`)
     if (m === 'nijika' && keepwarm) {
-      parts.push({ id: 'nijika-feast-headband', x: s.x, y: s.y + FEAST_TOP })
+      parts.push({ id: HEADBAND, x: s.x, y: s.y + FEAST_TOP })
       wraps.push(`clip-path="url(#lp${m[0]})"`)
     }
   }
   return { parts, wraps }
+}
+
+/**
+ * The band fitted into `budget` characters with `then` (the stove and the
+ * pot) spliced in after Ryo, the second part: the largest gives up frames
+ * first, and the headband goes with Nijika when the fit leaves her out.
+ * `levels` and `parts` are the fit's, over the parts the table has.
+ */
+export function fitBand(parts: readonly SpritePart[], wraps: readonly string[], then: string, budget: number, table: SpriteTable = SPRITES): { markup: string; levels: number[]; parts: SpritePart[] } {
+  const fit = (list: readonly SpritePart[], wrapList: readonly string[]) => {
+    const r = fitSprites(list, budget, table)
+    return { markup: spliceAfter(r.markup, list, list.map((_p, i) => (i === 1 ? then : '')), wrapList), levels: r.levels, parts: list.filter(p => table[p.id] !== undefined) }
+  }
+  const first = fit(parts, wraps)
+  const nijikaAt = first.parts.findIndex(p => p.id.startsWith('nijika-feast-') && p.id !== HEADBAND)
+  const hasHeadband = first.parts.some(p => p.id === HEADBAND)
+  if (!hasHeadband || (nijikaAt >= 0 && (first.levels[nijikaAt] ?? 0) >= 0)) return first
+  const kept = parts.map((p, i) => [p, wraps[i] ?? ''] as const).filter(([p]) => p.id !== HEADBAND)
+  return fit(
+    kept.map(([p]) => p),
+    kept.map(([, w]) => w),
+  )
 }
 
 /** What the scene's source depends on, and nothing else (no clock): the same key, the same string. */
@@ -1588,22 +1619,8 @@ export function hotpotSvg(v: HotpotView, layout: SceneLayout): SceneSvg {
   after += lines.map(([m, t], i) => bubble(m, t, lines.length === 1 ? 'sp' : i === 0 ? 'sa' : 'sb')).join('')
   const open = svgDoc(SCENE_W, SCENE_H, '', SCENE_CSS).replace(/<\/svg>$/, '')
   const chrome = open.length + back.length + potStuff.length + after.length + '</svg>'.length
-  const { parts, wraps } = bandParts(phase, moment, keepwarm)
-  const fit = (list: SpritePart[], wrapList: string[]) => {
-    const r = fitSprites(list, SVG_LIMIT - chrome - 64)
-    return { r, markup: spliceAfter(r.markup, list, list.map((_p, i) => (i === 1 ? potStuff : '')), wrapList) }
-  }
-  let { r, markup } = fit(parts, wraps)
-  // The headband goes with Nijika when the fit leaves her out.
-  const present = parts.filter(p => animOf(p.id) !== undefined)
-  const nijikaAt = present.findIndex(p => p.id.startsWith('nijika-feast-') && p.id !== 'nijika-feast-headband')
-  if (keepwarm && nijikaAt >= 0 && (r.levels[nijikaAt] ?? 0) < 0) {
-    const kept = parts.map((p, i) => [p, wraps[i] as string] as const).filter(([p]) => p.id !== 'nijika-feast-headband')
-    ;({ r, markup } = fit(
-      kept.map(([p]) => p),
-      kept.map(([, w]) => w),
-    ))
-  }
+  const band = bandParts(phase, moment, keepwarm)
+  const { markup } = fitBand(band.parts, band.wraps, potStuff, SVG_LIMIT - chrome - 64)
   // With no sprite of the band to place it after, the pot still stands.
   const body = markup.includes(potStuff) ? markup : markup + CRISP(potStuff)
   const svg = capped(`${open}${back}${body}${after}</svg>`, () => `${open}${back}${CRISP(potStuff)}${after}</svg>`)

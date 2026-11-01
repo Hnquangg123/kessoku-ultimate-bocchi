@@ -485,7 +485,9 @@ test('the seats sit at the table’s side edges, each with the outer end of her 
     const waist = { x: s.x + FEAST_WAIST[m].x, y: s.y + FEAST_WAIST[m].y }
     const edge = SEAT_SIDE[m] === 'left' ? edgeL(SEAT_ROW[m]) : edgeR(SEAT_ROW[m])
     expect(waist.y).toBe(SEAT_ROW[m])
-    expect(Math.abs(waist.x - edge)).toBeLessThan(1)
+    // the outer side of her waist's last pixel on the edge's line: its left side at the left edge, its right side at the right
+    const outer = SEAT_SIDE[m] === 'left' ? waist.x : waist.x + 1
+    expect(Math.abs(outer - edge)).toBeLessThanOrEqual(0.5)
     // the feast window starts at row 6 of her canvas
     expect(s.y + FEAST_TOP).toBeGreaterThan(0)
   }
