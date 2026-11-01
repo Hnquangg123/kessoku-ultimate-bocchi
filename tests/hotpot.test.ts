@@ -16,6 +16,7 @@ import {
   HEADBAND,
   HELD_PROMPT_MS,
   INITIAL_LEDGER,
+  KITA_LENS,
   NIJIKA_CUP,
   OVER_POT,
   SEAT_ORDER,
@@ -740,6 +741,47 @@ test('the far two reach over the pot’s back rim into its opening, through the 
     for (const k of ['b', 'r']) expect(clip(svg, k).includes(window)).toBe(open)
     for (const k of ['n', 'k']) expect(clip(svg, k)).not.toContain(window)
   }
+})
+
+test('Kita’s flash bursts on KITA_LENS: every flash in her eat loop is whole and centred there, over the pot', async () => {
+  const id = 'kita-feast-eat'
+  const anim = animOf(id)
+  if (anim === undefined) throw new Error(id)
+  /** The flash's rays: the effect's own pale yellow (the studio's FLASH_COLOR), on nothing else of hers. */
+  const RAY = '#fff6cf'
+  let flashes = 0
+  for (let i = 0; i < anim.frames.length; i += 1) {
+    const px = framePixels(id, i)
+    let x0 = Infinity
+    let x1 = -Infinity
+    let y0 = Infinity
+    let y1 = -Infinity
+    for (let k = 0; k < px.length; k += 1) {
+      if (px[k] !== RAY) continue
+      const x = k % anim.w
+      const y = Math.floor(k / anim.w) + FEAST_TOP
+      x0 = Math.min(x0, x)
+      x1 = Math.max(x1, x)
+      y0 = Math.min(y0, y)
+      y1 = Math.max(y1, y)
+    }
+    if (x0 === Infinity) continue
+    flashes += 1
+    // 9x9, none of it cut off by her canvas, its middle on the lens
+    expect([x1 - x0, y1 - y0]).toEqual([8, 8])
+    expect([(x0 + x1) / 2, (y0 + y1) / 2]).toEqual([KITA_LENS.x, KITA_LENS.y])
+  }
+  expect(flashes).toBeGreaterThan(0)
+  // and the lens over the pot in the scene: on its rim's oval or its wall below it
+  const k = seatAt('kita')
+  const x = k.x + KITA_LENS.x + 0.5
+  const y = k.y + KITA_LENS.y + 0.5
+  const onRim = ((x - 144) / 31.6) ** 2 + ((y - 124) / 11.4) ** 2 <= 1
+  const j = Math.floor(y) - 124
+  const onWall = j >= 0 && j <= 20 && Math.abs(x - 144) < Math.round(32 - 12 * Math.pow(j / 20, 1.7))
+  expect(onRim || onWall).toBe(true)
+  expect(x).toBeLessThan(171)
+  expect(y).toBeGreaterThan(130)
 })
 
 test('Nijika’s top-up pours: broth over her ladle’s lip and a ripple stepping out, during a ping only, in whole pixels, played once', async () => {

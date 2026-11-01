@@ -1,51 +1,52 @@
-// Kita photographing the pot (a feast: "So photogenic!"), patched on her seat: the phone held out
-// toward the pot in both hands, its back to us in a Pelham Blue case (her guitar's blue: a, A, i), the lens and its
-// glint at its top left (23,31: the flash bursts there), her hands on its lower corners; the far arm bent up from
-// the elbow at her side, the near one reaching across in front of her, her shoulders leaning in; the cardigan whole
-// under where her forearms lay. (Her arms reach no further than this: the phone is held out toward the pot, at the
-// right of its rim in the scene, as the prototype held it.)
+// Kita photographing the pot (a feast: "So photogenic!"), patched on her seat: leaning in, she carries
+// the phone out and down over the pot's right rim in both hands, its back to us in a Pelham Blue case (her guitar's
+// blue: a, A, i) tilted down into the pot, the lens and its glint at its lower end (8,38: the flash bursts there, over
+// the rim in the scene); the near hand round its upper end, the far one under it by the lens, their ribbed cuffs; both
+// arms bent at the elbow, the far one behind her left flip, the near one across in front of her from the dropped near
+// shoulder; the cardigan whole under where her forearms lay, its near side drawn in toward the pot (from 56 under her
+// hair to the waist's 60). The head is stand's, untouched, and nothing moves it.
 
 import type { Point, SeatPoseDef } from '../../types'
 
-/** The phone held out toward the pot in both hands (its lens at 23,31). */
+/** Leaning in, the phone carried out and down over the pot's right rim in both hands (its lens at 8,38). */
 export const seatPhone: SeatPoseDef = {
   from: 'seat',
   patches: [
-    // 44x26 at 19,30
+    // 57x26 at 6,30
     {
-      x: 19,
+      x: 6,
       y: 30,
       grid: [
-        '....PPPPPPPPP...............................', // 30
-        '...PoWaaaaaaaP..............................', // 31
-        '...PooaaaaaaAP..............................', // 32
-        '...PaaAAAAAAAP..............................', // 33
-        '.PPPAAAAAAAAiPP.............................', // 34
-        'PssPiiiiiiiiPssP............................', // 35
-        'PsssPPPPPPPPSssP............................', // 36
-        'PSssSP....PSssSP............................', // 37
-        '.PSsSP.....PSsSP............................', // 38
-        '..PPPlP....PPPPlP...........................', // 39
-        '...PJjlP....PJJllPP.........................', // 40
-        '....PJjlP....PJJjllP........................', // 41
-        '.....PJjlP....PPJJllPP......................', // 42
-        '......PJjlP.....PJJlllP............PPPP.....', // 43
-        '.......PJjlP......JJJllP.......PPPPllllP....', // 44
-        '........PJj......lPPJJ.lPP..PPPlllljj.jP....', // 45
-        '.........P......lj..PJJjllPPllll..jjJJJPl.jP', // 46
-        '................J.JJJPPJ.llP....JJ.JPPPjl.jP', // 47
-        '.................PPPPjkPJ..lPJJJJPPPk...jljP', // 48
-        '...............___PJ.j..PPJPJPPPP.jj....jl..', // 49
-        '................__PJjjjjj....j..j.jj......P_', // 50
-        '................__PJ......jjjLjjjjjj......P_', // 51
-        '................._PJ.....jjjjj.j.jjjjjjj.lP_', // 52
-        '................._P..jjjjjjjjj.j..........P_', // 53
-        '.................PJJjjjjjjjjjL.jjjjjjjjjjP_.', // 54
-        '.................PJJj....jjjjjjjjjjjjjjjj...', // 55
+        '..............PP.........................................', // 30
+        '............PPaaP........................................', // 31
+        '..........PPaaAAP........................................', // 32
+        '........PPaaAAAAiP.......................................', // 33
+        '......PPaaAAAAAAPPP......................................', // 34
+        '....PPaaAAAAAAiPsssP.....................................', // 35
+        '..PPaaAAAAAAiiPSsssP.....................................', // 36
+        'PPaaAAAAAAiiPPPSsSsP.....................................', // 37
+        'PaWoAAAAiIPP...PPSsPPP...................................', // 38
+        '.PooAAiPPP......PJjPllP..................................', // 39
+        '.PAAiIPsssP.......PJjllP.................................', // 40
+        '..PIPPSsssPP......PJJjllPP...............................', // 41
+        '..PP.PSsSsPlPP.....PPJJjllP..............................', // 42
+        '......PPJjPlllP......PJJjllPP............................', // 43
+        '.........PJJJllPP.....PPJJjllP...........................', // 44
+        '..........PPJJjllP......PJJjllPP.........................', // 45
+        '............PPJJllPP.....PJJjjllPjjkj..J.......jJlP_____.', // 46
+        '..............PJJjllP.....PPJJjllPjk.j.J.......PPPPP____.', // 47
+        '...............PPJJl.........J...lPP..jJ..jPPPPllllPP___.', // 48
+        '.................PJJJ......._.PJJ.llP..PPPPlllljj..P..P_.', // 49
+        '..................PPJJjlPPP..__PJJjll..llll..j.jJJJPlP___', // 50
+        '....................PPJPP....__PPPJJ.ll.jjjjJJJJ.PP..lP__', // 51
+        '.....................PPP......_PJ.PJJ.lPJJ.JPPPPjjjjj.lP_', // 52
+        '.............................._P..jP..jPPPPPj..........P_', // 53
+        '..............................PJJjjj...PjjL.jjjjjjjjjjP_.', // 54
+        '..............................PJJj....jjjjjjjjjjjjjjjj...', // 55
       ],
     },
   ],
 }
 
 /** Where the phone's lens is (canvas pixels): the feast centres her flash there. */
-export const tips: { seatPhone: Point } = { seatPhone: { x: 23, y: 31 } }
+export const tips: { seatPhone: Point } = { seatPhone: { x: 8, y: 38 } }

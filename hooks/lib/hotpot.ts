@@ -979,8 +979,8 @@ export const FEAST_WAIST: Readonly<Record<Member, { x: number; y: number }>> = {
   ryo: { x: 60, y: 56 },
   kita: { x: 60, y: 56 },
 }
-/** Kita's phone's lens on her canvas while she holds it out (the studio's `tips.seatPhone`), where her sprite's flash bursts. */
-export const KITA_LENS = { x: 23, y: 31 } as const
+/** Kita's phone's lens on her canvas, held out over the pot's right rim (the studio's `tips.seatPhone`), where her sprite's flash bursts. */
+export const KITA_LENS = { x: 8, y: 38 } as const
 /** Nijika's ladle's cup on her canvas, in the broth at the pot's left edge (the studio's `tips.seatLadle`): where a top-up pours from. */
 export const NIJIKA_CUP = { x: 93, y: 33 } as const
 /** The feast view: rows 6 to 69 of her canvas, its full width. */
