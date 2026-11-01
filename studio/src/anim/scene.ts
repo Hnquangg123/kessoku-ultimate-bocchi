@@ -2,23 +2,34 @@
 // on the box), the hair's sway, the squash, the melt, the move, then the
 // effects; cropped to the 32x32 portrait window for the small spots. The mini
 // (16x16) is the member's hand-drawn mini rig with the scene scaled down onto
-// it, or, for a member without one, the portrait halved.
+// it, or, for a member without one, the portrait halved. The feast (the band
+// at the Hotpot's table) is drawn the same way on a seat pose and cropped to
+// its window, rows 6-69 of the canvas at its full width.
 
-import { OUTLINE, blank, crop, downscale2, gridSize, headOffset, melt, resolvePose, shift, solidMask, squash, stamp, stampFx, stampFxMini } from '../art/compose'
+import { OUTLINE, blank, crop, downscale2, gridSize, headOffset, isSeatPose, melt, resolvePose, shift, solidMask, squash, stamp, stampFx, stampFxMini } from '../art/compose'
 import type { MeltInk, Pixels } from '../art/compose'
 import { FX_MINI, fxSize } from '../art/fx'
-import type { Grid, MemberArt, MemberId, MiniArt, Mood, Palette } from '../art/types'
-import { H, MINI, PH, PW, W } from '../art/types'
+import type { AnyPose, FaceName, FeastFace, Grid, MemberArt, MemberId, MiniArt, Mood, Palette } from '../art/types'
+import { FEAST_H, FEAST_Y, H, MINI, PH, PW, W } from '../art/types'
 import { sceneAt } from './moods'
 import type { Fx, Scene } from './moods'
 
-export type View = 'full' | 'portrait' | 'mini'
+/** The full figure (96x96), the portrait window (32x32), the mini (16x16), or the feast's window (96x64: a seat pose's rows 6-69). */
+export type View = 'full' | 'portrait' | 'mini' | 'feast'
+
+/** A scene of the stage (a mood's frame) or of the table (a feast loop's: a seat pose, a feast face, never moved or squashed). */
+export type AnyScene = Omit<Scene, 'pose' | 'face'> & { pose: AnyPose; face?: FaceName | FeastFace }
+
+/** A face's grid: a face overlay, or one of her feast faces. */
+function faceGrid(art: MemberArt, face: FaceName | FeastFace): Grid | undefined {
+  return (art.face.grids as Readonly<Record<string, Grid>>)[face] ?? art.feast?.faces[face as FeastFace]
+}
 
 /** The soles' row: where `on: 'ground'` effects measure from. */
 export const GROUND = 93
 
 /** Where the portrait window sits for a scene's pose, before the scene's squash and move. */
-export function windowOf(art: MemberArt, scene: Pick<Scene, 'pose'>): { x: number; y: number } {
+export function windowOf(art: MemberArt, scene: Pick<AnyScene, 'pose'>): { x: number; y: number } {
   if (scene.pose === 'box') return art.boxHead
   const { dx, dy } = headOffset(art, scene.pose)
   return { x: art.head.x + dx, y: art.head.y + dy }
@@ -82,7 +93,7 @@ function faceFoot(face: { y: number; grids: Readonly<Record<string, Grid>> }): n
 }
 
 /** The figure alone (no effects, no move): pose, face or peek, sway, squash, melt. */
-function figure(art: MemberArt, scene: Scene): { px: Pixels; sank: number; squashed: number } {
+function figure(art: MemberArt, scene: AnyScene): { px: Pixels; sank: number; squashed: number } {
   const grid = resolvePose(art, scene.pose)
   let px = stamp(blank(), grid, art.palette, 0, 0)
   const box = scene.pose === 'box'
@@ -90,7 +101,8 @@ function figure(art: MemberArt, scene: Scene): { px: Pixels; sank: number; squas
     if (scene.peek) stamp(px, art.peek.grids[scene.peek], art.palette, art.peek.x, art.peek.y)
   } else {
     const { dx, dy } = headOffset(art, scene.pose)
-    if (scene.face) stamp(px, art.face.grids[scene.face], art.palette, art.face.x + dx, art.face.y + dy)
+    const face = scene.face ? faceGrid(art, scene.face) : undefined
+    if (face) stamp(px, face, art.palette, art.face.x + dx, art.face.y + dy)
     // The sway overlays are drawn for the hair of stand, playA and playB; the other poses keep their own hair.
     const sway = scene.sway ? art.sway?.[scene.sway] : undefined
     if (sway && (scene.pose === 'stand' || scene.pose === 'playA' || scene.pose === 'playB')) stamp(px, sway.grid, art.palette, sway.x, sway.y)
@@ -108,12 +120,16 @@ function figure(art: MemberArt, scene: Scene): { px: Pixels; sank: number; squas
 }
 
 /** Where a body effect (`on: 'body'`, canvas pixels on the pose) lands: with the move, and the squash above the bend. */
-function onBody(art: MemberArt, scene: Scene, f: Fx, squashed: number): { x: number; y: number } {
+function onBody(art: MemberArt, scene: AnyScene, f: Fx, squashed: number): { x: number; y: number } {
   return { x: f.x + scene.dx, y: f.y + (f.y < art.bend ? squashed : 0) + scene.dy }
 }
 
-export function drawScene(art: MemberArt, scene: Scene, view: View): Pixels {
-  if (view === 'mini') return art.mini ? drawMini(art, art.mini, scene) : downscale2(drawScene(art, scene, 'portrait'))
+export function drawScene(art: MemberArt, scene: AnyScene, view: View): Pixels {
+  if (view === 'feast') return crop(drawScene(art, scene, 'full'), 0, FEAST_Y, W, FEAST_H)
+  if (view === 'mini') {
+    if (isSeatPose(scene.pose)) throw new Error(`the feast has no mini view (${art.id} ${scene.pose})`)
+    return art.mini ? drawMini(art, art.mini, scene as Scene) : downscale2(drawScene(art, scene, 'portrait'))
+  }
   const { px: still, sank, squashed } = figure(art, scene)
   const px = shift(still, scene.dx, scene.dy)
   const win = windowOf(art, scene)
@@ -156,7 +172,7 @@ export function drawScene(art: MemberArt, scene: Scene, view: View): Pixels {
 }
 
 /** How far the head moves inside the portrait window: a jump's dy, but at most a row down and only as high as the pose's hair has room. */
-function portraitLift(art: MemberArt, scene: Scene): number {
+function portraitLift(art: MemberArt, scene: AnyScene): number {
   return Math.max(-headroom(resolvePose(art, scene.pose), windowOf(art, scene)), Math.min(1, scene.dy))
 }
 

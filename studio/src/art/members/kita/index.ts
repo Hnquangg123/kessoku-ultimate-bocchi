@@ -36,16 +36,21 @@ import type { FaceName, Grid, HeadOffset, MemberArt, Overlay, Point, PoseDef } f
 import * as box from './box'
 import * as cheer from './cheer'
 import * as crouch from './crouch'
+import * as eat from './eat'
 import * as faces from './faces'
+import * as feastFaces from './feast-faces'
 import * as mini from './mini'
 import * as palette from './palette'
 import * as panic from './panic'
 import * as play from './play'
+import * as seat from './seat'
+import * as seatPhone from './seat-phone'
+import * as seatSlump from './seat-slump'
 import * as slime from './slime'
 import * as stand from './stand'
 import * as sway from './sway'
 
-const { palette: merged, colorSources } = memberPalette({ palette, stand, play, crouch, cheer, panic, box, faces, sway, mini, slime })
+const { palette: merged, colorSources } = memberPalette({ palette, stand, play, crouch, cheer, panic, box, faces, sway, mini, slime, seat, eat, seatPhone, seatSlump })
 
 /** One pixel of the stand's polish, at x, y on the stand: the old stand's character there, and the polished one. */
 type Touch = readonly [x: number, y: number, was: string, now: string]
@@ -151,4 +156,12 @@ export const kita: MemberArt = {
   boxHead: box.boxHead,
   mini: mini.mini,
   slime: slime.slime,
+  tips: { ...eat.tips, ...seatPhone.tips },
+  feast: {
+    side: seat.side,
+    waist: seat.waist,
+    poses: { seat: seat.seat, seatPot: eat.seatPot, seatBowl: eat.seatBowl, seatUp: eat.seatUp, seatPhone: seatPhone.seatPhone, seatSlump: seatSlump.seatSlump },
+    faces: feastFaces.feastFaces,
+    eyes: feastFaces.eyes,
+  },
 }
