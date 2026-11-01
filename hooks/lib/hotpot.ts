@@ -981,6 +981,8 @@ export const FEAST_WAIST: Readonly<Record<Member, { x: number; y: number }>> = {
 }
 /** Kita's phone's lens on her canvas while she holds it out (the studio's `tips.seatPhone`), where her sprite's flash bursts. */
 export const KITA_LENS = { x: 23, y: 31 } as const
+/** Nijika's ladle's cup on her canvas, in the broth at the pot's left edge (the studio's `tips.seatLadle`): where a top-up pours from. */
+export const NIJIKA_CUP = { x: 93, y: 33 } as const
 /** The feast view: rows 6 to 69 of her canvas, its full width. */
 export const FEAST_TOP = 6
 export const FEAST_H = 64
@@ -1558,6 +1560,29 @@ function photoSparkles(): string {
   return sparkle(x - 12, y - 5, 2.4, '#fff6c0', 'sk') + sparkle(x - 5, y - 13, 1.9, '#ffffff', 'sk') + sparkle(x - 21, y - 11, 1.7, '#ffd6e6', 'sk')
 }
 
+/** The ripples a pour sends out, each a stepped ring of rows [dy, from dx, to dx] round where it lands: small, wider, widest. */
+const RIPPLES: readonly (readonly (readonly [number, number, number])[])[] = [
+  [[-1, -1, 1], [0, -2, -2], [0, 2, 2], [1, -1, 1]],
+  [[-1, -2, 2], [0, -4, -3], [0, 3, 4], [1, -2, 2]],
+  [[-2, -3, 3], [-1, -5, -4], [-1, 4, 5], [0, -6, -6], [0, 6, 6], [1, -5, -4], [1, 4, 5], [2, -3, 3]],
+]
+
+/**
+ * Nijika topping the pot up (a ping's moment): broth spilling over her ladle's cup's lip toward the pot's middle,
+ * then a ripple stepping out on the broth where it lands, whole pixels, played once over the moment (`.pour`,
+ * `.pr1` to `.pr3`); with motion reduced, the spill and the middle ring stay as a still.
+ */
+function pourMarkup(): string {
+  const n = seatAt('nijika')
+  const x = n.x + NIJIKA_CUP.x
+  const y = n.y + NIJIKA_CUP.y
+  const spill = R(x + 3, y - 1, 1, 1, '#fff4c8') + R(x + 3, y, 2, 1, '#f7d27a') + R(x + 5, y + 1, 2, 1, '#e8ad4c')
+  const lx = x + 8
+  const ly = y + 1
+  const ring = (i: number, color: string) => (RIPPLES[i] ?? []).map(([dy, a, b]) => R(lx + a, ly + dy, b - a + 1, 1, color)).join('')
+  return CRISP(`<g class="pour">${spill}</g><g class="pr1">${ring(0, '#fffaf0')}</g><g class="pr2">${ring(1, '#fff4c8')}</g><g class="pr3">${ring(2, '#fff4c8')}</g>`)
+}
+
 /** A speech bubble over her head; of two, the second shows in turn. */
 function bubble(m: Member, text: string, cls: string): string {
   const h = headAt(m)
@@ -1596,6 +1621,10 @@ const SCENE_CSS =
   '.kb{animation:kb 1.8s ease-in-out infinite}@keyframes kb{0%,100%{opacity:.3}50%{opacity:.75}}' +
   '.sa{animation:sa 7s steps(1,end) infinite}@keyframes sa{0%{opacity:1}50%{opacity:0}}' +
   '.sb{opacity:0;animation:sb 7s steps(1,end) infinite}@keyframes sb{0%{opacity:0}50%{opacity:1}}' +
+  '.pour{animation:pour 2.4s steps(1,end) 1 forwards}@keyframes pour{0%{opacity:1}75%{opacity:0}100%{opacity:0}}' +
+  '.pr1{opacity:0;animation:pr1 2.4s steps(1,end) 1 forwards}@keyframes pr1{0%{opacity:0}8%{opacity:1}40%{opacity:0}100%{opacity:0}}' +
+  '.pr2{animation:pr2 2.4s steps(1,end) 1 forwards}@keyframes pr2{0%{opacity:0}33%{opacity:1}70%{opacity:0}100%{opacity:0}}' +
+  '.pr3{opacity:0;animation:pr3 2.4s steps(1,end) 1 forwards}@keyframes pr3{0%{opacity:0}58%{opacity:.7}92%{opacity:0}100%{opacity:0}}' +
   '@media (prefers-reduced-motion:reduce){*{animation:none!important}}'
 
 /** Nijika's headband: one still on the feast window, drawn over whatever she plays while keepwarm runs. */
@@ -1659,8 +1688,8 @@ const sceneMemo = new Map<string, SceneSvg>()
 /**
  * The feast: the room, the table and its cushions, the stove and the pot, the
  * far two seated (their chopsticks over its back rim), the near two, the
- * platter and the steam, the slip during a hold, the room's light and the
- * speech; the band fitted into what the room leaves of the Svg's limit, the
+ * platter and the steam, Nijika's pour at a top-up, the slip during a hold,
+ * the room's light and the speech; the band fitted into what the room leaves of the Svg's limit, the
  * largest giving up frames first. Memoised on its key, so an unchanged feast
  * is the same string.
  */
@@ -1681,6 +1710,7 @@ export function hotpotSvg(v: HotpotView, layout: SceneLayout): SceneSvg {
   const n = seatAt('nijika')
   const k = seatAt('kita')
   let after = CRISP(at(n.x + FEAST_WAIST.nijika.x + 30, 143, P.glass.nijika) + at(k.x + FEAST_WAIST.kita.x - 40, 143, P.glass.kita) + at(PLATTER.x, PLATTER.y, P.platter) + platterFood(phase, level, platterTier(v.cache.contextTokens))) + steam(phase)
+  if (moment?.kind === 'ping') after += pourMarkup()
   if (phase === 'held' && v.slip !== null) after += slipMarkup(v.slip)
   if (phase === 'feast' && moment === null) after += photoSparkles()
   if (phase === 'cold') {

@@ -16,6 +16,7 @@ import {
   HEADBAND,
   HELD_PROMPT_MS,
   INITIAL_LEDGER,
+  NIJIKA_CUP,
   OVER_POT,
   SEAT_ORDER,
   SEAT_ROW,
@@ -739,6 +740,34 @@ test('the far two reach over the pot’s back rim into its opening, through the 
     for (const k of ['b', 'r']) expect(clip(svg, k).includes(window)).toBe(open)
     for (const k of ['n', 'k']) expect(clip(svg, k)).not.toContain(window)
   }
+})
+
+test('Nijika’s top-up pours: broth over her ladle’s lip and a ripple stepping out, during a ping only, in whole pixels, played once', async () => {
+  const kinds = [null, 'ping', 'reheat', 'keepon', 'paid'] as const
+  for (const age of [5 * MIN, 30 * MIN, 74 * MIN])
+    for (const kind of kinds) {
+      const svg = hotpotSvg(viewOf(age, { hotpot: { ...HOTPOT, moment: kind === null ? null : { kind, until: NOW + 1 } } }), { width: 600 }).svg
+      expect(svg.includes('<g class="pour">')).toBe(kind === 'ping')
+    }
+  const svg = hotpotSvg(viewOf(9 * MIN, { hotpot: { ...HOTPOT, moment: { kind: 'ping', until: NOW + 1 } } }), { width: 600 }).svg
+  const at = svg.indexOf('<g class="pour">')
+  const pour = svg.slice(at, svg.indexOf('</g></g>', svg.indexOf('<g class="pr3">')))
+  const rects = [...pour.matchAll(/<rect x="([^"]+)" y="([^"]+)" width="([^"]+)" height="([^"]+)"/g)]
+  expect(rects.length).toBeGreaterThan(10)
+  for (const m of rects) for (const v of m.slice(1)) expect(Number.isInteger(Number(v))).toBe(true)
+  // it starts over the cup's lip, beside the cup, and lands in the broth toward the pot's middle
+  const n = seatAt('nijika')
+  expect(pour.startsWith(`<g class="pour"><rect x="${n.x + NIJIKA_CUP.x + 3}" y="${n.y + NIJIKA_CUP.y - 1}"`)).toBe(true)
+  for (const m of rects) expect(Number(m[1])).toBeGreaterThan(n.x + NIJIKA_CUP.x)
+  // one pass over the moment; the spill and the middle ring show unanimated, the first and last rings only in turn
+  expect(svg).toContain('.pour{animation:pour 2.4s steps(1,end) 1 forwards}')
+  expect(svg).toContain('.pr1{opacity:0;')
+  expect(svg).toContain('.pr3{opacity:0;')
+  expect(svg).not.toContain('.pr2{opacity:0;')
+  // the cup is the art's: her ladle's cup is drawn there in every frame of her serve
+  const anim = animOf('nijika-feast-serve')
+  if (anim === undefined) throw new Error('nijika-feast-serve')
+  for (let i = 0; i < anim.frames.length; i += 1) expect(framePixels('nijika-feast-serve', i)[(NIJIKA_CUP.y - FEAST_TOP) * anim.w + NIJIKA_CUP.x]).not.toBeNull()
 })
 
 test('each zabuton’s corner shows past the table’s edge, clear of the band: 100 of its pixels or more in every phase, keepwarm and moment, the far two’s too', async () => {
