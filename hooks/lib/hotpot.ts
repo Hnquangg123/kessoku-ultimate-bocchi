@@ -16,13 +16,13 @@
 //
 // A leaf: no value imports from stage.ts (whose `ampOf` calls `feastOf`).
 
-import type { KessokuCache, KessokuCacheShare, KessokuHotpot, KessokuLedger, KessokuMember, KessokuMood } from '../../types'
+import type { KessokuCache, KessokuCacheShare, KessokuFeastState, KessokuHotpot, KessokuLedger, KessokuMember, KessokuMood } from '../../types'
 import { fmtTokens, fmtUsd, priceInfo } from './band'
 import { MEMBERS } from './palette'
 import { block, oval, pix, pixPaths, placedArt, pline, put, pxAt, rim, spliceAfter } from './pixart'
 import type { Pix } from './pixart'
 import type { SceneLayout, SceneSvg } from './scene'
-import { animOf, fitSprites, SVG_LIMIT } from './sprite'
+import { animOf, fitSprites, spriteId, SVG_LIMIT } from './sprite'
 import type { SpritePart } from './sprite'
 import { capped, esc, f, SANS, sparkle, svgDoc, textWidth } from './svgtext'
 
@@ -835,8 +835,8 @@ export function billRows(v: HotpotView): { title: string; rows: BillRow[]; foot:
 
 // ---- Who plays what ----------------------------------------------------------------------------------------
 
-/** A seated member's loop: the feast family's states (`serve` is Nijika's), or Bocchi's box (`box`) while cold. */
-export type FeastState = 'eat' | 'calm' | 'worry' | 'wait' | 'cold' | 'shock' | 'serve'
+/** A seated member's loop: the feast family's states (`serve` is Nijika's); Bocchi plays her box (`box`) while cold. */
+export type FeastState = KessokuFeastState
 
 /** The phase the drawing shows: a paid re-order draws the feast back before its first step lands. */
 export function drawnPhase(v: Pick<HotpotView, 'feast' | 'hotpot' | 'now'>): { phase: FeastPhase; level: FeastLevel } {
@@ -883,7 +883,7 @@ export function seatStates(phase: FeastPhase, moment: KessokuHotpot['moment']): 
 
 /** The sprite a member plays at the table: `<member>-feast-<state>`, Bocchi's box `bocchi-hiding`. */
 export function seatSpriteId(member: Member, state: FeastState | 'box'): string {
-  return state === 'box' ? 'bocchi-hiding' : `${member}-feast-${state}`
+  return state === 'box' ? spriteId('bocchi', 'hiding') : spriteId(member, state, 'feast')
 }
 
 /** The terminal's heads by phase: happy feasting, focused waiting or simmering, anxious at last orders, panic at the bill; cold, Bocchi hides, Nijika and Kita melt, Ryo is anxious. */

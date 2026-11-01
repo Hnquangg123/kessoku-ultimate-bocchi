@@ -18,6 +18,14 @@ export type KessokuMood = 'anxious' | 'focused' | 'happy' | 'panic' | 'melting' 
  */
 export type KessokuSlimeState = 'active' | 'idle' | 'asleep'
 
+/**
+ * What a member plays seated at the Hotpot's table: `wait` with nothing cached,
+ * `eat` at a feast and over zosui, `calm` while it simmers, `worry` at last
+ * orders, `cold` once cold, `shock` while Cache Tax holds a send, and Nijika's
+ * `serve` while a ping tops the pot up.
+ */
+export type KessokuFeastState = 'eat' | 'calm' | 'worry' | 'wait' | 'cold' | 'shock' | 'serve'
+
 /** Token counts, summed over every response of one agent loop. */
 export type KessokuUsage = {
   input: number
