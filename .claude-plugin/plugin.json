@@ -1,7 +1,7 @@
 {
   "name": "kessoku-ultimate-bocchi",
   "version": "1.0.1",
-  "description": "Kessoku Ultimate Bocchi Theme: a Bocchi the Rock!-inspired charcoal-and-pink skin for all of Claude Code (an engine theme plus every render site), a live Kessoku Band panel with the band on stage as animated pixel-art sprites under spotlights and their subagents as songs on a setlist (solo any member) and band subagent types Claude can delegate to by name, a recap card when a long set ends and a per-project tour across sessions (/bocchi stats), and themed Cache Tax, Blast Radius, Filetree, Reflect and Replay Theater gags.",
+  "description": "Kessoku Ultimate Bocchi Theme: a Bocchi the Rock!-inspired charcoal-and-pink skin for all of Claude Code (an engine theme plus every render site), a live Kessoku Band panel with the band on stage as animated pixel-art sprites under spotlights and their subagents as songs on a setlist (solo any member) and band subagent types Claude can delegate to by name, a recap card when a long set ends and a per-project tour across sessions (/bocchi stats), the prompt cache as the band's after-show hotpot with its prices, actions and a bill (/hotpot), and themed Cache Tax, Blast Radius, Filetree, Reflect and Replay Theater gags.",
   "author": {
     "name": "Dylan"
   },
@@ -83,13 +83,13 @@
     "cacheTtlMinutes": {
       "type": "number",
       "title": "Cache TTL (minutes)",
-      "description": "Prompt-cache lifetime Cache Tax assumes when the engine has not said: 60 for a subscription session, 5 for a plain API key",
+      "description": "Prompt-cache lifetime Cache Tax and the Hotpot go by (5 suits a plain API key). 60, 0 or empty leave it to Claude Code or to what the requests show, an hour assumed until then",
       "default": 60
     },
     "keepWarmMinutes": {
       "type": "number",
       "title": "Keepwarm default (minutes)",
-      "description": "How long /keepwarm keeps the cache warm when given no duration",
+      "description": "How long /keepwarm, the Hotpot's Keep the fire on and the Cache Tax card keep the cache warm when no length is picked",
       "default": 360
     },
     "reflect": {
