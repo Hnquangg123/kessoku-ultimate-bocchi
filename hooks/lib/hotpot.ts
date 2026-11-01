@@ -1256,8 +1256,48 @@ function cloudPix(): Pix {
   return p
 }
 
+/** The red lantern at the right, its paper lit from within (dull once cold): the black rings, the ribs, a highlight at the upper left, the tassel. */
+function lanternPix(lit: boolean): Pix {
+  const [hi, paper, shade, rib] = lit ? (['#ee5b54', '#d8343c', '#b52a33', '#a5222c'] as const) : (['#7a3238', '#6a2a30', '#5c252b', '#4a1c22'] as const)
+  const p = pix(21, 35)
+  oval(p, 10.5, 15.5, 8.5, 14, (u, v) => {
+    const x = Math.round(10 + u * 8.5)
+    const y = Math.round(15 + v * 14)
+    if (y < 4 || y > 26) return null
+    const shine = (x === 6 || x === 7) && y > 6 && y < 18
+    if (y % 3 === 0) return shine ? paper : rib
+    return shine ? hi : u > 0.66 ? shade : paper
+  })
+  block(p, 5, 1, 15, 3, (_x, y) => (y === 1 ? '#3d3035' : '#1d1619'))
+  block(p, 5, 27, 15, 29, (_x, y) => (y === 27 ? '#3d3035' : '#1d1619'))
+  put(p, 10, 30, '#d8343c')
+  block(p, 9, 31, 11, 33, () => '#d8343c')
+  rim(p, '#1d1619')
+  return p
+}
+
+/** The lamp over the pot: its cord and socket, a domed shade with a highlight at the upper left and its lip, the bulb under it while lit. */
+function lampPix(lit: boolean): Pix {
+  const [hi, glaze, shade, lip] = lit ? (['#ffd79a', '#e9a456', '#c9853f', '#8a5226'] as const) : (['#5a4a3a', '#4a3a2a', '#3f3124', '#3a2a1a'] as const)
+  const p = pix(27, 21)
+  for (let y = 9; y <= 16; y += 1) {
+    const hw = 10.5 * Math.pow(1 - Math.pow((16.5 - y) / 8, 2.5), 0.4)
+    block(p, Math.ceil(13 - hw), y, Math.floor(13 + hw), y, x => ((x - 13) / hw > 0.6 ? shade : glaze))
+  }
+  for (const [x, y] of [[9, 10], [10, 10], [11, 10], [7, 11], [8, 11], [6, 12], [6, 13], [5, 14]] as const) put(p, x, y, hi)
+  block(p, 1, 17, 25, 17, () => lip)
+  block(p, 12, 7, 14, 8, () => '#1d1619')
+  rim(p, '#1d1619')
+  pline(p, 13, 0, 13, 6, '#1d1619')
+  if (lit) block(p, 10, 18, 16, 19, (x, y) => (y === 19 && (x === 10 || x === 16) ? null : '#fff6d0'))
+  return p
+}
+
+/** A prop lit, and dark once cold. */
+type Lit = { lit: string; dark: string }
+
 /** The props, built once a load, as the sprites are written. */
-type Props = { pot: string; lid: string; stove: string; platter: string; glass: Record<Member, string>; zabuton: Record<Member, string>; bags: string; cloud: string; food: Record<string, string> }
+type Props = { pot: string; lid: string; stove: string; platter: string; glass: Record<Member, string>; zabuton: Record<Member, string>; bags: string; cloud: string; food: Record<string, string>; lantern: Lit; lamp: Lit }
 const propsMemo: Props[] = []
 function props(): Props {
   const hit = propsMemo[0]
@@ -1278,6 +1318,8 @@ function props(): Props {
     ].join(''),
     cloud: pixPaths(cloudPix()),
     food: Object.fromEntries(Object.entries(FOOD).map(([k, p]) => [k, pixPaths(p)])),
+    lantern: { lit: pixPaths(lanternPix(true)), dark: pixPaths(lanternPix(false)) },
+    lamp: { lit: pixPaths(lampPix(true)), dark: pixPaths(lampPix(false)) },
   }
   propsMemo.push(built)
   return built
@@ -1313,9 +1355,12 @@ function roomMarkup(): string {
   for (let x = 21; x < 102; x += 13) s += R(x, 5, 1, 40, '#7a5238')
   for (let y = 15; y < 45; y += 10) s += R(8, y, 94, 1, '#7a5238')
   s += R(8, 5, 94, 1, '#a07a58') + R(6, 45, 98, 2, '#2a1810')
-  s += `<g transform="translate(110 14) rotate(-4)">${R(0, 0, 21, 30, '#efe7da')}${R(0, 0, 21, 6, '#f7a8c9')}<text x="10.5" y="4.6" font-family="${MINCHO}" font-size="4.2" font-weight="bold" text-anchor="middle" fill="#542549">結束バンド</text>`
-  s += ['#f7a8c9', '#ffd166', '#8fb8ff', '#ff8a65'].map((c, i) => `<circle cx="${f(4 + i * 4.3)}" cy="12" r="1.7" fill="${c}"/>`).join('')
-  s += `<text x="10.5" y="20" font-family="${SANS}" font-size="3.6" font-weight="bold" text-anchor="middle" fill="#2a1912">LIVE @</text><text x="10.5" y="25" font-family="${SANS}" font-size="3.8" font-weight="bold" text-anchor="middle" fill="#c4304a">STARRY</text>${R(9.5, -2, 2, 2, '#c4304a')}</g>`
+  // the band's flyer, pinned up: its outline, the paper, the pink head, the four in their colours, the pin
+  s += R(110, 13, 21, 32, '#24150e') + R(109, 14, 23, 30, '#24150e') + R(110, 14, 21, 30, '#efe7da') + R(110, 14, 21, 6, '#f7a8c9')
+  s += ['#f7a8c9', '#ffd166', '#8fb8ff', '#ff8a65'].map((c, i) => R(113 + i * 4, 25, 3, 3, c)).join('')
+  s += R(118, 12, 5, 2, '#24150e') + R(119, 11, 3, 1, '#24150e') + R(119, 12, 3, 2, '#c4304a') + R(119, 12, 1, 1, '#f07a8c')
+  s += `<text x="120.5" y="18.6" font-family="${MINCHO}" font-size="4.2" font-weight="bold" text-anchor="middle" fill="#542549">結束バンド</text>`
+  s += `<text x="120.5" y="34" font-family="${SANS}" font-size="3.6" font-weight="bold" text-anchor="middle" fill="#2a1912">LIVE @</text><text x="120.5" y="39" font-family="${SANS}" font-size="3.8" font-weight="bold" text-anchor="middle" fill="#c4304a">STARRY</text>`
   ;['寄せ鍋', '雑炊', '唐揚げ', '枝豆', '烏龍茶', '焼き鳥'].forEach((t, i) => {
     const x = 168 + i * 15
     s += R(x, 7, 12, 40, '#8a6440') + R(x + 1, 8, 10, 38, '#dcbb8d') + R(x + 1, 8, 10, 1, '#efd3a8')
@@ -1332,18 +1377,15 @@ function roomMarkup(): string {
 
 /** The lamp over the pot and its light, the lantern swaying at the right (dark once cold), the LAST ORDER sign at last orders. */
 function lampsMarkup(phase: FeastPhase): string {
+  const P = props()
   const lit = phase !== 'cold'
-  let s = `<path d="M272 0v5" stroke="#1d1619" stroke-width="1"/><g transform="translate(262 5)"><g class="lt">`
-  if (lit) s += `<ellipse cx="10" cy="15" rx="16" ry="18" fill="url(#gw)" opacity=".8"/>`
-  s += `${R(5, 0, 10, 3, '#1d1619')}<ellipse cx="10" cy="15" rx="9.5" ry="11" fill="${lit ? '#d8343c' : '#6a2a30'}"/>`
-  for (let i = 0; i < 7; i += 1) s += R(1, 6 + i * 3, 18, 0.7, lit ? '#a5222c' : '#4a1c22', ' opacity=".8"')
-  s += `<ellipse cx="7" cy="12" rx="2.5" ry="6" fill="#ff7a6e" opacity="${lit ? 0.5 : 0.1}"/><text x="10" y="18.5" text-anchor="middle" font-family="${MINCHO}" font-weight="bold" font-size="9" fill="#1d1012">鍋</text>${R(5, 25.5, 10, 3, '#1d1619')}<path d="M10 28.5v5" stroke="#d8343c" stroke-width="1.2"/></g></g>`
-  s += `<path d="M144 0v10" stroke="#1d1619" stroke-width="1"/>`
+  let s = `${R(272, 0, 1, 5, '#1d1619')}<g transform="translate(262 5)"><g class="lt">`
+  if (lit) s += `<ellipse cx="10.5" cy="15.5" rx="16" ry="18" fill="url(#gw)" opacity=".8"/>`
+  s += `${CRISP(lit ? P.lantern.lit : P.lantern.dark)}<text x="10.5" y="19" text-anchor="middle" font-family="${MINCHO}" font-weight="bold" font-size="9" fill="#1d1012">鍋</text></g></g>`
   if (lit) s += `<path d="M133 18h22l74 100h-170z" fill="#ffd89a" opacity="${phase === 'last' ? 0.04 : 0.08}"/><ellipse cx="144" cy="20" rx="22" ry="10" fill="url(#gw)"/>`
-  s += `<path d="M134 17c0-6 4-8 10-8s10 2 10 8z" fill="${lit ? '#e9a456' : '#4a3a2a'}"/><path d="M137 15c1-3 3-4.4 6-4.8" stroke="${lit ? '#ffd79a' : '#5a4a3a'}" stroke-width="1" fill="none"/>${R(132, 16.5, 24, 1.5, lit ? '#8a5226' : '#3a2a1a')}`
-  if (lit) s += `<ellipse cx="144" cy="19" rx="4.5" ry="1.6" fill="#fff6d0"/>`
+  s += CRISP(at(131, 0, lit ? P.lamp.lit : P.lamp.dark))
   if (phase === 'last') {
-    s += `<g transform="translate(150 20) rotate(4)">${R(0, 0, 16, 30, '#fffaf2', ' stroke="#c4304a" stroke-width=".8"')}<text x="8" y="4" font-family="'Yu Gothic', Meiryo, sans-serif" font-weight="900" font-size="4" fill="#c4304a" writing-mode="tb" letter-spacing="-.4">ラストオーダー</text><text x="8" y="28" text-anchor="middle" font-family="${SANS}" font-weight="900" font-size="3" fill="#c4304a">LAST</text></g>`
+    s += `${R(150, 20, 16, 32, '#24150e')}${R(149, 21, 18, 30, '#24150e')}${R(150, 21, 16, 30, '#c4304a')}${R(151, 22, 14, 28, '#fffaf2')}<text x="158" y="24" font-family="'Yu Gothic', Meiryo, sans-serif" font-weight="900" font-size="3.6" fill="#c4304a" writing-mode="tb" letter-spacing="-.4">ラストオーダー</text><text x="158" y="49" text-anchor="middle" font-family="${SANS}" font-weight="900" font-size="3" fill="#c4304a">LAST</text>`
   }
   return s
 }
