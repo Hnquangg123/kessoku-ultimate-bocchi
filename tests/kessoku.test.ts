@@ -3538,36 +3538,55 @@ function stateOf<K extends keyof Watched>(st: Watched, key: K): NonNullable<Watc
   return v as NonNullable<Watched[K]>
 }
 
-test('♨ Hotpot: the button on all three strips and under the chalkboard opens the pane; the panel\'s closes it; above the prompt where no pane fits', async ($, on) => {
+test('♨ Hotpot: the button on all three strips and under the chalkboard opens the pane; the panel\'s closes it; above the prompt where no pane fits, until one is placed', async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
   const knobs: Answers = {}
   bottoms(on, clock, seen, knobs)
   stepBottom(on)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // Every ♨ is pressed with the Hotpot closed and opens it; /hotpot closes it again for the next.
+  const opens = () => seen.opened.filter(id => id === HOTPOT_ID).length
+  const shuts = () => seen.closed.filter(id => id === HOTPOT_ID).length
   const roomy = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
   expect(await roomy.find({ type: 'Button', key: 'strip-hotpot' })).toMatchObject({ props: { label: '♨ Hotpot', hotkey: 'o', plain: true } })
+  await roomy.press({ key: 'strip-hotpot' })
+  await clock.settle()
+  expect(opens()).toBe(1)
   await roomy.unmount()
+  await $.command.run(cmd('hotpot'))
   const oneLine = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: { ...BAND_PROPS, maxRows: 4, scroll: { offset: 0, bodyRows: 3 } } })
   expect(await oneLine.find({ type: 'Button', key: 'strip-hotpot' })).toMatchObject({ props: { hotkey: 'o' } })
+  await oneLine.press({ key: 'strip-hotpot' })
+  await clock.settle()
+  expect(opens()).toBe(2)
   await oneLine.unmount()
+  await $.command.run(cmd('hotpot'))
   const sign = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
   expect(await sign.find({ type: 'Button', key: 'strip-hotpot' })).toBeDefined()
   await sign.press({ key: 'strip-hotpot' })
   await clock.settle()
-  expect(seen.opened).toContain(HOTPOT_ID)
-  // Open, the strip's button gives way; the chalkboard's toggles it shut, by id.
+  expect(opens()).toBe(3)
+  // Open, the strip's button gives way; the chalkboard's toggles it shut, by id, and open again.
   expect(await sign.find({ type: 'Button', key: 'strip-hotpot' })).toBeUndefined()
   await sign.unmount()
   const board = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
   expect(await board.find({ type: 'Button', key: 'hotpot' })).toMatchObject({ props: { label: '♨ Hotpot', hotkey: 'o' } })
   await board.press({ key: 'hotpot' })
   await clock.settle()
-  expect(seen.closed).toContain(HOTPOT_ID)
+  expect(shuts()).toBe(3)
+  await board.press({ key: 'hotpot' })
+  await clock.settle()
+  expect(opens()).toBe(4)
   await board.unmount()
+  await $.command.run(cmd('hotpot'))
   const keysRow = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'kessoku-band', props: PANE_PROPS })
   expect(await keysRow.find({ type: 'Button', key: 'hotpot' })).toMatchObject({ props: { hotkey: 'o' } })
+  await keysRow.press({ key: 'hotpot' })
+  await clock.settle()
+  expect(opens()).toBe(5)
   await keysRow.unmount()
+  await $.command.run(cmd('hotpot'))
   // No pane fits: /bocchi hotpot draws it above the prompt instead, before the strip.
   knobs.unplaced = true
   expect((await $.command.run(cmd('bocchi', 'hotpot'))).text).toMatch(/drawn above the prompt/)
@@ -3577,6 +3596,17 @@ test('♨ Hotpot: the button on all three strips and under the chalkboard opens 
   await band.press({ key: 'hotpot-close' })
   await clock.settle()
   expect(await band.find({ type: 'Button', key: 'strip-hotpot' })).toBeDefined()
+  // Opened so again, then placed (the terminal widened to its floor): the copy above the prompt steps aside for the pane.
+  await $.command.run(cmd('bocchi', 'hotpot'))
+  expect(await band.find({ type: 'Box', key: 'hotpot-board' })).toBeDefined()
+  const placed = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  await clock.advance(1)
+  expect(await placed.find({ type: 'Box', key: 'hotpot-board' })).toBeDefined()
+  expect(await band.find({ type: 'Box', key: 'hotpot-board' })).toBeUndefined()
+  expect(await band.find({ type: 'Button', key: 'strip-panel' })).toBeDefined()
+  // still open, only out of the band: the strip draws no ♨ beside a placed pane
+  expect(await band.find({ type: 'Button', key: 'strip-hotpot' })).toBeUndefined()
+  await placed.unmount()
   await band.unmount()
 })
 
@@ -3619,7 +3649,7 @@ test('the Hotpot draws the feast, the wooden board\'s two lines and its buttons 
   await narrow.unmount()
 })
 
-test('kaomoji: the Hotpot draws faces round a text gauge, no Raster or Svg on any surface', { options: { characterArt: 'kaomoji' } }, async ($, on) => {
+test('kaomoji: the Hotpot draws faces round a text gauge, the wooden board\'s two lines and its buttons, no Raster or Svg on any surface', { options: { characterArt: 'kaomoji' } }, async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
   bottoms(on, clock, seen)
@@ -3634,7 +3664,15 @@ test('kaomoji: the Hotpot draws faces round a text gauge, no Raster or Svg on an
     expect(await pane.find({ type: 'Svg' })).toBeUndefined()
     expect(await pane.find({ type: 'Text', text: /^❄ ▱▱▱▱▱$/ })).toBeDefined()
     expect(await pane.find({ type: 'Text', text: /^\[\(\._\.\)\]$/ })).toBeDefined()
-    expect((await boardLines(pane))[0]).toBe('❄ Gone cold  1m ago: the next send re-orders everything')
+    const [first, second] = await boardLines(pane)
+    expect(first).toBe('❄ Gone cold  1m ago: the next send re-orders everything')
+    expect(second).toBe(`304k on the table · a re-order ≈$1.21 · a top-up ≈$0.03 · a day of keepwarm ≈$0.74 · keepwarm off · TTL 1h?${surface === 'terminal' ? ' · ctrl+x tab for its keys' : ''}`)
+    expect(await pane.find({ type: 'Button', key: 'hotpot-keep' })).toMatchObject({ props: { label: 'Keep the fire on · 6h ≈$0.19', hotkey: 'w' } })
+    expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).toMatchObject({ props: { label: 'Re-heat now ≈$1.21', hotkey: 't' } })
+    expect(await pane.find({ type: 'Button', key: 'hotpot-zosui' })).toMatchObject({ props: { hotkey: 'z' } })
+    expect(await pane.find({ type: 'Button', key: 'hotpot-clear' })).toMatchObject({ props: { hotkey: 'f' } })
+    expect(await pane.find({ type: 'Button', key: 'hotpot-bill' })).toMatchObject({ props: { label: 'The bill', hotkey: 'b' } })
+    expect(await pane.find({ type: 'Button', key: 'hotpot-close' })).toMatchObject({ props: { label: 'Close', hotkey: 'c' } })
     await pane.unmount()
   }
 })
@@ -3684,8 +3722,9 @@ test('keep the fire on, let it cool and both Keep it warm after buttons write ke
   await held.unmount()
 })
 
-test('top up forks once and books a ping; while it is out no second press or minute tick sends another', async ($, on) => {
+test('top up forks once and books a ping; while it is out no second press or minute tick sends another, and the pane says so as it goes', async ($, on) => {
   const seen = fresh()
+  const st = watchState(on)
   const clock = mock.clock(on, { now: 1_000_000 })
   bottoms(on, clock, seen, { forkMs: 120_000 })
   stepBottom(on)
@@ -3695,22 +3734,25 @@ test('top up forks once and books a ping; while it is out no second press or min
   const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
   await clock.advance(58 * 60_000 + 36_000)
   await $.command.run(cmd('keepwarm', '2h'))
+  const calledAt = clock.now()
   await pane.press({ key: 'hotpot-topup' })
   await clock.settle()
   expect(seen.forks).toBe(1)
-  // The minute tick in keepwarm's window finds the top-up out, and so does a second press (dim, the board says why).
-  await clock.advance(30_000)
-  expect(seen.forks).toBe(1)
+  // Out, Top up is dim and the board says why at once: the clock has not moved, so no count's redraw can have drawn it.
   expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).toMatchObject({ props: { dimColor: true } })
   expect((await boardLines(pane))[1]).toMatch(/ · a top-up is on its way$/)
+  // The minute tick in keepwarm's window finds the top-up out, and so does a second press.
+  await clock.advance(30_000)
+  expect(seen.forks).toBe(1)
   await pane.press({ key: 'hotpot-topup' })
   await clock.settle()
   expect(seen.forks).toBe(1)
-  // It lands: one ping booked, the pot warmed from the clock read before the call.
+  // It lands two minutes on: one ping booked, the pot warmed from the clock read before the call.
   await clock.advance(90_000)
   expect(seen.forks).toBe(1)
   expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/1 pings so far/)
   expect((await boardLines(pane))[0]).toMatch(/^♨ Bubbling {2}topped up: 300k read from cache for \$0\.03$/)
+  expect((await stateOf(st, 'cache')).lastWarmAt).toBe(calledAt)
   await pane.unmount()
 })
 
@@ -3726,10 +3768,11 @@ const ENGINE_COMPACT = {
   }) as Register,
 }
 
-test('re-heat and zosui take two presses; a re-heat warms only when its read and write reach 0.9 P; zosui compacts through the mod\'s own hook', { plugins: [ENGINE_COMPACT] }, async ($, on) => {
+test('re-heat and zosui take two presses; a re-heat warms, from the clock read before the call, only when its read and write reach 0.9 P (a written prefix or a live entry read); zosui compacts through the mod\'s own hook', { plugins: [ENGINE_COMPACT] }, async ($, on) => {
   const seen = fresh()
+  const st = watchState(on)
   const clock = mock.clock(on, { now: 1_000_000 })
-  const knobs: Answers = { forkCacheRead: 0, forkCacheWrite: 1000 }
+  const knobs: Answers = { forkCacheRead: 0, forkCacheWrite: 1000, forkMs: 30_000 }
   bottoms(on, clock, seen, knobs)
   stepBottom(on)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
@@ -3744,16 +3787,29 @@ test('re-heat and zosui take two presses; a re-heat warms only when its read and
   expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).toMatchObject({ props: { label: 'Press again: re-write ≈$1.21' } })
   // A fork that wrote too little did not re-heat: booked, nothing warmed.
   await pane.press({ key: 'hotpot-topup' })
-  await clock.settle()
+  await clock.advance(30_000)
   expect(seen.forks).toBe(1)
   expect((await boardLines(pane))[0]).toMatch(/^❄ Gone cold {2}could not re-heat; it cost \$0\.00$/)
-  // One that re-wrote the prefix did: from the clock read before the call.
+  // One that re-wrote the prefix did, from the clock read before the call: half a minute before it landed.
   knobs.forkCacheWrite = 300_000
+  const rewroteAt = clock.now()
   await pane.press({ key: 'hotpot-topup' })
   await pane.press({ key: 'hotpot-topup' })
-  await clock.settle()
+  await clock.advance(30_000)
   expect(seen.forks).toBe(2)
   expect((await boardLines(pane))[0]).toMatch(/^♨ Bubbling {2}re-heated: 300k re-written for \$1\.20$/)
+  expect((await stateOf(st, 'cache')).lastWarmAt).toBe(rewroteAt)
+  // Cold again, one that read a live entry (nothing written) warms it too.
+  await clock.advance(61 * 60_000)
+  knobs.forkCacheRead = 300_000
+  knobs.forkCacheWrite = 0
+  const readAt = clock.now()
+  await pane.press({ key: 'hotpot-topup' })
+  await pane.press({ key: 'hotpot-topup' })
+  await clock.advance(30_000)
+  expect(seen.forks).toBe(3)
+  expect((await boardLines(pane))[0]).toBe('♨ Bubbling  re-heated: 0 re-written for $0.03')
+  expect((await stateOf(st, 'cache')).lastWarmAt).toBe(readAt)
   // Zosui: armed by the first press, the call on the second; the mod's own session.compact hook draws and settles it.
   await pane.press({ key: 'hotpot-zosui' })
   await clock.settle()
@@ -3767,7 +3823,32 @@ test('re-heat and zosui take two presses; a re-heat warms only when its read and
   await pane.press({ key: 'hotpot-bill' })
   await clock.settle()
   expect(await pane.find({ type: 'Text', text: /^Compaction · 1 zosui$/ })).toBeDefined()
-  expect(await pane.find({ type: 'Text', text: /^Re-heats · 2$/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /^Re-heats · 3$/ })).toBeDefined()
+  await pane.unmount()
+})
+
+test('a plugin\'s compaction with no press behind it is drawn and settled by the mod\'s own hook: the zosui, then the toast, the note, an empty pot and the bill\'s row', async ($, on) => {
+  const seen = fresh()
+  const st = watchState(on)
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen, { compactMs: 3000 })
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await aTurn($, 't1')
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  // Raised as the engine raises another plugin's $.session.compact(): no zosui press waits to settle it.
+  const compacting = $.session.compact({ trigger: 'plugin', messages: TRANSCRIPT })
+  await clock.settle()
+  expect((await boardLines(pane))[0]).toBe('〆 Zosui  compacting 304k tokens')
+  await clock.advance(3000)
+  expect((await compacting).skip).toBeUndefined()
+  expect(seen.toasts.some(t => /the set is compacted: 180k → 12\.0k tokens/.test(t))).toBe(true)
+  expect((await boardLines(pane))[0]).toBe('The table is set  180k → 12.0k tokens')
+  expect((await stateOf(st, 'cache')).lastWarmAt).toBe(0)
+  await pane.press({ key: 'hotpot-bill' })
+  await clock.settle()
+  expect(await pane.find({ type: 'Text', text: /^Compaction · 1 zosui$/ })).toBeDefined()
   await pane.unmount()
 })
 
@@ -3879,18 +3960,36 @@ test('/clear and an in-process /resume start the book over, drop the engine pric
   bottoms(on, clock, seen)
   const steps: StepAnswer[] = [{ read: 300_000, write: 1000 }]
   usageBottom(on, steps)
+  let spawned = 0
+  on('agent.spawn', () => ({ agentId: `agent-${(spawned += 1)}`, model: 'claude-sonnet-5-5' }))
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // A pending five-minute sighting, with no switch (the engine's TTL would end the evidence): an hour learned from a warm
+  // step six minutes on, then a cold step ten minutes after that. Both keep it, and the hour.
   await aTurn($, 't1')
-  await $.classic.PostModelSwitch({ from_model: 'claude-sonnet-5-5', to_model: 'claude-sonnet-5-5', requested_model: null, source: 'command', context_tokens: 300_000, prompt_cache_warm: true, cache_ttl: '1h', estimated_cache_write_usd: 1.2, pricing: 'catalog' })
-  expect((await stateOf(st, 'ledger')).engine).not.toBeNull()
-  // Each starts the book over; the engine's TTL, learned for the session, stays.
+  await clock.advance(6 * 60_000)
+  await aTurn($, 't2')
+  await clock.advance(10 * 60_000)
+  steps.push({ read: 0, write: 301_000 })
+  await aTurn($, 't3')
+  const learned = { ttl: { ms: 60 * 60_000, how: 'seen' }, sighting: 1_000_000 + 16 * 60_000 }
+  expect(await stateOf(st, 'ledger')).toMatchObject(learned)
+  for (const reason of ['clear', 'resume'] as const) {
+    await $.session.end({ reason, sessionId: 's1', resume: { id: 's1' } } as never)
+    expect(await stateOf(st, 'ledger')).toMatchObject({ ...learned, steps: 0, cleared: reason === 'clear' })
+  }
+  // Each starts the book over, an act seated and a fresh engine price taken just before it: the band is the main loop
+  // again and the price is gone; the engine's TTL, learned for the session, stays.
   for (const reason of ['clear', 'resume'] as const) {
     await aTurn($, `w-${reason}`)
+    await $.agent.spawn({ description: 'Find the callers', prompt: 'find', subagentType: `${PLUGIN}:ryo`, background: true } as never)
+    await $.classic.PostModelSwitch({ from_model: 'claude-sonnet-5-5', to_model: 'claude-sonnet-5-5', requested_model: null, source: 'command', context_tokens: 300_000, prompt_cache_warm: true, cache_ttl: '1h', estimated_cache_write_usd: 1.2, pricing: 'catalog' })
+    expect((await stateOf(st, 'ledger')).engine).not.toBeNull()
+    expect((await stateOf(st, 'band')).agents.map(a => a.id)).toEqual(['main', `agent-${spawned}`])
     await $.session.end({ reason, sessionId: 's1', resume: { id: 's1' } } as never)
     const l = await stateOf(st, 'ledger')
     expect(l).toMatchObject({ steps: 0, engine: null, canFork: false, cleared: reason === 'clear', ttl: { ms: 60 * 60_000, how: 'engine' } })
     expect((await stateOf(st, 'cache')).lastWarmAt).toBe(0)
-    expect((await stateOf(st, 'band')).agents).toHaveLength(1)
+    expect((await stateOf(st, 'band')).agents.map(a => a.id)).toEqual(['main'])
   }
 })
 
@@ -3906,6 +4005,9 @@ test('a switch to another model empties the pot, a resume\'s does not; a step on
   const sw = { requested_model: null, context_tokens: 300_000, prompt_cache_warm: true, cache_ttl: '1h' as const, estimated_cache_write_usd: 1.2, pricing: 'catalog' as const }
   await $.classic.PostModelSwitch({ ...sw, from_model: 'claude-sonnet-5-5', to_model: 'claude-sonnet-5-5', source: 'resume' })
   expect((await stateOf(st, 'cache')).lastWarmAt).toBeGreaterThan(0)
+  // A turn opens the gate the resume shut, so the switch below is what shuts it again.
+  await aTurn($, 't-open')
+  expect((await stateOf(st, 'ledger')).canFork).toBe(true)
   await $.classic.PostModelSwitch({ ...sw, from_model: 'claude-sonnet-5-5', to_model: 'claude-opus-5-5', source: 'command' })
   expect((await stateOf(st, 'cache'))).toMatchObject({ lastWarmAt: 0, model: 'claude-opus-5-5' })
   expect((await stateOf(st, 'ledger'))).toMatchObject({ canFork: false, engine: { model: 'claude-opus-5-5' } })
@@ -3937,10 +4039,43 @@ test('a resume\'s SessionStart sets the warmth, the context and the model (never
   await $.classic.PostModelSwitch({ from_model: 'claude-sonnet-5-5', to_model: 'claude-opus-5-5', requested_model: null, source: 'resume', context_tokens: 1, prompt_cache_warm: false, cache_ttl: '1h', estimated_cache_write_usd: 2, pricing: 'catalog' })
   expect(await stateOf(st, 'cache')).toMatchObject({ lastWarmAt: 10_000_000 - 1_200_000, contextTokens: 250_000 })
   expect((await stateOf(st, 'ledger')).engine).toBeNull()
-  // The engine says it lapsed: cold whatever the TTL in force.
+  // The other order, another conversation resumed in process: the switch's model stands under a SessionStart with none,
+  // which brings the warmth and the context.
+  await $.session.end({ reason: 'resume', sessionId: 's1', resume: { id: 's2' } } as never)
+  await $.classic.PostModelSwitch({ from_model: 'claude-opus-5-5', to_model: 'claude-sonnet-5-5', requested_model: null, source: 'resume', context_tokens: 1, prompt_cache_warm: false, cache_ttl: '1h', estimated_cache_write_usd: 2, pricing: 'catalog' })
+  await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 600, context_tokens: 180_000, prompt_cache_likely_expired: false })
+  expect(await stateOf(st, 'cache')).toMatchObject({ lastWarmAt: 10_000_000 - 600_000, contextTokens: 180_000, model: 'claude-sonnet-5-5' })
+  expect((await stateOf(st, 'ledger')).engine).toBeNull()
+  // The engine says it lapsed: cold whatever the TTL in force, the hour (200 s teaches none) or five minutes.
+  await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 200, prompt_cache_likely_expired: true })
+  expect((await stateOf(st, 'ledger')).ttl).toEqual({ ms: 60 * 60_000, how: 'engine' })
+  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/cache COLD/)
   await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 400, prompt_cache_likely_expired: true })
   expect((await stateOf(st, 'ledger')).ttl).toEqual({ ms: 5 * 60_000, how: 'engine' })
   expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/cache COLD/)
+})
+
+test('a resumed conversation\'s first step is judged against its context: one that re-writes it cold books the Cache Tax', async ($, on) => {
+  const seen = fresh()
+  const st = watchState(on)
+  const clock = mock.clock(on, { now: 10_000_000 })
+  bottoms(on, clock, seen)
+  const steps: StepAnswer[] = [{ read: 300_000, write: 1000 }]
+  usageBottom(on, steps)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await aTurn($, 't1')
+  // An in-process /resume of a conversation of 250k tokens, answered twenty minutes ago: the book starts with no P.
+  await $.session.end({ reason: 'resume', sessionId: 's1', resume: { id: 's2' } } as never)
+  await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 1200, context_tokens: 250_000, prompt_cache_likely_expired: false })
+  expect((await stateOf(st, 'ledger')).prompt).toBe(0)
+  // Past its hour the send is held, then paid; its first step re-writes the context, and that shortfall is the tax.
+  await clock.advance(41 * 60_000)
+  expect((await $.prompt.submit(typed('where were we?'))).drop).toMatch(/CACHE TAX/)
+  expect((await $.prompt.submit(typed('where were we?'))).drop).toBeUndefined()
+  steps.push({ read: 0, write: 251_000 })
+  await aTurn($, 't2')
+  expect((await stateOf(st, 'ledger')).tax).toMatchObject({ count: 1, silent: 0, midTurn: 0, tokens: 250_000 })
+  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/^tax paid {3}≈\$1\.00 · 1 cold re-write$/m)
 })
 
 test('the TTL is learned: a warm step after 6 minutes teaches an hour, server tools nothing, two cold steps five minutes, one-hour evidence clears a sighting', { options: { cacheTtlMinutes: 0 } }, async ($, on) => {
@@ -3981,14 +4116,17 @@ test('the TTL is learned: a warm step after 6 minutes teaches an hour, server to
   await pane.unmount()
 })
 
-test('three cacheless steps turn caching off (Let it cool still pressable); a cached step turns it on again', async ($, on) => {
+test('three cacheless steps turn caching off (Let it cool still pressable): past the TTL nothing is held and keepwarm sends nothing; a cached step turns it on again', async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
-  bottoms(on, clock, seen)
-  const steps: StepAnswer[] = [{ read: 0, write: 0 }]
+  bottoms(on, clock, seen, { forkCacheRead: 0, forkCacheWrite: 0 })
+  const steps: StepAnswer[] = [{ read: 300_000, write: 1000 }]
   usageBottom(on, steps)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // A pot warmed over 300k tokens and keepwarm armed over it, then three steps that cache nothing.
+  await aTurn($, 't0')
   await $.command.run(cmd('keepwarm', '2h'))
+  steps.push({ input: 300_000, read: 0, write: 0 })
   await aTurn($, 't1', 3)
   await $.command.run(cmd('hotpot'))
   const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
@@ -3996,6 +4134,9 @@ test('three cacheless steps turn caching off (Let it cool still pressable); a ca
   expect(await pane.find({ type: 'Button', key: 'hotpot-keep' })).toMatchObject({ props: { label: 'Let it cool (keepwarm off)' } })
   expect((await pane.find({ type: 'Button', key: 'hotpot-keep' }))?.props.dimColor).toBeUndefined()
   expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).toMatchObject({ props: { dimColor: true } })
+  // An hour and a half on, long past the TTL of the warmth it had: no ping went out, and a person's send is not held.
+  await clock.advance(90 * 60_000)
+  expect(seen.forks).toBe(0)
   expect((await $.prompt.submit(typed('anything'))).drop).toBeUndefined()
   steps.push({ read: 10_000, write: 1000 })
   await aTurn($, 't2')
@@ -4003,7 +4144,7 @@ test('three cacheless steps turn caching off (Let it cool still pressable); a ca
   await pane.unmount()
 })
 
-test('the fork gate: shut, no fork goes out and keepwarm waits armed; open, nothing-to-fork books nothing and dims the forks for the session', async ($, on) => {
+test('the fork gate: shut, over a warm pot too, no fork goes out and keepwarm waits armed; open, nothing-to-fork books nothing and dims the forks for the session', async ($, on) => {
   const seen = fresh()
   const st = watchState(on)
   const clock = mock.clock(on, { now: 1_000_000 })
@@ -4018,15 +4159,30 @@ test('the fork gate: shut, no fork goes out and keepwarm waits armed; open, noth
   for await (const chunk of $.turn.step({ turnId: 't1', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })) void chunk
   expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).toMatchObject({ props: { dimColor: true } })
   await $.turn.complete({ turnId: 't1', answer: 'ok', durationMs: 900, isAborted: false, reason: 'answer' })
-  // A compaction shuts it again (it opens when the next turn ends); keepwarm stays armed and sends nothing.
+  // A compaction shuts it again, with its words (it opens when the next turn ends).
   await $.session.compact({ trigger: 'manual', messages: TRANSCRIPT })
   expect((await boardLines(pane))[1]).toMatch(/ · nothing to top up until the next turn ends$/)
-  await $.command.run(cmd('keepwarm', '2h'))
-  await clock.advance(60 * 60_000)
+  await aTurn($, 't2')
+  // A switch on the same model shuts it and leaves the pot warm: keepwarm waits armed through its ping window, and Top
+  // up, then Re-heat once it lapses, stay dim with the gate's words.
+  await $.classic.PostModelSwitch({ from_model: 'claude-sonnet-5-5', to_model: 'claude-sonnet-5-5', requested_model: null, source: 'command', context_tokens: 303_500, prompt_cache_warm: true, cache_ttl: '1h', estimated_cache_write_usd: 1.2, pricing: 'catalog' })
+  expect((await stateOf(st, 'cache')).lastWarmAt).toBe(1_000_000)
+  await $.command.run(cmd('keepwarm', '6h'))
+  await clock.advance(59 * 60_000)
+  expect(seen.forks).toBe(0)
+  const topUp = await pane.find({ type: 'Button', key: 'hotpot-topup' })
+  expect(topUp?.props.label).toMatch(/^Top up now/)
+  expect(topUp?.props.dimColor).toBe(true)
+  expect((await boardLines(pane))[1]).toMatch(/ · nothing to top up until the next turn ends$/)
+  await clock.advance(2 * 60_000)
+  const reheat = await pane.find({ type: 'Button', key: 'hotpot-topup' })
+  expect(reheat?.props.label).toMatch(/^Re-heat now/)
+  expect(reheat?.props.dimColor).toBe(true)
+  expect((await boardLines(pane))[1]).toMatch(/ · nothing to top up until the next turn ends$/)
   expect(seen.forks).toBe(0)
   expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/keepwarm {3}on/)
   // Open, with a host that keeps no snapshot: nothing booked, keepwarm off, the forks dim for the session.
-  await aTurn($, 't2')
+  await aTurn($, 't3')
   knobs.forkReason = 'nothing-to-fork'
   await pane.press({ key: 'hotpot-topup' })
   await clock.settle()
@@ -4038,7 +4194,32 @@ test('the fork gate: shut, no fork goes out and keepwarm waits armed; open, noth
   await pane.unmount()
 })
 
-test('a top-up\'s 429 is not retried and pauses nothing; keepwarm\'s is retried once about 20 s later, a second stopping its pings until a step warms the cache', async ($, on) => {
+test('a resumed pot is warm with the gate shut until its first turn ends: keepwarm waits armed through its ping window, then pings', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 10_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await aTurn($, 't1')
+  await $.command.run(cmd('keepwarm', '6h'))
+  // An in-process /resume of a conversation answered a minute ago: its warmth and context from SessionStart.
+  await $.session.end({ reason: 'resume', sessionId: 's1', resume: { id: 's2' } } as never)
+  await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 60, context_tokens: 250_000, prompt_cache_likely_expired: false })
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  await clock.advance(58 * 60_000)
+  expect(seen.forks).toBe(0)
+  expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).toMatchObject({ props: { dimColor: true } })
+  expect((await boardLines(pane))[1]).toMatch(/ · nothing to top up yet: the first turn has not ended$/)
+  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/keepwarm {3}on/)
+  // Its first turn ends: the gate opens, and keepwarm tops the pot up before the next lapse.
+  await aTurn($, 't2')
+  await clock.advance(59 * 60_000)
+  expect(seen.forks).toBe(1)
+  await pane.unmount()
+})
+
+test('a top-up\'s or a re-heat\'s 429 is not retried and pauses nothing; keepwarm\'s is retried once about 20 s later, a second stopping its pings until a step warms the cache', async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
   const knobs: Answers = { forkReason: 'api-error', forkStatus: 429 }
@@ -4054,20 +4235,32 @@ test('a top-up\'s 429 is not retried and pauses nothing; keepwarm\'s is retried 
   expect((await boardLines(pane))[0]).toMatch(/rate-limited: the cache lapses at \d\d:\d\d$/)
   await clock.advance(60_000)
   expect(seen.forks).toBe(1)
-  await pane.unmount()
-  // Keepwarm's ping at the hour's end: retried once, twenty seconds on; then no more pings until a step warms the cache.
-  await $.command.run(cmd('keepwarm', '6h'))
-  await clock.advance(58 * 60_000)
+  // Cold, a re-heat's: two presses, one fork, and nothing sent again twenty seconds on.
+  await clock.advance(60 * 60_000)
+  await pane.press({ key: 'hotpot-topup' })
+  await clock.settle()
+  expect(seen.forks).toBe(1)
+  await pane.press({ key: 'hotpot-topup' })
+  await clock.settle()
   expect(seen.forks).toBe(2)
-  await clock.advance(21_000)
-  expect(seen.forks).toBe(3)
-  expect(seen.toasts.some(t => /keepwarm resumes after your next send/.test(t))).toBe(true)
+  expect((await boardLines(pane))[0]).toMatch(/ {2}rate-limited: could not re-heat$/)
   await clock.advance(30_000)
+  expect(seen.forks).toBe(2)
+  await pane.unmount()
+  // Neither paused keepwarm: its ping at the hour's end goes out (each 429 here spent a read that warmed the pot),
+  // retried once twenty seconds on; then none, even past the next one due, until a step warms the cache.
+  await $.command.run(cmd('keepwarm', '6h'))
+  await clock.advance(58 * 60_000 + 30_000)
   expect(seen.forks).toBe(3)
+  await clock.advance(21_000)
+  expect(seen.forks).toBe(4)
+  expect(seen.toasts.some(t => /keepwarm resumes after your next send/.test(t))).toBe(true)
+  await clock.advance(60 * 60_000)
+  expect(seen.forks).toBe(4)
   knobs.forkReason = undefined
   await aTurn($, 't2')
   await clock.advance(60 * 60_000)
-  expect(seen.forks).toBe(4)
+  expect(seen.forks).toBe(5)
 })
 
 test('the Cache Tax card\'s Dismiss clears the hold and brings Bocchi out of her panic; the next send is judged afresh', async ($, on) => {
@@ -4090,7 +4283,7 @@ test('the Cache Tax card\'s Dismiss clears the hold and brings Bocchi out of her
   expect((await $.prompt.submit(typed('again'))).drop).toMatch(/CACHE TAX/)
 })
 
-test('warmth is a step\'s: an error\'s or an interrupt\'s turn.complete leaves it where its last step put it; the context follows session.measure', async ($, on) => {
+test('warmth is a step\'s: an answer\'s, an error\'s or an interrupt\'s turn.complete leaves it where its last step put it; the context follows session.measure', async ($, on) => {
   const seen = fresh()
   const st = watchState(on)
   const clock = mock.clock(on, { now: 1_000_000 })
@@ -4105,6 +4298,13 @@ test('warmth is a step\'s: an error\'s or an interrupt\'s turn.complete leaves i
     await $.turn.complete({ turnId: `t-${reason}`, answer: '', durationMs: 900, isAborted: reason === 'aborted', reason })
     expect((await stateOf(st, 'cache')).lastWarmAt).toBe(1_000_000)
   }
+  // An answered turn that ends five minutes after its step: the warmth stays at the step's start.
+  await $.turn.start({ text: 'go', turnId: 't-answer' })
+  const stepAt = clock.now()
+  for await (const chunk of $.turn.step({ turnId: 't-answer', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })) void chunk
+  await clock.advance(5 * 60_000)
+  await $.turn.complete({ turnId: 't-answer', answer: 'ok', durationMs: 5 * 60_000, isAborted: false, reason: 'answer' })
+  expect((await stateOf(st, 'cache')).lastWarmAt).toBe(stepAt)
   await $.session.measure({ context: { window: 200_000, percent: 60, tokens: 120_000 }, rateLimits: [], changed: [] } as never)
   expect((await stateOf(st, 'cache')).contextTokens).toBe(120_500)
   expect((await stateOf(st, 'ledger')).prompt).toBe(120_000)
@@ -4147,7 +4347,10 @@ test('/bocchi tax touches neither the ledger nor the cache\'s model, context and
   bottoms(on, clock, seen)
   stepBottom(on)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // The book as the mod last wrote it before the preview (or never), as it stands after.
+  const book = st.ledger
   await $.command.run(cmd('bocchi', 'tax'))
+  expect(st.ledger).toEqual(book)
   expect(await stateOf(st, 'cache')).toMatchObject({ lastWarmAt: 0, contextTokens: 0, model: '', isArmed: true })
   expect((await stateOf(st, 'hotpot')).sample).toMatchObject({ model: 'claude-sonnet-5-5', tokens: 330_316 })
   const band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
