@@ -16,6 +16,7 @@ import {
   HEADBAND,
   HELD_PROMPT_MS,
   INITIAL_LEDGER,
+  OVER_POT,
   SEAT_ORDER,
   SEAT_ROW,
   SEAT_SIDE,
@@ -666,7 +667,7 @@ test('the waist constants are the sprites\' own: the outer end of each seat\'s w
   }
 })
 
-test('the scene draws the band in every phase, platter, keepwarm and moment, under the Svg\'s limit; the far two before the pot, the near two after', async () => {
+test('the scene draws the band in every phase, platter, keepwarm and moment, under the Svg\'s limit; the pot under all four', async () => {
   const phases: [string, number, NonNullable<Parameters<typeof feastOf>[3]>][] = [
     ['none', -1, {}],
     ['cleared', -1, { cleared: true }],
@@ -691,21 +692,52 @@ test('the scene draws the band in every phase, platter, keepwarm and moment, und
           largest = Math.max(largest, svg.length)
           expect(svg.length).toBeLessThanOrEqual(SVG_LIMIT)
           const states = seatStates(drawnPhase(v).phase, momentOf(v))
-          // every member seated, in paint order: Bocchi and Ryo, the stove, Nijika (and her headband), Kita
+          // the stove and the pot under all four, then every member seated in paint order: Bocchi, Ryo, Nijika (and her headband), Kita
           const at = (m: 'bocchi' | 'nijika' | 'ryo' | 'kita') => {
             const s = seatAt(m)
             return svg.indexOf(`<g transform="translate(${s.x} ${states[m] === 'box' ? s.y - BOX_RAISE : s.y + FEAST_TOP})">`)
           }
           const stove = svg.indexOf('<g transform="translate(101 140) scale(1)">')
           for (const m of ['bocchi', 'nijika', 'ryo', 'kita'] as const) expect(at(m)).toBeGreaterThan(0)
+          expect(stove).toBeGreaterThan(0)
+          expect(stove).toBeLessThan(at('bocchi'))
           expect(at('bocchi')).toBeLessThan(at('ryo'))
-          expect(at('ryo')).toBeLessThan(stove)
-          expect(stove).toBeLessThan(at('nijika'))
+          expect(at('ryo')).toBeLessThan(at('nijika'))
           expect(at('nijika')).toBeLessThan(at('kita'))
           // each through her lap's clip
           for (const m of ['bocchi', 'nijika', 'ryo', 'kita'] as const) expect(svg).toContain(`<g clip-path="url(#lp${m[0]})"><g transform="translate(${seatAt(m).x} `)
         }
   expect(largest).toBeLessThan(SVG_LIMIT)
+})
+
+test('the far two reach over the pot’s back rim into its opening, through the window their lap clips open over it while they eat', async () => {
+  /** The chopsticks' wood, lit and shaded. */
+  const WOOD = new Set(['#e5b789', '#c4935f'])
+  const inOpening = (x: number, y: number) => ((x + 0.5 - 144) / 26.2) ** 2 + ((y + 0.5 - 124) / 8.2) ** 2 <= 1
+  const o = OVER_POT
+  const inWindow = (x: number, y: number) => (x + 0.5 >= o.x0 && x + 0.5 <= o.x1 && y + 0.5 >= o.top && y + 0.5 <= o.cy) || (y + 0.5 > o.cy && ((x + 0.5 - 144) / o.rx) ** 2 + ((y + 0.5 - o.cy) / o.ry) ** 2 <= 1)
+  // the first frame of each: Bocchi's and Ryo's seatPot, Ryo's seatPoint at the last piece, nothing on the tips yet
+  for (const [m, id] of [['bocchi', 'bocchi-feast-eat'], ['ryo', 'ryo-feast-eat'], ['ryo', 'ryo-feast-worry']] as const) {
+    const anim = animOf(id)
+    if (anim === undefined) throw new Error(id)
+    const s = seatAt(m)
+    const wood: (readonly [number, number])[] = []
+    framePixels(id, 0).forEach((c, i) => c !== null && WOOD.has(c) && wood.push([s.x + (i % anim.w), s.y + FEAST_TOP + Math.floor(i / anim.w)]))
+    const tip = wood.reduce((a, b) => (b[1] > a[1] ? b : a))
+    // past the back rim (rows 113 to 116 in the pot's middle) and down in the opening
+    expect(tip[1]).toBeGreaterThanOrEqual(117)
+    expect(inOpening(tip[0], tip[1])).toBe(true)
+    // all of them below her waist lies in the window, so her clip shows them whole
+    for (const [x, y] of wood) if (y > SEAT_ROW[m]) expect(inWindow(x, y)).toBe(true)
+  }
+  // open in the far two's clips while they eat, simmer or watch the last piece; never in the near two's, nor round Bocchi's box
+  const clip = (svg: string, k: string) => svg.match(new RegExp(`<clipPath id="lp${k}">.*?</clipPath>`))?.[0] ?? ''
+  const window = `M${o.x0} ${o.top}H${o.x1}V${o.cy}`
+  for (const [age, open] of [[5 * MIN, true], [30 * MIN, true], [57 * MIN, true], [-1, false], [74 * MIN, false]] as const) {
+    const svg = hotpotSvg(viewOf(age), { width: 600 }).svg
+    for (const k of ['b', 'r']) expect(clip(svg, k).includes(window)).toBe(open)
+    for (const k of ['n', 'k']) expect(clip(svg, k)).not.toContain(window)
+  }
 })
 
 test('the band’s budget counts each seat’s clip: a room that leaves the band its whole size but not its clips still draws it, a few frames short, never the capped picture', async () => {

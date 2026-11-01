@@ -986,7 +986,7 @@ export const FEAST_TOP = 6
 export const FEAST_H = 64
 /** Bocchi's box (her 96x96 `hiding`) sits this much higher than her seat's canvas, its rim at her chest. */
 export const BOX_RAISE = 10
-/** The paint order of the band: the far two, then the pot, then the near two. */
+/** The paint order of the band, over the stove and the pot: the far two (reaching over its back rim), then the near two. */
 export const SEAT_ORDER: readonly Member[] = ['bocchi', 'ryo', 'nijika', 'kita']
 
 /**
@@ -1035,34 +1035,37 @@ function grid(rows: readonly string[], pal: Readonly<Record<string, string>>): P
   return p
 }
 
-/** The donabe from above and a little in front: a cream glaze run over a dark body, its two ears, the wide opening the broth fills. */
+/**
+ * The donabe from above and a little in front: a cream glaze run over a dark body, its two ears, the wide opening
+ * the broth fills. Drawn a row above POT (its rim's dark top line, where the far two's chopsticks cross it).
+ */
 function potPix(): Pix {
-  const p = pix(80, 33)
+  const p = pix(80, 34)
   const cx = 40
   for (let j = 0; j <= 20; j += 1) {
-    const y = 10 + j
+    const y = 11 + j
     const hw = Math.round(32 - 12 * Math.pow(j / 20, 1.7))
     for (let x = cx - hw; x < cx + hw; x += 1) {
       const u = (x + 0.5 - cx) / hw
       const tone = u < -0.84 ? 1 : u < -0.3 ? 0 : u < 0.32 ? 1 : u < 0.74 ? 2 : 3
-      const drip = 18 + Math.round(1.3 * Math.sin(x * 0.61) + Math.sin(x * 1.31 + 1.7) + (speck(x, 0, 7) > 0.78 ? 2 + speck(x, 1, 3) * 2 : 0))
+      const drip = 19 + Math.round(1.3 * Math.sin(x * 0.61) + Math.sin(x * 1.31 + 1.7) + (speck(x, 0, 7) > 0.78 ? 2 + speck(x, 1, 3) * 2 : 0))
       const isCream = y < drip
       let c: string = (isCream ? CREAM : GLAZE)[tone] as string
-      if (isCream && u > -0.62 && u < -0.48 && y > 11 && y < 16) c = '#fffdf6'
+      if (isCream && u > -0.62 && u < -0.48 && y > 12 && y < 17) c = '#fffdf6'
       if (!isCream && u > -0.64 && u < -0.52 && y > drip + 1 && y < drip + 6) c = '#a7765f'
-      if (isCream && speck(x, y, 2) < 0.04) c = CREAM[3]
-      if (!isCream && speck(x, y, 5) < 0.035) c = GLAZE[0]
+      if (isCream && speck(x, y - 1, 2) < 0.04) c = CREAM[3]
+      if (!isCream && speck(x, y - 1, 5) < 0.035) c = GLAZE[0]
       if (j >= 19) c = j === 20 ? '#4a2c1e' : '#6d4430'
       put(p, x, y, c)
     }
   }
   // the ears, a lug each side at the rim
-  block(p, 3, 11, 6, 14, (x, y) => (y === 11 ? CREAM[0] : x === 3 ? CREAM[1] : CREAM[2]))
-  block(p, 73, 11, 76, 14, (x, y) => (y === 11 ? CREAM[1] : x === 76 ? CREAM[3] : CREAM[2]))
+  block(p, 3, 12, 6, 15, (x, y) => (y === 12 ? CREAM[0] : x === 3 ? CREAM[1] : CREAM[2]))
+  block(p, 73, 12, 76, 15, (x, y) => (y === 12 ? CREAM[1] : x === 76 ? CREAM[3] : CREAM[2]))
   rim(p, POT_LINE)
-  oval(p, cx, 10, 31.6, 11.4, () => POT_LINE)
-  oval(p, cx, 10, 30.6, 10.4, (u, v) => (v < 0 ? (Math.hypot(u, v) > 0.74 ? CREAM[2] : CREAM[1]) : Math.hypot(u, v) > 0.8 ? CREAM[1] : CREAM[0]))
-  oval(p, cx, 10, 26.2, 8.2, (_u, v) => (v < -0.2 ? '#3e2a21' : '#2a1b15'))
+  oval(p, cx, 11, 31.6, 11.4, () => POT_LINE)
+  oval(p, cx, 11, 30.6, 10.4, (u, v) => (v < 0 ? (Math.hypot(u, v) > 0.74 ? CREAM[2] : CREAM[1]) : Math.hypot(u, v) > 0.8 ? CREAM[1] : CREAM[0]))
+  oval(p, cx, 11, 26.2, 8.2, (_u, v) => (v < -0.2 ? '#3e2a21' : '#2a1b15'))
   return p
 }
 
@@ -1411,11 +1414,24 @@ function tableMarkup(): string {
   return s
 }
 
-/** Her lap's clip: everything but the table nearer than her waist. */
-function lapClip(m: Member): string {
+/**
+ * Over the pot, where the far two's chopsticks reach down into it: the table behind the pot's middle, from their
+ * waists' row, and the pot's top (its rim's oval). Below their waists they draw nothing else (only hair, which
+ * falls outside the table), so the window shows only their chopsticks and what is on them.
+ */
+export const OVER_POT = { x0: 112, x1: 176, top: SEAT_ROW.bocchi + 1, cy: 124, rx: 32, ry: 11.4 } as const
+
+/**
+ * Her lap's clip: everything but the table nearer than her waist, which hides her lap; for the far two, eating
+ * (`overPot`), with OVER_POT open again, so their chopsticks show over the pot's back rim and in its opening (the
+ * pot is laid under the whole band). The table's quad winds against the room's, the window with it: nonzero.
+ */
+function lapClip(m: Member, overPot: boolean): string {
   const y = SEAT_ROW[m] + 1
   const low = SCENE_H + 2
-  return `<clipPath id="lp${m[0]}"><path clip-rule="evenodd" d="M-10 -10H${SCENE_W + 10}V${SCENE_H + 10}H-10Z M${f(edgeL(y))} ${y}L${f(edgeR(y))} ${y}L${f(edgeR(low))} ${low}L${f(edgeL(low))} ${low}Z"/></clipPath>`
+  const o = OVER_POT
+  const window = overPot ? ` M${o.x0} ${o.top}H${o.x1}V${o.cy}A${o.rx} ${o.ry} 0 0 1 ${o.x0} ${o.cy}Z` : ''
+  return `<clipPath id="lp${m[0]}"><path d="M-10 -10H${SCENE_W + 10}V${SCENE_H + 10}H-10Z M${f(edgeL(y))} ${y}L${f(edgeL(low))} ${low}L${f(edgeR(low))} ${low}L${f(edgeR(y))} ${y}Z${window}"/></clipPath>`
 }
 
 /** The zabuton under each seat, its outer corner past the table's edge. */
@@ -1443,7 +1459,7 @@ function flames(phase: FeastPhase, level: number): string {
 /** The pot and what is in it: broth by level, the food left, the lid while nothing is cached. */
 function potMarkup(phase: FeastPhase, level: FeastLevel): string {
   const P = props()
-  let s = at(POT.x, POT.y, P.pot)
+  let s = at(POT.x, POT.y - 1, P.pot)
   if (phase === 'none' || phase === 'cleared' || phase === 'off') return s + at(POT.x + 7, POT.y - 12, P.lid)
   const kind = phase === 'zosui' ? 'zosui' : phase === 'cold' || phase === 'held' ? 'cold' : 'warm'
   s += at(POT.x + 12, POT.y + 1, broth(kind, kind === 'warm' ? level : 0))
@@ -1596,15 +1612,19 @@ export function bandParts(phase: FeastPhase, moment: KessokuHotpot['moment'], ke
 }
 
 /**
- * The band fitted into `budget` characters with `then` (the stove and the
- * pot) spliced in after Ryo, the second part: the largest gives up frames
- * first, and the headband goes with Nijika when the fit leaves her out.
- * `levels` and `parts` are the fit's, over the parts the table has.
+ * The band fitted into `budget` characters with `under` (the stove and the
+ * pot) laid first inside the sprites' group, under all four, so the far two
+ * reach over its back rim and the near two sit in front of it: the largest
+ * gives up frames first, and the headband goes with Nijika when the fit
+ * leaves her out (a guard: the real scenes leave the band room to spare, all
+ * four at level 0). `levels` and `parts` are the fit's, over the parts the
+ * table has.
  */
-export function fitBand(parts: readonly SpritePart[], wraps: readonly string[], then: string, budget: number, table: SpriteTable = SPRITES): { markup: string; levels: number[]; parts: SpritePart[] } {
+export function fitBand(parts: readonly SpritePart[], wraps: readonly string[], under: string, budget: number, table: SpriteTable = SPRITES): { markup: string; levels: number[]; parts: SpritePart[] } {
   const fit = (list: readonly SpritePart[], wrapList: readonly string[]) => {
     const r = fitSprites(list, budget, table)
-    return { markup: spliceAfter(r.markup, list, list.map((_p, i) => (i === 1 ? then : '')), wrapList), levels: r.levels, parts: list.filter(p => table[p.id] !== undefined) }
+    const markup = spliceAfter(r.markup, list, [], wrapList).replace(/^<g [^>]*>/, open => open + under)
+    return { markup, levels: r.levels, parts: list.filter(p => table[p.id] !== undefined) }
   }
   const first = fit(parts, wraps)
   const nijikaAt = first.parts.findIndex(p => p.id.startsWith('nijika-feast-') && p.id !== HEADBAND)
@@ -1629,11 +1649,12 @@ function sceneKey(v: HotpotView, layout: SceneLayout): string {
 const sceneMemo = new Map<string, SceneSvg>()
 
 /**
- * The feast: the room, the table and its cushions, the far two seated, the
- * stove and the pot, the near two, the platter and the steam, the slip
- * during a hold, the room's light and the speech; the band fitted into what
- * the room leaves of the Svg's limit, the largest giving up frames first.
- * Memoised on its key, so an unchanged feast is the same string.
+ * The feast: the room, the table and its cushions, the stove and the pot, the
+ * far two seated (their chopsticks over its back rim), the near two, the
+ * platter and the steam, the slip during a hold, the room's light and the
+ * speech; the band fitted into what the room leaves of the Svg's limit, the
+ * largest giving up frames first. Memoised on its key, so an unchanged feast
+ * is the same string.
  */
 export function hotpotSvg(v: HotpotView, layout: SceneLayout): SceneSvg {
   const key = sceneKey(v, layout)
@@ -1643,9 +1664,11 @@ export function hotpotSvg(v: HotpotView, layout: SceneLayout): SceneSvg {
   const moment = momentOf(v)
   const keepwarm = v.cache.keepWarmUntil > v.now
   const P = props()
-  const clips = `<defs>${SEAT_ORDER.map(lapClip).join('')}</defs>`
+  const states = seatStates(phase, moment)
+  const reaches = (m: Member) => (m === 'bocchi' || m === 'ryo') && (states[m] === 'eat' || states[m] === 'calm' || states[m] === 'worry')
+  const clips = `<defs>${SEAT_ORDER.map(m => lapClip(m, reaches(m))).join('')}</defs>`
   const back = roomMarkup() + clips + CRISP(P.bags) + lampsMarkup(phase) + CRISP(cushions()) + tableMarkup() + CRISP(at(98, 97, P.glass.bocchi) + at(181, 97, P.glass.ryo))
-  // the stove, its flames, the pot: spliced in after Ryo, inside the sprites' group (crisp, stroked, no fill)
+  // the stove, its flames, the pot: laid first inside the sprites' group (crisp, stroked, no fill), under the band
   const potStuff = `<ellipse cx="144" cy="${POT.y + 39}" rx="44" ry="3" fill="#000" opacity=".35"/>${at(POT.x - 3, POT.y + 26, P.stove)}${flames(phase, level)}${potMarkup(phase, level)}${bubbles(phase)}`
   const n = seatAt('nijika')
   const k = seatAt('kita')
@@ -1665,9 +1688,7 @@ export function hotpotSvg(v: HotpotView, layout: SceneLayout): SceneSvg {
   const wraps = band.wraps.reduce((n, w) => n + (w === '' ? 0 : `<g ${w}></g>`.length), 0)
   const chrome = open.length + back.length + potStuff.length + after.length + '</svg>'.length + wraps
   const { markup } = fitBand(band.parts, band.wraps, potStuff, SVG_LIMIT - chrome - 64)
-  // With no sprite of the band to place it after, the pot still stands.
-  const body = markup.includes(potStuff) ? markup : markup + CRISP(potStuff)
-  const svg = capped(`${open}${back}${body}${after}</svg>`, () => `${open}${back}${CRISP(potStuff)}${after}</svg>`)
+  const svg = capped(`${open}${back}${markup}${after}</svg>`, () => `${open}${back}${CRISP(potStuff)}${after}</svg>`)
   const drawn: SceneSvg = { svg, alt: '', height: SCENE_H }
   if (sceneMemo.size > 48) sceneMemo.clear()
   sceneMemo.set(key, drawn)

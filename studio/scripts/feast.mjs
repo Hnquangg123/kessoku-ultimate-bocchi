@@ -131,6 +131,8 @@ const edgeR = y => TABLE.farR + TABLE.slope * (y - TABLE.farY)
 /** Her waist row in the scene: the far two at 112, the near two at 150. */
 const WAIST_Y = { bocchi: 112, ryo: 112, nijika: 150, kita: 150 }
 const onTable = (x, y) => y >= TABLE.farY && y <= TABLE.nearY && x >= edgeL(y) && x <= edgeR(y)
+/** Over the pot, where the far two's chopsticks reach down into it (the mod's OVER_POT): the table behind its middle, its rim's oval. */
+const overPot = (x, y) => (x >= 112 && x <= 176 && y >= 113 && y <= 124) || (y > 124 && ((x - 144) / 32) ** 2 + ((y - 124) / 11.4) ** 2 <= 1)
 
 /** Where her canvas lands: her waist's outer end a pixel inside the table's side edge at her row. */
 function seatOffset(m, art) {
@@ -185,8 +187,8 @@ function drawPlatter(sc) {
   ellipse(sc, 144, 163.5, 34, 9.5, '#f0ead8', '#5f82c4')
 }
 
-/** A member's figure laid on the scene, clipped by the table nearer than her waist; only the feast window's rows. */
-function seat(sc, m, px) {
+/** A member's figure laid on the scene, clipped by the table nearer than her waist (but over the pot, for the far two); only the feast window's rows. */
+function seat(sc, m, px, over = false) {
   const art = ART[m]
   const { ox, oy, Y } = seatOffset(m, art)
   for (let y = S.FEAST_Y; y < S.FEAST_Y + S.FEAST_H; y += 1)
@@ -195,7 +197,7 @@ function seat(sc, m, px) {
       if (!c) continue
       const sx = x + ox
       const sy = y + oy
-      if (sy >= Y + 1 && onTable(sx + 0.5, sy + 0.5)) continue
+      if (sy >= Y + 1 && onTable(sx + 0.5, sy + 0.5) && !(over && overPot(sx + 0.5, sy + 0.5))) continue
       put(sc, sx, sy, c)
     }
 }
@@ -234,12 +236,13 @@ function panel(cast, { food = true, cold = false } = {}) {
     const art = ART[m]
     return seated(art, c.pose, c.face, { fx: [...tipFx(art, c.pose, c.food), ...(c.fx ?? [])], headband: c.headband })
   }
+  // the pot under the band: the far two reach over its back rim, the near two sit in front of it
+  drawPot(sc, food && !cold)
   for (const m of ['bocchi', 'ryo']) {
     const f = fig(m)
     if (f === 'box') boxed(sc, m)
-    else if (f) seat(sc, m, f)
+    else if (f) seat(sc, m, f, true)
   }
-  drawPot(sc, food && !cold)
   for (const m of ['nijika', 'kita']) {
     const f = fig(m)
     if (f === 'box') boxed(sc, m)

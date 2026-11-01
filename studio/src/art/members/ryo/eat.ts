@@ -1,33 +1,40 @@
 // Ryo eating at the table, patched on her seat, arms and what they hold only: the far forearm folded across
 // her lifts away (the sweater under it), her torizara in the near hand at the end of the near forearm still on the
 // table (the plate 41-50, rows 47-52), and the far hand with the chopsticks (Bocchi's reach, mirrored):
-//   seatPot   the far arm out from under her bob toward the pot, the chopsticks' tips at its back rim (7,56: the
-//             scene's row 112, the last her lap clip leaves her)
+//   seatPot   the far arm out from under her bob toward the pot, the chopsticks angled down over its back rim, their
+//             tips in the broth (8,63: the scene's row 119; the pot lies under her, and her lap clip opens over it)
 //   seatBowl  the far forearm up from the elbow at her side, the chopsticks down into the plate
 //   seatUp    the hand raised under her chin, the tips at her mouth (47,40: just under the face box)
 // The plate and the near arm are the same in all three, so an eating loop changes only the far arm.
 
 import type { Point, SeatPoseDef } from '../../types'
 
-/** Her torizara in the near hand, the chopsticks in the pot (their tips at its back rim, 7,56). */
+/** Her torizara in the near hand, the chopsticks in the pot (over its back rim, the tips in the broth, 8,63). */
 export const seatPot: SeatPoseDef = {
   from: 'seat',
   patches: [
-    // 44x10 at 7,47
+    // 43x17 at 8,47
     {
-      x: 7,
+      x: 8,
       y: 47,
       grid: [
-        '.........................KKKjj......ooooooo.', // 47
-        '......................KKKjjjkkkk.joWW<<<<WWo', // 48
-        '...................KKKjjjkkkjj...JoW<<<<<<Wo', // 49
-        '...............pppJjJjkkkjjjjj..JJo{WWWWWW{o', // 50
-        '............(((psspJjJjjjjjjjJJJJJKo{{{{{{o.', // 51
-        '.........((())pSsspJjJjjJJJJJ.KKJ...oooooo..', // 52
-        '......((())...pSsSpJjJJJKKKKK__K.jjjjj......', // 53
-        '...((())......pppppKKKKK......_.Jjjjjj......', // 54
-        '.(()).......................................', // 55
-        '()..........................................', // 56
+        '........................KKKjj......ooooooo.', // 47
+        '.....................KKKjjjkkkk.joWW<<<<WWo', // 48
+        '..................KKKjjjkkkjj...JoW<<<<<<Wo', // 49
+        '..............pppJjJjkkkjjjjj..JJo{WWWWWW{o', // 50
+        '.............(psspJjJjjjjjjjJJJJJKo{{{{{{o.', // 51
+        '............(pSsspJjJjjJJJJJ.KKJ...oooooo..', // 52
+        '...........()pSsSpJjJJJKKKKK__K.jjjjj......', // 53
+        '.........(().pppppKKKKK......_.Jjjjjj......', // 54
+        '........())................................', // 55
+        '.......()..................................', // 56
+        '......()...................................', // 57
+        '.....()....................................', // 58
+        '...(().....................................', // 59
+        '..())......................................', // 60
+        '.()........................................', // 61
+        '().........................................', // 62
+        ')..........................................', // 63
       ],
     },
   ],
@@ -89,4 +96,4 @@ export const seatUp: SeatPoseDef = {
 }
 
 /** Where the chopsticks' tips are on each (canvas pixels): the feast centres the food it picked (the morsel effect) there. */
-export const tips: { seatPot: Point; seatBowl: Point; seatUp: Point } = { seatPot: { x: 7, y: 56 }, seatBowl: { x: 46, y: 48 }, seatUp: { x: 47, y: 40 } }
+export const tips: { seatPot: Point; seatBowl: Point; seatUp: Point } = { seatPot: { x: 8, y: 63 }, seatBowl: { x: 46, y: 48 }, seatUp: { x: 47, y: 40 } }

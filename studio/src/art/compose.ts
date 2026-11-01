@@ -884,13 +884,17 @@ export function checkArt(art: MemberArt): string[] {
 /** How far (in pixels, along the row) a pot-look eye's darkness must move toward the pot: any real move of a pixel's tone does it. */
 const POT_SHIFT = 0.02
 
+/** The chopsticks' wood, lit and shaded (the band's shared prop keys): the one thing besides hair a seat pose may draw below her waist. */
+const CHOPSTICK: ReadonlySet<string> = new Set(['(', ')'])
+
 /**
  * The feast's problems (see checkArt): her seat poses (the ones FEAST_POSES
  * gives her, each from stand or a seat pose, its patches on the canvas), each
- * keeping stand's face region (as the HEAD_POSES do), drawn inside the feast
- * window (rows 6-69: her face, her hands, what she holds), her waist row
- * ending at `waist` on her outer side in every one (her body from there in,
- * only `hair` beyond it) and only her hair below it; her feast faces (the
+ * keeping stand's face region (as the HEAD_POSES do) and `seat` stand's whole
+ * head, drawn inside the feast window (rows 6-69: her face, her hands, what
+ * she holds), her waist row ending at `waist` on her outer side in every one
+ * (her body from there in, only `hair` beyond it) and only her hair and her
+ * chopsticks below it; her feast faces (the
  * face overlays' size), the pot-look ones differing from the face they come from
  * only inside her eyes, each iris toward the pot, and `bite` keeping idle's
  * eyes; a tip on every seat pose that holds something, inside the window; the
@@ -995,16 +999,17 @@ function checkFeast(
         problems.push(`feast pose ${name}: her waist row (${wy}) runs on past feast.waist (${wx}) on her outer side, to ${x} ("${o}"), so the mod would seat her ${Math.abs(x - wx)} pixels off`)
         break
       }
-      // below the waist, only her hair (the table hides the rest of her; beside it, her hair still shows)
+      // below the waist, only her hair and the chopsticks' wood (the table hides the rest of her; beside it, her hair
+      // still shows, and over the pot the far two's chopsticks reach down into it)
       let below = 0
       let first = ''
       for (let y = wy + 1; y < H; y += 1)
         [...(grid[y] ?? '')].forEach((ch, x) => {
-          if (ch === '.' || hair.has(ch)) return
+          if (ch === '.' || hair.has(ch) || CHOPSTICK.has(ch)) return
           below += 1
           if (first === '') first = ` (first at ${x},${y}: "${ch}")`
         })
-      if (below > 0) problems.push(`feast pose ${name}: ${below} pixels below her waist (row ${wy}) that are not her hair${first}`)
+      if (below > 0) problems.push(`feast pose ${name}: ${below} pixels below her waist (row ${wy}) that are not her hair or her chopsticks${first}`)
     }
   }
 
