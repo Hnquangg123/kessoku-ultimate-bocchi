@@ -1949,6 +1949,8 @@ async function pressTopUp($: EngineInterface): Promise<void> {
   if (isReheat) {
     if (r.warmed) {
       await playMoment($, 'reheat')
+      // Warm again: Bocchi leaves her box now, not at the next minute's tick.
+      if ((await read($, band)).mood === 'hiding' && moodTimer === null) await revertMood($)
       const words = `re-heated: ${fmtTokens(r.write)} re-written for ${fmtUsd(r.usd)}`
       await noteHotpot($, words)
       toast($, `${MEMBERS.bocchi.faces.happy} Hotpot: ${words}`, 'chatter')
