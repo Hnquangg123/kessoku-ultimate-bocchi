@@ -615,7 +615,7 @@ test('the scene: the same key gives the same string; the alt moves with the cloc
   expect(a.svg).not.toContain('mix-blend-mode')
 })
 
-test('the flames stand out past the pot’s foot while it is lit: sputtering at last orders, back with a re-heat, none once cold, held, with nothing cached or caching off', async () => {
+test('the flames stand out past the pot’s foot while it is lit: sputtering at last orders (steady while Nijika has the pot), back with a re-heat, none once cold, held, with nothing cached or caching off', async () => {
   // the flames the scene draws: their class (`fl` lit, `fs` sputtering) and the outer two's x, or `out`
   const flames = (v: HotpotView) => {
     const all = [...hotpotSvg(v, { width: 600 }).svg.matchAll(/<g class="(f[ls])"[^>]*><path d="M(\d+) 143c/g)]
@@ -626,6 +626,8 @@ test('the flames stand out past the pot’s foot while it is lit: sputtering at 
   for (const age of [9 * MIN, 30 * MIN, 45 * MIN]) expect(flames(viewOf(age))).toBe('fl 112..176')
   expect(flames(viewOf(9 * MIN, { flags: { ...FLAGS, compacting: true } }, {}, { compacting: true }))).toBe('fl 112..176')
   expect(flames(viewOf(57 * MIN))).toBe('fs 112..176')
+  // keepwarm on at level 1, Nijika has the pot: a steady flame
+  expect(flames(viewOf(57 * MIN, {}, { keepWarmUntil: NOW + HOUR }))).toBe('fl 112..176')
   expect(flames(viewOf(74 * MIN, { hotpot: { ...HOTPOT, moment: { kind: 'reheat', until: NOW + 1 } } }))).toBe('fl 112..176')
   expect(flames(viewOf(74 * MIN))).toBe('out')
   expect(flames(viewOf(74 * MIN, { slip: { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 14 * MIN } }, {}, { held: true }))).toBe('out')
@@ -701,6 +703,20 @@ test('the scene draws the band in every phase, platter, keepwarm and moment, und
     ['zosui', 5 * MIN, { compacting: true }],
   ]
   const moments: KessokuHotpot['moment'][] = [null, { kind: 'ping', until: NOW + 1 }, { kind: 'reheat', until: NOW + 1 }, { kind: 'keepon', until: NOW + 1 }, { kind: 'paid', until: NOW + 1 }]
+  /** A part drawn whole at level 0, as fitSprites writes it alone (inside its wrapper). */
+  const WRAP = '<g shape-rendering="crispEdges" fill="none" stroke-width="1">'
+  const whole = new Map<string, string>()
+  const level0 = (p: SpritePart) => {
+    const key = `${p.id}@${p.x},${p.y}`
+    let hit = whole.get(key)
+    if (hit === undefined) {
+      const markup = fitSprites([p], 10_000_000).markup
+      expect(markup.startsWith(WRAP) && markup.endsWith('</g>')).toBe(true)
+      hit = markup.slice(WRAP.length, -'</g>'.length)
+      whole.set(key, hit)
+    }
+    return hit
+  }
   let largest = 0
   for (const [, age, flags] of phases)
     for (const tokens of [20_000, 80_000, 200_000, 320_000])
@@ -725,8 +741,14 @@ test('the scene draws the band in every phase, platter, keepwarm and moment, und
           expect(at('nijika')).toBeLessThan(at('kita'))
           // each through her lap's clip
           for (const m of ['bocchi', 'nijika', 'ryo', 'kita'] as const) expect(svg).toContain(`<g clip-path="url(#lp${m[0]})"><g transform="translate(${seatAt(m).x} `)
+          // all four whole at level 0 (nothing merged, nothing left out, never the capped picture), and the headband
+          // exactly while keepwarm runs
+          const band = bandParts(drawnPhase(v).phase, momentOf(v), keep > NOW)
+          expect(band.parts.some(p => p.id === HEADBAND)).toBe(keep > NOW)
+          for (const p of band.parts) expect(svg.includes(level0(p))).toBe(true)
         }
-  expect(largest).toBeLessThan(SVG_LIMIT)
+  // the room it leaves on record: the largest scene some 40,000 characters or more under the limit
+  expect(largest).toBeLessThanOrEqual(SVG_LIMIT - 40_000)
 })
 
 test('the far two reach over the pot’s back rim into its opening, through the window their lap clips open over it while they eat', async () => {

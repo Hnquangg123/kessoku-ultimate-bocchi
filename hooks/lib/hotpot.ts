@@ -1460,10 +1460,10 @@ function cushions(): string {
   }).join('')
 }
 
-/** The flames under the pot, the burner's ring wider than its base so the outer ones show at its sides: blue, licking up; sputtering at last orders; none while it is out. */
+/** The flames under the pot, the burner's ring wider than its base so the outer ones show at its sides: blue, licking up; sputtering at last orders (steady while Nijika has the pot); none while it is out. */
 function flames(phase: FeastPhase, level: number): string {
   if (!(phase === 'zosui' || (isWarmPhase(phase) && level > 0))) return ''
-  const cls = phase === 'last' || phase === 'tend' ? 'fs' : 'fl'
+  const cls = phase === 'last' ? 'fs' : 'fl'
   let s = ''
   for (let i = 0; i < 9; i += 1) {
     const x = 112 + i * 8
