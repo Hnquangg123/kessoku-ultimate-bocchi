@@ -61,9 +61,11 @@ project's tour, and `/hotpot` the prompt cache as the band's after-show hotpot. 
 
 - **♨ Hotpot.** `/hotpot`, or `♨ Hotpot` (`o`) on the strip and under the chalkboard, opens the band's after-show
   hotpot: a donabe on a gas stove in the middle of a square low table, Bocchi and Nijika at its left, Ryo and Kita at
-  its right. While the cache is warm they eat, and the pot and the platter empty as its time runs down; the last
-  minutes are last orders; cold is an empty pot, a dead flame and snow, with Bocchi in her box. See
-  [♨ Hotpot](#-hotpot).
+  its right, each turned to the pot with her face to you. While the cache is warm they eat with their eyes on the pot
+  (Bocchi and Ryo reaching over its back rim, Nijika serving with her ladle, Kita leaning in to photograph it), and
+  the pot and the platter empty as its time runs down; the last minutes are last orders, all four looking up at you;
+  cold is an empty pot, a dead flame and snow, Bocchi in her box and Nijika and Kita slumped over the table. A top-up
+  is Nijika pouring broth in. See [♨ Hotpot](#-hotpot).
 - **The cache's prices, and what to do about them.** Under the feast, a wooden board: the state in a word, then the
   context, a re-order, a top-up and a day of keepwarm. Keep the fire on (30m, 1h, 2h, 6h) or let it cool, top up
   now, re-heat now (a re-write paid on purpose while cold), zosui (compact), clear the table, and the bill.
@@ -560,26 +562,32 @@ warning survives `/compact`. Nijika says `the set is compacted: X → Y tokens`.
 
 `/hotpot` (or `/bocchi hotpot`, or `♨ Hotpot`, `o`, on the strip and under the chalkboard) opens the prompt cache as
 the band's after-show hotpot, in an izakaya room: a donabe on a gas stove in the middle of a square low table,
-Bocchi and Nijika at its left edge, Ryo and Kita at its right, all four turned to the pot with their faces to you.
-The same command, the panel's ♨ again, `Close` (`c`) or Esc close it. It costs nothing while it is closed.
+Bocchi and Nijika at its left edge, Ryo and Kita at its right, each from the waist up, her body turned to the pot and
+her face to you, her zabuton's corner showing past the table's edge. Eating, they look at the pot (but for the bite,
+the chewing and a blink); at last orders and at the bill, at you. The same command, the panel's ♨ again, `Close`
+(`c`) or Esc close it. It costs nothing while it is closed.
 
 **The feast is the gauge.** It changes when the warmth steps a level or the state changes, never on a clock:
 
 | The cache | The feast |
 | --- | --- |
-| nothing cached yet | the table set, the lid on the pot, the stove out |
-| more than two thirds of the TTL left | a bubbling pot, steam, the platter as full as the context; Bocchi eats shyly, Ryo fast, Nijika serves with her ladle, Kita photographs the pot |
+| nothing cached yet | the table set, the platter full for the context, the lid on the pot, the stove out; all four wait, hands on the table |
+| more than two thirds of the TTL left | a bubbling pot, steam, the platter as full as the context; all four eat, eyes on the pot: Bocchi shyly and Ryo fast (two bites to her one), both reaching over the pot's back rim into the broth, Nijika serving with her ladle, Kita leaning in to photograph the pot over its rim (a flash, sparkles) |
 | more than a third | simmering, half the food, slower chopsticks |
 | less | the last few pieces |
-| the last 5 minutes (half the TTL, if that is shorter) | last orders: a LAST ORDER sign, a sputtering flame, one piece of meat left; all four look up at you |
-| cold | an empty, frosted pot, no flame, blue light, snow; Bocchi in her box under a rain cloud, Nijika and Kita melting |
-| keepwarm on | Nijika in the nabe-bugyō headband, the stove's knob glowing; in the last minutes she has the pot |
-| a send held by Cache Tax | the bill on the table, the re-write's price and a warm turn's; Bocchi in a seated panic |
-| compacting | zosui: rice and egg in the broth, heavy steam |
+| the last 5 minutes (half the TTL, if that is shorter) | last orders: a LAST ORDER sign, a sputtering flame, one piece of meat left; all four look up at you, Ryo's chopsticks still on the last piece |
+| cold | an empty, frosted pot, no flame, blue light, snow; Bocchi in her box under a rain cloud, Ryo chewing a weed, Nijika and Kita slumped over the table, melting |
+| keepwarm on | Nijika in the nabe-bugyō headband, the stove's knob glowing; in the last minutes she has the pot, the flame steady |
+| caching off | the lid stays on and the platter full, all four waiting as before the first order |
+| a top-up or a keepwarm ping warms the pot | Nijika pours broth in from her ladle (it spills over the lip and a ripple steps out on the broth); the food comes back |
+| a re-heat warms the pot | the flame and the food come back; Bocchi comes out of her box |
+| a send held by Cache Tax | the slip on the table, the re-write's price and a warm turn's; all four look up at you, Bocchi in a seated panic, hands up |
+| the held send is sent and paid | the slip goes and the feast comes back, and stays until the turn's first request has re-written the cache |
+| compacting | zosui: rice and egg in the broth, heavy steam, the four eating it |
 
 The platter holds about half its pieces under 40k tokens of context, two thirds to 120k, all from 120k, and a meat
-tower on top from 250k. One speech line shows at a time; with reduced motion the steam, bubbles and flames stand
-still.
+tower on top from 250k; it is full before the first order and while caching is off, and empties as the warmth runs
+down. One speech line shows at a time; with reduced motion the steam, bubbles, flames and the pour stand still.
 
 **The wooden board** under it: the state in a word and its tail in whole minutes (`♨ Bubbling` `51m of feast left`,
 `Last orders!` `cold in 3m`, `❄ Gone cold` `14m ago: the next send re-orders everything`), then the context and its
@@ -1000,8 +1008,10 @@ Here *the engine* is Claude Code itself, and `$` is the interface it hands the h
   the ledger's arithmetic (every step, ping, re-heat and summary booked against P, the main loop's last prompt, the
   tax, the TTL learned from the requests) and its figures; the wooden board, the bill and the buttons' words; and the
   drawing: the room, the table, the donabe and its food as pixel art, the band seated at the table's edges (each by
-  the outer end of her waist, `FEAST_WAIST`, the waist in her `seat.ts`, which a test holds to the sprites' pixels),
-  memoised with no clock inside, and the terminal's pot under the minis.
+  the outer end of her waist, `FEAST_WAIST`, the waist in her `seat.ts`, which a test holds to the sprites' pixels)
+  over the pot, the far two's lap clips open over it (`OVER_POT`) so their chopsticks cross its back rim, Kita's
+  flash at `KITA_LENS` and Nijika's pour at a top-up from `NIJIKA_CUP` (the studio's tips, held by tests to the
+  sprites), memoised with no clock inside, and the terminal's pot under the minis.
 - `hooks/lib/pixart.ts` and `hooks/lib/svgtext.ts`: the small-picture helpers (a `Pix` drawn pixel by pixel and written
   as the sprites are) and the text and markup helpers (the faces' advance widths, wrapping, `svgDoc`, `capped`), which
   `scene.ts` and `hotpot.ts` share.
@@ -1078,8 +1088,10 @@ From `studio/`, after `npm install`:
 - `npm run dev` opens Remotion Studio on every sprite, slime, contact sheet and the showcase.
 - `npm run check` checks the grids in a second (sizes, palette, the face region identical across poses, the portrait
   windows holding the face, the slimes on their canvas with Bocchi's two faces on one body, the seat poses with
-  stand's face region and the waist where `seat.ts` puts it, the pot-look faces moving only the eyes, the headband,
-  the feast loops' lengths, the colours against the alphabet), then that `themes/*.json` still match the palette.
+  stand's face region (`seat` with stand's whole head), the waist where `seat.ts` puts it and only hair and
+  chopsticks below it, the pot-look faces moving only the eyes, the headband, the feast loops' lengths and the faces
+  they play (at you at last orders and at the bill, on the pot while eating), the colours against the alphabet), then
+  that `themes/*.json` still match the palette.
 - `npm run themes` writes both theme files from the palette's token maps (`npm run themes:check` only compares).
 - `npm run sprites` renders every sprite with Remotion and writes `hooks/lib/sprites.gen.ts`
   (`node scripts/sprites.mjs --out <path>`, or `npm run sprites -- --out <path>`, writes a scratch export instead;
