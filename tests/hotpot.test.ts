@@ -28,6 +28,7 @@ import {
   bookFork,
   bookMainStep,
   bookSummary,
+  cushionAt,
   drawnPhase,
   edgeL,
   edgeR,
@@ -738,6 +739,44 @@ test('the far two reach over the pot’s back rim into its opening, through the 
     for (const k of ['b', 'r']) expect(clip(svg, k).includes(window)).toBe(open)
     for (const k of ['n', 'k']) expect(clip(svg, k)).not.toContain(window)
   }
+})
+
+test('each zabuton’s corner shows past the table’s edge, clear of the band: 100 of its pixels or more in every phase, keepwarm and moment, the far two’s too', async () => {
+  const onTable = (x: number, y: number) => y + 0.5 >= TABLE.farY && x + 0.5 >= edgeL(y + 0.5) && x + 0.5 <= edgeR(y + 0.5)
+  /** Every scene pixel a part covers in any frame of its loop (the band is drawn over the cushions). */
+  const memo = new Map<string, Set<number>>()
+  const cover = (p: SpritePart) => {
+    const key = `${p.id}@${p.x},${p.y}`
+    let hit = memo.get(key)
+    if (hit === undefined) {
+      hit = new Set<number>()
+      const anim = animOf(p.id)
+      if (anim === undefined) throw new Error(p.id)
+      for (let i = 0; i < anim.frames.length; i += 1) framePixels(p.id, i).forEach((c, k) => c !== null && (hit as Set<number>).add((p.y + Math.floor(k / anim.w)) * 1000 + p.x + (k % anim.w)))
+      memo.set(key, hit)
+    }
+    return hit
+  }
+  /** The 34x11 zabuton's own pixels: its corners rounded off by three, two and one. */
+  const inset = (dy: number) => (dy === 0 || dy === 10 ? 3 : dy === 1 || dy === 9 ? 2 : dy === 2 || dy === 8 ? 1 : 0)
+  const fewest: Record<string, number> = {}
+  for (const phase of ['none', 'feast', 'simmer', 'last', 'cold', 'held'] as const)
+    for (const moment of [null, { kind: 'ping' as const, until: NOW + 1 }])
+      for (const keepwarm of [false, true]) {
+        const covers = bandParts(phase, moment, keepwarm).parts.map(cover)
+        for (const m of SEAT_ORDER) {
+          const c = cushionAt(m)
+          let clear = 0
+          for (let dy = 0; dy < 11; dy += 1)
+            for (let dx = inset(dy); dx <= 33 - inset(dy); dx += 1) {
+              const x = c.x + dx
+              const y = c.y + dy
+              if (!onTable(x, y) && !covers.some(s => s.has(y * 1000 + x))) clear += 1
+            }
+          fewest[m] = Math.min(fewest[m] ?? Infinity, clear)
+        }
+      }
+  for (const m of SEAT_ORDER) expect(fewest[m] ?? 0).toBeGreaterThanOrEqual(100)
 })
 
 test('the band’s budget counts each seat’s clip: a room that leaves the band its whole size but not its clips still draws it, a few frames short, never the capped picture', async () => {

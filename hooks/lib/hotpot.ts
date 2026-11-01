@@ -1434,13 +1434,21 @@ function lapClip(m: Member, overPot: boolean): string {
   return `<clipPath id="lp${m[0]}"><path d="M-10 -10H${SCENE_W + 10}V${SCENE_H + 10}H-10Z M${f(edgeL(y))} ${y}L${f(edgeL(low))} ${low}L${f(edgeR(low))} ${low}L${f(edgeR(y))} ${y}Z${window}"/></clipPath>`
 }
 
-/** The zabuton under each seat, its outer corner past the table's edge. */
+/** Each zabuton's left side from the table's edge at her row: the far two's further out, past the near two's heads. */
+const CUSHION_OUT: Readonly<Record<Member, number>> = { bocchi: -34, nijika: -22, ryo: 0, kita: -12 }
+
+/** A zabuton's top left (34 x 11) under her seat, its outer corner past the table's edge. */
+export function cushionAt(m: Member): { x: number; y: number } {
+  const row = SEAT_ROW[m]
+  return { x: Math.round((SEAT_SIDE[m] === 'left' ? edgeL(row) : edgeR(row)) + CUSHION_OUT[m]), y: row + 1 }
+}
+
+/** The zabuton under each seat, drawn under the table, each one's corner showing past its edge. */
 function cushions(): string {
   const P = props()
   return SEAT_ORDER.map(m => {
-    const row = SEAT_ROW[m]
-    const edge = SEAT_SIDE[m] === 'left' ? edgeL(row) : edgeR(row)
-    return at(Math.round(SEAT_SIDE[m] === 'left' ? edge - 22 : edge - 12), row + 1, P.zabuton[m])
+    const c = cushionAt(m)
+    return at(c.x, c.y, P.zabuton[m])
   }).join('')
 }
 
