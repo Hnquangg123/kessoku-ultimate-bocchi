@@ -16,10 +16,11 @@
 //   eat    a feast (levels 5 and 4, and the zosui): into the pot (seatPot, eyes on it), the food on her
 //          tips, to her torizara (seatBowl), up to her mouth (seatUp, the bite), chewing (happy); Bocchi
 //          shy and slow, Ryo two bites to everyone's one, Nijika serving with her ladle between bites
-//          (seatLadle), Kita photographing the pot between them (seatPhone, the flash on her lens)
+//          (seatLadle), Kita photographing the pot between them (seatPhone, the flash on her lens); the
+//          eyes on the pot but for the bite (at us), the chewing and a blink
 //   calm   simmering, running low, or Nijika tending the pot: the same, slower, the eyes half shut on the pot
-//   worry  last orders: still, eyes at us, sweating (a look aside at most a beat); Ryo's chopsticks on the
-//          last piece (seatPoint), Nijika's ladle in the pot
+//   worry  last orders: still, the eyes at us on every beat, sweating; Ryo's chopsticks on the last piece
+//          (seatPoint), Nijika's ladle in the pot
 //   cold   once cold: Nijika and Kita slumped on the table, melting (stills); Ryo chewing her weed
 //          (`half` over seat); Bocchi has none (the mod seats her box, bocchi-hiding, in her place)
 //   shock  a send held by Cache Tax: the panic face, the bang, sweat flying; Bocchi's hands up (seatPanic)
@@ -225,16 +226,16 @@ const blink = (at: number, base: FeastFaceName = 'half'): readonly (readonly [nu
 // ---- wait: nothing cached yet, 4 s (40 frames) -------------------------------------------------------------------
 //
 // Resting on her seat, the forearms folded, waiting for the first order; on the shared clock:
-//   bocchi  looks away 6-11 (shy) · her eyes dart 17 · blinks 24-26 · peeks at the pot 31-36
+//   bocchi  looks away 6-11 (shy) · her eyes dart 15 · blinks 24-26 · peeks at the pot 31-36
 //   nijika  beams 0-3 (a twinkle by her hair) · blinks 12-14 · looks at the pot 18-23 · beams again 33-35
-//   ryo     heavy lids · looks aside 6-11 (bored) · one slow blink 20-21 · the lids lift 30-35
+//   ryo     heavy lids · looks aside 0-4 (bored) · one slow blink 20-21 · the lids lift 30-35
 //   kita    sparkles 6-10 (her aura, gold) · looks round 16-18 · looks at the pot 26-30 · blinks 36-38
 
 function wait(art: MemberArt): FeastTag {
   const n = FEAST_LENGTH.wait
   switch (art.id) {
     case 'bocchi':
-      return lay(art, 'wait', { pose: 'seat', face: spans<FeastFaceName>(n, 'idle', [[6, 11, 'glance'], [17, 17, 'glance'], ...blink(24), [31, 36, 'idlePot']]) })
+      return lay(art, 'wait', { pose: 'seat', face: spans<FeastFaceName>(n, 'idle', [[6, 11, 'glance'], [15, 15, 'glance'], ...blink(24), [31, 36, 'idlePot']]) })
     case 'nijika':
       return lay(art, 'wait', {
         pose: 'seat',
@@ -245,7 +246,7 @@ function wait(art: MemberArt): FeastTag {
       return lay(art, 'wait', {
         pose: 'seat',
         face: spans<FeastFaceName>(n, 'half', [
-          [6, 11, 'glance'],
+          [0, 4, 'glance'],
           [20, 21, 'blink'],
           [30, 35, 'idle'],
         ]),
@@ -261,16 +262,17 @@ function wait(art: MemberArt): FeastTag {
 
 // ---- eat: a feast, 4.8 s (48 frames) -----------------------------------------------------------------------------
 //
-// Into the pot (eyes on it), the food on her tips, to her torizara, up to her mouth (the bite), chewing; on the
-// shared clock, the bites never together:
+// Into the pot (eyes on it), the food on her tips, to her torizara, up to her mouth (the bite), chewing; the eyes on
+// the pot but for the bite (at us), the chewing (happy) and a blink (the half lids on the pot too); on the shared
+// clock, the bites never together:
 //   bocchi  shy and slow, one bite: hovers over the pot 0-5, takes meat 6-9, to the plate 10-13, bites 14-16,
-//           chews 17-26, blinks 27-29, looks up at us 30-37, eyes the pot again 38-47
+//           chews 17-26, blinks 27-29, eyes the pot again 30-47
 //   nijika  serves with her ladle 0-9, then tofu: reaches 10-11, takes it 12-15, plate 16-18, bites 19-21, chews
-//           22-29, blinks 30-32, beams at us 33-39, back to her ladle 40-47
-//   ryo     fast, two bites: meat 0-8 (bites 7-8), chews 9-14, eyes the pot 15-23, napa 24-32 (bites 31-32),
-//           chews 33-38, blinks 39-41, eyes the pot 42-47 ("Seconds.")
-//   kita    chews 0-8 (a sparkle 3), blinks 9-11, smiles at us 12-23, frames the pot 24-29, the flash 30, pleased
-//           31-35 ("So photogenic!"), reaches 36-37, takes napa 38-41, plate 42-44, bites 45-47
+//           22-29, blinks 30-32, eyes the pot 33-39, back to her ladle 40-47
+//   ryo     fast, two bites: meat 0-8 (bites 7-8), chews 9-14, blinks 15-17, eyes the pot 18-23, napa 24-32 (bites
+//           31-32), chews 33-38, blinks 39-41, eyes the pot 42-47 ("Seconds.")
+//   kita    chews 0-8 (a sparkle 3), blinks 9-11, eyes the pot 12-23, frames it 24-29, the flash 30, pleased 31-35
+//           ("So photogenic!"), reaches 36-37, takes napa 38-41, plate 42-44, bites 45-47
 
 function eat(art: MemberArt): FeastTag {
   const n = FEAST_LENGTH.eat
@@ -281,7 +283,7 @@ function eat(art: MemberArt): FeastTag {
           [0, 9, 'seatPot'],
           [14, 16, 'seatUp'],
         ]),
-        face: spans<FeastFaceName>(n, 'idlePot', [[14, 16, 'bite'], [17, 26, 'happy'], ...blink(27), [30, 37, 'idle']]),
+        face: spans<FeastFaceName>(n, 'idlePot', [[14, 16, 'bite'], [17, 26, 'happy'], ...blink(27, 'halfPot')]),
         food: [[6, 16, 'meat']],
       })
     case 'nijika':
@@ -292,12 +294,11 @@ function eat(art: MemberArt): FeastTag {
           [19, 21, 'seatUp'],
           [40, 47, 'seatLadle'],
         ]),
-        face: spans<FeastFaceName>(n, 'idle', [
+        face: spans<FeastFaceName>(n, 'idlePot', [
           [0, 9, 'focusPot'],
-          [10, 18, 'idlePot'],
           [19, 21, 'bite'],
           [22, 29, 'happy'],
-          ...blink(30),
+          ...blink(30, 'halfPot'),
           [40, 47, 'focusPot'],
         ]),
         food: [[12, 21, 'tofu']],
@@ -313,9 +314,10 @@ function eat(art: MemberArt): FeastTag {
         face: spans<FeastFaceName>(n, 'idlePot', [
           [7, 8, 'bite'],
           [9, 14, 'happy'],
+          ...blink(15, 'halfPot'),
           [31, 32, 'bite'],
           [33, 38, 'happy'],
-          ...blink(39),
+          ...blink(39, 'halfPot'),
         ]),
         food: [
           [2, 8, 'meat'],
@@ -329,12 +331,10 @@ function eat(art: MemberArt): FeastTag {
           [36, 41, 'seatPot'],
           [45, 47, 'seatUp'],
         ]),
-        face: spans<FeastFaceName>(n, 'idle', [
+        face: spans<FeastFaceName>(n, 'idlePot', [
           [0, 8, 'happy'],
-          ...blink(9),
-          [24, 29, 'idlePot'],
+          ...blink(9, 'halfPot'),
           [30, 35, 'happy'],
-          [36, 44, 'idlePot'],
           [45, 47, 'bite'],
         ]),
         food: [[38, 47, 'veg']],
@@ -346,14 +346,13 @@ function eat(art: MemberArt): FeastTag {
 // ---- calm: simmering, 6.4 s (64 frames) --------------------------------------------------------------------------
 //
 // The same eating, slower, the eyes half shut on the pot (halfPot), one bite each; on the shared clock:
-//   bocchi  reaches 0-9, napa 10-15, plate 16-21, bites 22-25, chews 26-37, blinks 38-40, rests 41-63 (looks up
-//           at us 50-55)
+//   bocchi  reaches 0-9, napa 10-15, plate 16-21, bites 22-25, chews 26-37, blinks 38-40, rests 41-63
 //   nijika  tends the pot with her ladle 0-15 (a smile 6-9), reaches 16-19, tofu 20-25, plate 26-31, bites
 //           32-35, chews 36-45, blinks 46-48, back to the ladle 49-63 (a smile 56-59)
-//   ryo     rests (looks up 8-12, blinks 18-20), reaches 30-33, meat 34-37, plate 38-40, bites 41-43, chews
-//           44-51, blinks 52-54, rests (looks up 60-63)
-//   kita    chews 0-11, blinks 12-14, rests 15-43 (smiles at us 26-31, blinks 33-35), reaches 44-49, meat 50-55,
-//           plate 56-59, bites 60-63
+//   ryo     rests (blinks 18-20), reaches 30-33, meat 34-37, plate 38-40, bites 41-43, chews 44-51, blinks
+//           52-54, rests
+//   kita    chews 0-11, blinks 12-14, rests 15-43 (blinks 33-35), reaches 44-49, meat 50-55, plate 56-59, bites
+//           60-63
 
 function calm(art: MemberArt): FeastTag {
   const n = FEAST_LENGTH.calm
@@ -364,7 +363,7 @@ function calm(art: MemberArt): FeastTag {
           [0, 15, 'seatPot'],
           [22, 25, 'seatUp'],
         ]),
-        face: spans<FeastFaceName>(n, 'halfPot', [[22, 25, 'bite'], [26, 37, 'happy'], ...blink(38), [50, 55, 'idle']]),
+        face: spans<FeastFaceName>(n, 'halfPot', [[22, 25, 'bite'], [26, 37, 'happy'], ...blink(38, 'halfPot')]),
         food: [[10, 25, 'veg']],
       })
     case 'nijika':
@@ -380,7 +379,7 @@ function calm(art: MemberArt): FeastTag {
           [6, 9, 'happy'],
           [32, 35, 'bite'],
           [36, 45, 'happy'],
-          ...blink(46),
+          ...blink(46, 'halfPot'),
           [49, 63, 'focusPot'],
           [56, 59, 'happy'],
         ]),
@@ -392,7 +391,7 @@ function calm(art: MemberArt): FeastTag {
           [30, 37, 'seatPot'],
           [41, 43, 'seatUp'],
         ]),
-        face: spans<FeastFaceName>(n, 'halfPot', [[8, 12, 'half'], ...blink(18), [41, 43, 'bite'], [44, 51, 'happy'], ...blink(52), [60, 63, 'half']]),
+        face: spans<FeastFaceName>(n, 'halfPot', [...blink(18, 'halfPot'), [41, 43, 'bite'], [44, 51, 'happy'], ...blink(52, 'halfPot')]),
         food: [[34, 43, 'meat']],
       })
     case 'kita':
@@ -401,7 +400,7 @@ function calm(art: MemberArt): FeastTag {
           [44, 55, 'seatPot'],
           [60, 63, 'seatUp'],
         ]),
-        face: spans<FeastFaceName>(n, 'halfPot', [[0, 11, 'happy'], ...blink(12), [26, 31, 'idle'], ...blink(33), [60, 63, 'bite']]),
+        face: spans<FeastFaceName>(n, 'halfPot', [[0, 11, 'happy'], ...blink(12, 'halfPot'), ...blink(33, 'halfPot'), [60, 63, 'bite']]),
         food: [[50, 63, 'meat']],
       })
   }
@@ -409,12 +408,13 @@ function calm(art: MemberArt): FeastTag {
 
 // ---- worry: last orders, 4 s (40 frames) -------------------------------------------------------------------------
 //
-// Still, the eyes at us (a look aside at most a beat), sweat sliding down beside the face; on the shared clock:
-//   bocchi  her torizara still in hand: sweat 4-10 and 30-36, looks aside 16-17, blinks 26-28
+// Still, the eyes at us on every beat (no look aside, no look at the pot), sweat sliding down beside the face; on
+// the shared clock:
+//   bocchi  her torizara still in hand: sweat 4-10 and 30-36, blinks 26-28
 //   nijika  her ladle still in the pot, set on it (focus): blinks 8-10, sweat 20-26
 //   ryo     her chopsticks on the last piece (seatPoint), staring us down (focus): her lids droop 8-9, she eases
-//           18-23, looks aside 28 (a beat), one slow blink 34-35
-//   kita    her torizara in hand: looks aside 2-3, sweat 12-18, blinks 22-24
+//           18-23, one slow blink 34-35
+//   kita    her torizara in hand: sweat 12-18, blinks 22-24
 
 function worry(art: MemberArt): FeastTag {
   const n = FEAST_LENGTH.worry
@@ -422,7 +422,7 @@ function worry(art: MemberArt): FeastTag {
     case 'bocchi':
       return lay(art, 'worry', {
         pose: 'seatBowl',
-        face: spans<FeastFaceName>(n, 'idle', [[16, 17, 'glance'], ...blink(26)]),
+        face: spans<FeastFaceName>(n, 'idle', [...blink(26)]),
         flights: [sweat(art, 4), sweat(art, 30)],
       })
     case 'nijika':
@@ -433,14 +433,13 @@ function worry(art: MemberArt): FeastTag {
         face: spans<FeastFaceName>(n, 'focus', [
           [8, 9, 'half'],
           [18, 23, 'idle'],
-          [28, 28, 'glance'],
           [34, 35, 'blink'],
         ]),
       })
     case 'kita':
       return lay(art, 'worry', {
         pose: 'seatBowl',
-        face: spans<FeastFaceName>(n, 'idle', [[2, 3, 'glance'], ...blink(22)]),
+        face: spans<FeastFaceName>(n, 'idle', [...blink(22)]),
         flights: [sweat(art, 12)],
       })
   }
@@ -565,10 +564,39 @@ export function feastFxColors(art: MemberArt): string[] {
   return [...set]
 }
 
+/** The faces with the eyes on the pot. */
+const POT_LOOKS: ReadonlySet<FeastFaceName> = new Set<FeastFaceName>(['idlePot', 'halfPot', 'focusPot'])
+
+/**
+ * Where a loop's eyes go wrong, as a sentence (null: they keep to the rule). Reacting (last orders, the bill),
+ * the eyes are at us on every beat: no pot look, no look aside. Eating (`eat`, `calm`, Nijika's `serve`), they
+ * are on the pot but for the bite (at us), the chewing (`happy`), a blink with its half lids beside it, and at
+ * most one glance a loop.
+ */
+function eyesWrong(art: MemberArt, state: FeastState, n: number): string | null {
+  const faces = Array.from({ length: n }, (_, f) => feastSceneAt(art, state, f).face)
+  const off: number[] = []
+  const count = () => `${off.length} ${off.length === 1 ? 'frame looks' : 'frames look'}`
+  if (state === 'worry' || state === 'shock') {
+    faces.forEach((face, f) => (POT_LOOKS.has(face) || face === 'glance') && off.push(f))
+    return off.length === 0 ? null : `${count()} away from us (first ${off[0]}: ${faces[off[0] as number]}), where reacting keeps the eyes on us on every beat`
+  }
+  if (state !== 'eat' && state !== 'calm' && state !== 'serve') return null
+  const blinkBeside = (f: number) => faces[(f + n - 1) % n] === 'blink' || faces[(f + 1) % n] === 'blink'
+  let glances = 0
+  faces.forEach((face, f) => {
+    if (POT_LOOKS.has(face) || face === 'bite' || face === 'happy' || face === 'blink' || (face === 'half' && blinkBeside(f))) return
+    if (face === 'glance' && (glances += 1) === 1) return
+    off.push(f)
+  })
+  return off.length === 0 ? null : `${count()} away from the pot (first ${off[0]}: ${faces[off[0] as number]}), where eating keeps the eyes on it but for the bite, the chewing, a blink and one glance`
+}
+
 /**
  * What is wrong with the feast's loops, as sentences: a loop that does not lay out (a track of the wrong length,
  * a pose without its tip), a state's loops not all one length (`cold` and `serve` aside: each member's own), a
- * loop that moves the figure (the feast's move arms and faces only).
+ * loop whose eyes go where the state's do not (eyesWrong). No loop can move the figure: FeastScene has no dx, dy
+ * or squash to give (the feast's move arms and faces only).
  */
 export function checkFeastTimelines(band: Readonly<Record<MemberId, MemberArt>>): string[] {
   const problems: string[] = []
@@ -585,6 +613,8 @@ export function checkFeastTimelines(band: Readonly<Record<MemberId, MemberArt>>)
       }
       const want = feastLength(id, state)
       if (n !== want) problems.push(`feast ${id} ${state}: ${n} frames, wants ${want}`)
+      const eyes = eyesWrong(art, state, n)
+      if (eyes !== null) problems.push(`feast ${id} ${state}: ${eyes}`)
       if (state === 'cold' || state === 'serve') continue
       const byLength = lengths.get(state) ?? new Map<number, MemberId[]>()
       byLength.set(n, [...(byLength.get(n) ?? []), id])
