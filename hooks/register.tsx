@@ -4480,11 +4480,6 @@ export const register: Register = (on, options) => {
     const h = await read($, hotpot)
     const isPreview = h.sample !== null && h.sample.heldAt === c.heldAt
     if (c.isArmed) await update($, cache, x => ({ ...x, isArmed: false, heldAt: 0, heldText: '' }))
-    if (isResend && !isPreview) {
-      // The feast stays drawn past the moment until this turn's first step books the re-written cache warm.
-      paying = true
-      await playMoment($, 'paid')
-    }
     // Cold by feastOf: a TTL or more since the cache was warmed, and never while caching is off (no pot to lose).
     if (!isResend && !b.isWorking && canResend(e.origin.kind) && c.contextTokens >= TAX_MIN_TOKENS && isCold(c, l, now)) {
       hasSurface = hasSurface || (await $.session.surfaces().catch(() => [])).length > 0
@@ -4509,7 +4504,15 @@ export const register: Register = (on, options) => {
         void draftMemo($, text)
       })
     }
-    return next(e)
+    if (!isResend || isPreview) return next(e)
+    // The held prompt, sent again: paid once it has entered (a hook beneath, a settings hook's block or a limit may
+    // still refuse it). The moment plays, and the feast stays drawn until this turn's first step books the cache warm.
+    const sent = await next(e)
+    if (sent.drop === undefined) {
+      paying = true
+      await playMoment($, 'paid')
+    }
+    return sent
   }).catch(($, e, next) => next(e))
 
   // -- the typeahead: /bocchi's sub-commands and /keepwarm's durations, beneath the engine's own rows ------

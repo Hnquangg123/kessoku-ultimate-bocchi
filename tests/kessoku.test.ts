@@ -41,7 +41,7 @@ type Entry = { name: string; kind: 'file' | 'dir'; size: number; mtimeMs: number
 type Registered = { name: string; description: string; prompt?: string; tools?: readonly string[]; inputSchema?: Record<string, unknown>; isDeferred?: boolean }
 type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[]; suggested: string[]; notified: { text: string; title: string | undefined }[]; agents: Registered[]; tools: Registered[]; drafts: number; compacts: number }
 /** What a test may vary in the engine beneath: one bottom per event, so the knobs live here. */
-type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string; notifyReason?: 'disabled' | 'no-channel' | 'no-surface' | 'refused'; engineVersion?: string; noVersion?: boolean; refuseRegister?: boolean; writeMs?: number; store?: Record<string, unknown>; storeFails?: boolean; repoRoot?: string; forkReason?: 'nothing-to-fork' | 'api-error'; forkStatus?: number; forkMs?: number; forkCacheWrite?: number; refuseFill?: boolean; draft?: string }
+type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string; notifyReason?: 'disabled' | 'no-channel' | 'no-surface' | 'refused'; engineVersion?: string; noVersion?: boolean; refuseRegister?: boolean; writeMs?: number; store?: Record<string, unknown>; storeFails?: boolean; repoRoot?: string; forkReason?: 'nothing-to-fork' | 'api-error'; forkStatus?: number; forkMs?: number; forkCacheWrite?: number; refuseFill?: boolean; draft?: string; dropSubmit?: string }
 const THEME_OPTION_LIGHT = 'Kessoku Bocchi Light (kessoku-ultimate-bocchi)'
 
 /** `C:\proj\x` and `/proj/x` are the same file to the engine's fs; the tests key by the forward-slash spelling. */
@@ -222,7 +222,8 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
     }
     return { result: { ok: true, tool: e.tool } }
   })
-  on('prompt.submit', ($, e) => ({ text: e.text }))
+  // A prompt enters, or (a knob) is refused beneath the mod, as a settings hook's block or a host's limit refuses it.
+  on('prompt.submit', ($, e) => (a.dropSubmit !== undefined ? { drop: a.dropSubmit } : { text: e.text }))
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
   on('turn.complete', ($, e) => ({ text: e.answer }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
@@ -4461,7 +4462,31 @@ test('a send after /bocchi tax plays no …paid.: the preview held nothing, befo
   expect((await stateOf(st, 'hotpot')).moment).toBeNull()
 })
 
-test('a paid re-order keeps the feast on the table past its moment until the re-sent turn\'s first step books it; a turn that ends first lets it go cold', async ($, on) => {
+test('a held prompt re-sent and refused beneath (a settings hook, a limit) plays no …paid. and draws no feast over the cold pot', { timeoutMs: 20_000 }, async ($, on) => {
+  const seen = fresh()
+  const st = watchState(on)
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const knobs: Answers = {}
+  bottoms(on, clock, seen, knobs)
+  usageBottom(on, [{ read: 300_000, write: 1000 }])
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.prompt.submit(typed('warm up'))
+  await aTurn($, 't1')
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  const scene = async () => String((await pane.find({ type: 'Svg' }))?.props.source ?? '')
+  await clock.advance(61 * 60_000)
+  expect((await $.prompt.submit(typed('carry on'))).drop).toMatch(/CACHE TAX/)
+  knobs.dropSubmit = 'blocked by a settings hook'
+  expect((await $.prompt.submit(typed('carry on'))).drop).toBe('blocked by a settings hook')
+  expect((await stateOf(st, 'hotpot')).moment).toBeNull()
+  await clock.advance(3000)
+  expect(await scene()).toContain('It went cold')
+  expect((await boardLines(pane))[0]).toMatch(/^❄ Gone cold {2}/)
+  await pane.unmount()
+})
+
+test('a paid re-order keeps the feast on the table past its moment until the re-sent turn\'s first step books it; a turn that ends first lets it go cold', { timeoutMs: 20_000 }, async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
   bottoms(on, clock, seen)
@@ -4480,9 +4505,11 @@ test('a paid re-order keeps the feast on the table past its moment until the re-
   expect((await $.prompt.submit(typed('carry on'))).drop).toBeUndefined()
   await $.turn.start({ text: 'carry on', turnId: 't2' })
   expect(await scene()).toContain('…paid.')
-  // The moment's 2.4 s are over and the first step has not booked yet: still the feast, no snow, no box.
+  // The moment's 2.4 s are over and the first step has not booked yet: still the feast, no snow, no box, and the
+  // board says the re-order is under way.
   await clock.advance(3000)
   expect(await scene()).toContain('So photogenic!')
+  expect((await boardLines(pane))[0]).toMatch(/^♨ Re-ordering {2}your prompt writes \d+k tokens back into the pot$/)
   expect(await scene()).not.toContain('It went cold')
   expect(await scene()).not.toContain('class="sn"')
   // The step re-writes the cache: the feast from its own warmth now.

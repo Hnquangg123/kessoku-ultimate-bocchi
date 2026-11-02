@@ -599,6 +599,10 @@ test('a paid re-order keeps the feast drawn past its moment while the cache is s
   expect(svg).toContain('So photogenic!')
   expect(svg).not.toContain('It went cold')
   expect(hotpotCells(viewOf(74 * MIN, { flags: paying })).parts.map(p => p.id)).toEqual(hotpotCells(viewOf(5 * MIN)).parts.map(p => p.id))
+  // and the words say what the turn is doing, not that the next send re-orders
+  expect(boardOf(viewOf(74 * MIN, { flags: paying }))).toMatchObject({ word: '♨ Re-ordering', tail: 'your prompt writes 168k tokens back into the pot' })
+  expect(hotpotAlt(viewOf(74 * MIN, { flags: paying }))).toBe("the band's hotpot · re-ordering, 168k tokens being written back")
+  expect(boardOf(viewOf(30 * MIN, { flags: paying })).word).toBe('Simmering')
 })
 
 test('the seats sit at the table’s side edges, each with the outer end of her waist on the edge at her row', async () => {

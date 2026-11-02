@@ -745,6 +745,11 @@ export function dimReason(buttons: readonly HotpotButton[]): string {
 /** The state in a word, a short word for a line, and the tail, per phase. */
 function stateWords(v: HotpotView): { word: string; short: string; tail: string; alt: string } {
   const fe = v.feast
+  // A paid re-order under way: the feast is drawn back (drawnPhase), and the words say what the turn is doing.
+  if (v.flags.paying && fe.phase === 'cold') {
+    const t = fmtTokens(v.cache.contextTokens)
+    return { word: '♨ Re-ordering', short: 're-ordering', tail: `your prompt writes ${t} tokens back into the pot`, alt: `re-ordering, ${t} tokens being written back` }
+  }
   const left = minutesText(fe.leftMs)
   switch (fe.phase) {
     case 'feast':
