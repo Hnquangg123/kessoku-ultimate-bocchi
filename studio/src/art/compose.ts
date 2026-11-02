@@ -35,6 +35,11 @@ export const FEAST_POSES: Readonly<Record<MemberId, readonly SeatPose[]>> = {
   kita: ['seat', 'seatPot', 'seatBowl', 'seatUp', 'seatPhone', 'seatSlump'],
 }
 export const FEAST_SIDE: Readonly<Record<MemberId, 'left' | 'right'>> = { bocchi: 'left', nijika: 'left', ryo: 'right', kita: 'right' }
+/**
+ * Her hair's own keys, the ones no other part of her is drawn in (a hair outline her jacket, hands or bow share is
+ * left out): below the face box, the head check keeps them where her pose's base draws them beside her face.
+ */
+export const HEAD_HAIR: Readonly<Record<MemberId, string>> = { bocchi: 'hHr', nijika: 'hHru', ryo: 'UHhrRN', kita: 'hHrv' }
 
 /** The seat poses that hold something with a point that acts (`tips`): the chopsticks' tips, the ladle's cup, the phone's lens. */
 export const TIPPED_SEATS: readonly SeatPose[] = ['seatPot', 'seatBowl', 'seatUp', 'seatPoint', 'seatLadle', 'seatPhone']
@@ -963,6 +968,33 @@ function checkFeast(
           if (first === '') first = ` (first at ${x},${y})`
         }
       if (diff > 0) problems.push(`feast pose seat: the head (the portrait window at ${art.head.x},${art.head.y}, ${PW} wide, down to row ${art.face.y + fh - 1}) differs from stand's in ${diff} pixels${first}: the heads are reused as they are`)
+    }
+    // And every pose keeps that head: inside the portrait window, down to the face box's foot, it may draw over stand's
+    // pixels (a hand raised beside her face) but never cut one; below the face box her hair (HEAD_HAIR) stays where her
+    // base draws it, drawn over or kept: `seat` keeps stand's inside the window (below it the table hides what it
+    // drops), and the poses patched on `seat` keep its hair anywhere on the canvas (the flips on her shoulders, a side
+    // tail, hair hanging past her waist).
+    const hair = new Set([...HEAD_HAIR[art.id]])
+    const below = art.face.y + fh
+    const inWindow = (x: number, y: number) => y >= art.head.y && y < art.head.y + PH && x >= art.head.x && x < art.head.x + PW
+    for (const [name, grid] of seats) {
+      const base = name === 'seat' ? stand : (seats.get('seat') ?? stand)
+      let cut = 0
+      let first = ''
+      for (let y = art.head.y; y < H; y += 1)
+        for (let x = 0; x < W; x += 1) {
+          if ((y < below || name === 'seat') && !inWindow(x, y)) continue
+          if (at(grid, x, y) !== '.' || (name === 'seat' && y < below)) continue
+          const was = y < below ? at(stand, x, y) : at(base, x, y)
+          if (was === '.') continue
+          // below the face box: her base's hair, or for an arm pose the hair behind what `seat` drew there (stand's: an
+          // arm lifted away from in front of her side tail leaves the tail, not a hole)
+          const lost = y < below ? was : hair.has(was) ? was : name !== 'seat' && hair.has(at(stand, x, y)) ? at(stand, x, y) : ''
+          if (lost === '') continue
+          cut += 1
+          if (first === '') first = ` (first at ${x},${y}: "${lost}")`
+        }
+      if (cut > 0) problems.push(`feast pose ${name}: cuts ${cut} ${cut === 1 ? 'pixel' : 'pixels'} of her head${first}; a seat pose draws over her head and the hair beside her face, never erases them`)
     }
   }
 

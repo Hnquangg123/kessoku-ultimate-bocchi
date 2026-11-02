@@ -592,11 +592,44 @@ function eyesWrong(art: MemberArt, state: FeastState, n: number): string | null 
   return off.length === 0 ? null : `${count()} away from the pot (first ${off[0]}: ${faces[off[0] as number]}), where eating keeps the eyes on it but for the bite, the chewing, a blink and one glance`
 }
 
+/** The beats no two members share a frame of (the faces they show on it, and how a sentence names each). */
+const BEATS: readonly (readonly [FeastFaceName, string])[] = [
+  ['blink', 'blink'],
+  ['bite', 'bite'],
+  ['glance', 'look round'],
+]
+
+/**
+ * Where two members beat together, as sentences: in a state whose loops are one length (so a frame is the same
+ * moment for all of them), no two members blink, bite or look round on the same frame.
+ */
+function beatsTogether(band: Readonly<Record<MemberId, MemberArt>>): string[] {
+  const problems: string[] = []
+  for (const state of Object.keys(FEAST_LENGTH) as (keyof typeof FEAST_LENGTH)[]) {
+    const who = MEMBER_IDS.filter(id => FEAST_STATES_OF[id].includes(state))
+    for (const [face, word] of BEATS) {
+      const clash = new Map<string, number[]>()
+      for (let f = 0; f < FEAST_LENGTH[state]; f += 1) {
+        const on = who.filter(id => {
+          try {
+            return feastSceneAt(band[id], state, f).face === face
+          } catch {
+            return false
+          }
+        })
+        if (on.length > 1) clash.set(on.join(' and '), [...(clash.get(on.join(' and ')) ?? []), f])
+      }
+      for (const [pair, frames] of clash) problems.push(`feast ${state}: ${pair} ${word} together on ${frames.length === 1 ? 'frame' : 'frames'} ${frames.join(', ')}, where no two members blink, bite or look round on the same frame`)
+    }
+  }
+  return problems
+}
+
 /**
  * What is wrong with the feast's loops, as sentences: a loop that does not lay out (a track of the wrong length,
  * a pose without its tip), a state's loops not all one length (`cold` and `serve` aside: each member's own), a
- * loop whose eyes go where the state's do not (eyesWrong). No loop can move the figure: FeastScene has no dx, dy
- * or squash to give (the feast's move arms and faces only).
+ * loop whose eyes go where the state's do not (eyesWrong), two members beating on the same frame (beatsTogether).
+ * No loop can move the figure: FeastScene has no dx, dy or squash to give (the feast's move arms and faces only).
  */
 export function checkFeastTimelines(band: Readonly<Record<MemberId, MemberArt>>): string[] {
   const problems: string[] = []
@@ -624,5 +657,6 @@ export function checkFeastTimelines(band: Readonly<Record<MemberId, MemberArt>>)
   for (const [state, byLength] of lengths) {
     if (byLength.size > 1) problems.push(`feast ${state}: the loops are not one length (${[...byLength].map(([n, ids]) => `${ids.join(', ')} ${n}`).join('; ')}), so they would drift apart on the mod's clock`)
   }
+  problems.push(...beatsTogether(band))
   return problems
 }

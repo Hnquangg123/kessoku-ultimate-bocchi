@@ -134,11 +134,11 @@ const onTable = (x, y) => y >= TABLE.farY && y <= TABLE.nearY && x >= edgeL(y) &
 /** Over the pot, where the far two's chopsticks reach down into it (the mod's OVER_POT): the table behind its middle, its rim's oval. */
 const overPot = (x, y) => (x >= 112 && x <= 176 && y >= 113 && y <= 124) || (y > 124 && ((x - 144) / 32) ** 2 + ((y - 124) / 11.4) ** 2 <= 1)
 
-/** Where her canvas lands: her waist's outer end a pixel inside the table's side edge at her row. */
+/** Where her canvas lands, as the mod's seatAt puts it: her waist's outer end on the table's side edge at her row (the pixel's left side on the left edge, its right side on the right). */
 function seatOffset(m, art) {
   const Y = WAIST_Y[m]
   const f = art.feast
-  const ex = f.side === 'left' ? Math.round(edgeL(Y)) + 1 : Math.round(edgeR(Y)) - 1
+  const ex = f.side === 'left' ? Math.round(edgeL(Y)) : Math.round(edgeR(Y)) - 1
   return { ox: ex - f.waist.x, oy: Y - f.waist.y, Y }
 }
 
@@ -374,6 +374,6 @@ for (const [name, job] of Object.entries(jobs)) {
   console.log(`wrote ${file} (${png.width}x${png.height})`)
 }
 if (what !== 'all' && !(what in jobs)) {
-  console.error(`usage: node scripts/feast.mjs [seats|faces|table|all] [--out <dir>] [--with <module.mjs>] (not "${what}")`)
+  console.error(`usage: node scripts/feast.mjs [seats|faces|table|loops|all] [--out <dir>] [--with <module.mjs>] (not "${what}")`)
   process.exit(2)
 }

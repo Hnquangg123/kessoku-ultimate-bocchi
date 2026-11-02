@@ -41,6 +41,7 @@ Look at the reference at full size before drawing anything, and again after.
 | portrait | 32x32 | a window over the head (`head: {x, y}` on the stand pose): both eyes, the mouth, the hair top and the identifying accessory (Bocchi's clips, Nijika's triangle ahoge, Ryo's clip, Kita's side tail) |
 | mini | 16x16 | a hand-drawn head for the terminal (see "The minis"); `downscale2` of the portrait only where a member has none |
 | slime | 36x24 | her blob form, one an act on stage (a subagent), on a canvas of its own (see "The slimes"); its mini 18x12 is the slime halved |
+| feast | 96x64 | rows 6-69 of her canvas at its full width: her seat at the Hotpot's table, from the waist up, all she holds and the effects (see "The feast") |
 | crash | 96x32 | Bocchi's guitar dropping onto the stage, for Blast Radius; and its 48x16 mini |
 
 The terminal draws the mini in half blocks (16x8 cells, v1's footprint) or quadrants (8x4
@@ -66,7 +67,10 @@ export const bocchi: MemberArt = {
   boxHead: { x, y },      // the same window on the box pose
   mini: { stand, box, face: { x, y, grids }, peek: { x, y, grids } },  // the 16x16 mini rig (see The minis)
   slime: { content, awake, face: { x, y, w, h } },  // her slime (see The slimes); awake and face Bocchi's only
-  tips: { playA: { x, y }, playB: { x, y } },  // Nijika only: where the striking stick's tip is
+  feast: { side, waist, hair, poses, faces, eyes, headband, weed },  // her seat at the hotpot (see The feast); hair
+                                                    // Bocchi's and Nijika's, headband Nijika's, weed Ryo's
+  tips: { seatPot: { x, y }, seatBowl, seatUp, ... },  // where what she holds acts: every member's chopsticks, Nijika's
+                                                    // ladle cup, Kita's lens; Nijika's striking stick on playA, playB
   extras: { guitarFlat, guitarTilt },  // Bocchi only
 }
 ```
@@ -86,6 +90,11 @@ at once without touching each other's files; its `index.ts` assembles the `Membe
 | `sway.ts` | `sway` |
 | `mini.ts` | `mini` |
 | `slime.ts` | `slime` |
+| `seat.ts` | `seat`, `side`, `waist`, `hair` (Bocchi, Nijika), and the props' `colors` |
+| `eat.ts` | `seatPot`, `seatBowl`, `seatUp`, their `tips` |
+| `feast-faces.ts` | `feastFaces`, `eyes` (Ryo also `weed`) |
+| `seat-panic.ts`, `seat-point.ts`, `seat-ladle.ts`, `seat-phone.ts`, `seat-slump.ts` | each one's own pose (Bocchi's panic, Ryo's point, Nijika's ladle, Kita's phone, Nijika's and Kita's slump), and its `tips` where it holds something |
+| `headband.ts` | `headband` (Nijika only) |
 | `extras.ts` | `guitarFlat`, `guitarTilt` (Bocchi only) |
 
 Any part may also export `colors`, palette entries of its own; `index.ts` merges them into the
@@ -231,6 +240,51 @@ bead. The main loop is never a slime: Bocchi stays her figure.
   (`downscale2`), its `z` drawn again at the font's size on its own path. No hand-drawn slime
   minis: the terminal's slime is a colored blob with its eyes, its motion carrying the state.
 
+## The feast (`seat.ts` and its poses, the 96x64 feast window)
+
+The ♨ Hotpot's scene seats the band at a square low table seen from its empty side: Bocchi (far)
+and Nijika (near) at its left edge, Ryo (far) and Kita (near) at its right. Nobody is seen from
+behind: each is drawn front-on from the waist up, her body turned 30° to 45° (about 35°) toward the
+pot and her face (stand's) to us; past 45°, under a face to us, the turn reads as a twisted neck.
+The person's bar: "Re-drawing the characters is ok, just make it pretty and gorgeous."
+
+- **The heads are reused as they are.** Below stand's head anything may be drawn anew (the
+  shoulders, arms and torso); the head, its hair and every face overlay are stand's. `seat` keeps
+  stand's whole portrait window down to the face box's foot, pixel for pixel; every other seat pose
+  may draw over the head (a hand raised beside the face, a phone, a ladle) but never erase it, and
+  keeps the hair hanging beside the face (`HEAD_HAIR` in `compose.ts`: her hair's own keys) where
+  its base draws it.
+- **`seat`** is patched on stand: the instrument and its headstock gone, the torso turned toward
+  the pot, both hands resting on the table, the forearms folded. Every other seat pose is patched
+  on `seat`, arms and what they hold only: `seatPot` (the torizara in the near hand, the
+  chopsticks in the far hand in the pot: the far two reach over its back rim, the chopsticks
+  angled down into the broth; the near two across its side), `seatBowl` (the chopsticks at the
+  bowl), `seatUp` (at her mouth, for the bite); and each one's own: Bocchi's `seatPanic` (both
+  hands up), Ryo's `seatPoint` (her chopsticks down over the back rim at the last piece), Nijika's
+  `seatLadle` (the ladle in the pot), Kita's `seatPhone` (the phone carried out and down over the
+  pot's right rim, her shoulders leaning in), Nijika's and Kita's `seatSlump` (shoulders and arms
+  dropped on the table, the head where `seat` has it).
+- **The waist on the table's edge.** `side` is her edge of the table; `waist` is the outer end
+  (away from the pot) of her body's waist row, the same pixel in every seat pose: the mod lays it
+  on the table's side edge and clips the table nearer than her waist out of her figure. So her
+  waist row ends there on her outer side, and below the waist only her hair (`hair`: Bocchi's long
+  hair, Nijika's side tail) and the far two's chopsticks reaching into the pot are drawn. All of
+  her lives in the feast window, rows 6-69.
+- **The eyes do the turning.** `feastFaces` are four overlays at the face box: `idlePot`,
+  `halfPot` and `focusPot` are idle, half and focus with each iris moved within its eye's whites
+  toward the pot (our right for Bocchi and Nijika, our left for Ryo and Kita), differing from the
+  face they come from only inside `eyes` (her near and far eye); `bite` is idle with the mouth open,
+  the eyes at us. These are the only new face art; the chewing is `happy`.
+- **What they hold** is part of the pose: the chopsticks (`(` lit, `)` shaded), the torizara (the
+  white glaze `W` with its blue band `{`), the ladle (`[` `]`), Kita's phone in her guitar's Pelham
+  Blue. `tips` marks where each acts (the chopsticks' tips, where the `morsel` effect puts the
+  food; the ladle's cup; the phone's lens, where the `flash` bursts), and the mod keeps two of them
+  as constants a test holds to the sprites (`KITA_LENS`, `NIJIKA_CUP`).
+- **Nijika's `headband`** (her nabe-bugyō band while keepwarm runs) is a patch over pixels every
+  seat pose of hers has the same, clear of her face, exported once as a still the mod lays over
+  whatever she plays. **Ryo's `weed`** is where the `weed` effect hangs from her mouth in the cold.
+- Bocchi has no cold pose: the mod seats her box (`bocchi-hiding`) in her place.
+
 ## Effects (`src/art/fx.ts`)
 
 Drawn at the new density (about twice v1's size: a note ~8x10, a sparkle ~9x9, a sweat drop
@@ -244,8 +298,10 @@ CRASH.
 ## Checking the art
 
 ```bash
-npm run check                         # every member: row lengths, palette, the face region, the windows, the slime
+npm run check                         # every member: row lengths, palette, the face region, the windows, the slime, the feast
 node scripts/sheet.mjs <member>       # out/sheets/sheet-<member>.png: every pose, face and frame, the slime's too
+node scripts/feast.mjs [seats|faces|table|loops|all]  # out/feast/: every seat pose (waist marked), the feast faces,
+                                      # the four placed at the table as the mod's scene places them, every loop's frames
 node scripts/compare.mjs <member>     # out/compare/compare-<member>.png: her stand beside the reference, same scale
 node scripts/grid.mjs <member> <pose> [x y w h]   # a pose's resolved grid with row and column rulers
 node scripts/look.mjs <member> <cell...>          # cells side by side: playA+focus, box+peekL, ref, mini:stand+blink, mood:happy, crash
@@ -255,7 +311,17 @@ node scripts/lineup.mjs                           # the reference and the four s
 
 `look`, `onion`, `lineup` and `compare` take `--out <file.png>` and `--scale N`; `look`, `onion`,
 `compare` and `grid` take `--stand <module.ts>`, a candidate module exporting `{ palette, stand }`
-laid over the member for that run (preview a stand without wiring it in).
+laid over the member for that run (preview a stand without wiring it in). `feast.mjs` takes
+`--out <dir>` and `--with <module.mjs>`, a module exporting `overlay(ART, S)` that lays candidate
+seat art over the band for that run.
+
+The feast's part of `npm run check`: each seat pose keeps stand's face region and draws over her
+head and the hair beside her face without erasing them (`seat` keeps the whole head); the waist
+row ends at `waist` on her outer side, with only her hair and the chopsticks below it; the window
+holds all of her; the feast faces are the overlays' size, the pot looks move only the eyes, each
+iris toward the pot, and `bite` keeps idle's eyes; every pose that holds something has a tip in
+the window; the headband covers only pixels her seat poses share; and the loops (`src/anim/feast.ts`)
+keep their lengths, their eyes and their beats (see `ANIM-BRIEF.md`).
 
 Look at what you drew, at 4x or more, beside the reference, after every change. Do not run
 `scripts/sprites.mjs` while drawing: it rewrites the mod's sprites.
