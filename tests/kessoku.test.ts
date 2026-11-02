@@ -3768,7 +3768,7 @@ const ENGINE_COMPACT = {
   }) as Register,
 }
 
-test('re-heat and zosui take two presses; a re-heat warms, from the clock read before the call, only when its read and write reach 0.9 P (a written prefix or a live entry read); zosui compacts through the mod\'s own hook', { plugins: [ENGINE_COMPACT] }, async ($, on) => {
+test('re-heat and zosui take two presses; a re-heat warms, from the clock read before the call, only when its read and write reach 0.9 P (a written prefix or a live entry read); zosui compacts on the second press, which settles it itself', { plugins: [ENGINE_COMPACT] }, async ($, on) => {
   const seen = fresh()
   const st = watchState(on)
   const clock = mock.clock(on, { now: 1_000_000 })
@@ -3810,7 +3810,8 @@ test('re-heat and zosui take two presses; a re-heat warms, from the clock read b
   expect(seen.forks).toBe(3)
   expect((await boardLines(pane))[0]).toBe('♨ Bubbling  re-heated: 0 re-written for $0.03')
   expect((await stateOf(st, 'cache')).lastWarmAt).toBe(readAt)
-  // Zosui: armed by the first press, the call on the second; the mod's own session.compact hook draws and settles it.
+  // Zosui: armed by the first press, the call on the second. The engine runs every session.compact hook but the mod's
+  // own for its call, so the press itself draws the zosui and settles the cache.
   await pane.press({ key: 'hotpot-zosui' })
   await clock.settle()
   expect(seen.compacts).toBe(0)
@@ -3880,6 +3881,66 @@ test('clear the table fills /clear, on a second press over a draft; a box that c
   await clock.settle()
   expect((await boardLines(pane))[0]).toMatch(/ {2}the box could not take \/clear: type it$/)
   expect((await stateOf(st, 'hotpot')).armed).toBeNull()
+  await pane.unmount()
+})
+
+test('in the desktop app (an SDK session, no REPL) Zosui and Clear the table are dim and say why: a plugin can neither compact nor fill the box there', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  on('session.attach', ($, e) => ({ clientId: e.clientId }))
+  await $.session.start({ cwd: '/proj', surface: null, isInteractive: false })
+  await $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+  await aTurn($, 't1')
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  expect(await pane.find({ type: 'Button', key: 'hotpot-zosui' })).toMatchObject({ props: { dimColor: true } })
+  expect(await pane.find({ type: 'Button', key: 'hotpot-clear' })).toMatchObject({ props: { dimColor: true } })
+  expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).not.toMatchObject({ props: { dimColor: true } })
+  expect((await boardLines(pane))[1]).toMatch(/ · this app compacts only from a typed \/compact$/)
+  for (const key of ['hotpot-zosui', 'hotpot-zosui', 'hotpot-clear', 'hotpot-clear']) await pane.press({ key })
+  await clock.settle()
+  expect(seen.compacts).toBe(0)
+  expect(seen.filled).toEqual([])
+  await pane.unmount()
+})
+
+test('a slow zosui is drawn until its call resolves, the forks dim meanwhile; a vetoed one says so, lets Bocchi out and leaves nothing compacting', { plugins: [ENGINE_COMPACT] }, async ($, on) => {
+  const seen = fresh()
+  const st = watchState(on)
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const knobs: Answers = { compactMs: 3000 }
+  bottoms(on, clock, seen, knobs)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await aTurn($, 't1')
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  await pane.press({ key: 'hotpot-zosui' })
+  await clock.settle()
+  await pane.press({ key: 'hotpot-zosui' })
+  await clock.settle()
+  // the call takes 3 s: the zosui is drawn, Bocchi melts, and no fork can go meanwhile
+  expect((await boardLines(pane))[0]).toMatch(/^〆 Zosui {2}compacting /)
+  expect((await stateOf(st, 'band')).mood).toBe('melting')
+  expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).toMatchObject({ props: { dimColor: true } })
+  expect((await boardLines(pane))[1]).toMatch(/ · compacting$/)
+  await clock.advance(3000)
+  expect(seen.compacts).toBe(1)
+  expect((await boardLines(pane))[0]).toBe('The table is set  180k → 12.0k tokens')
+  // a veto: said so, Bocchi out of her melt, nothing left compacting
+  await aTurn($, 't2')
+  knobs.compactMs = 0
+  knobs.compactSkip = 'a hook said not now'
+  await pane.press({ key: 'hotpot-zosui' })
+  await clock.settle()
+  await pane.press({ key: 'hotpot-zosui' })
+  await clock.settle()
+  expect(seen.compacts).toBe(2)
+  expect((await boardLines(pane))[0]).toMatch(/ {2}no zosui: a hook said not now$/)
+  expect((await stateOf(st, 'band')).mood).not.toBe('melting')
+  expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).not.toMatchObject({ props: { dimColor: true } })
   await pane.unmount()
 })
 

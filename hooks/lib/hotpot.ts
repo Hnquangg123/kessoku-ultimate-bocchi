@@ -595,6 +595,10 @@ export type HotpotFlags = {
   draftOff: boolean
   /** A paid re-order's turn is under way: its feast stays drawn until the turn's first step books the cache warm. */
   paying: boolean
+  /** The host compacts only from a typed `/compact` (outside the REPL: the desktop app, an SDK or `-p` session). */
+  noCompact: boolean
+  /** The host binds no prompt box a plugin may fill (the desktop app draws its own): `/clear` cannot be put in it. */
+  noBox: boolean
 }
 
 /** Everything the pane's drawings read, built where the state is read. */
@@ -638,6 +642,16 @@ export function pricesOf(v: HotpotView): { reorder: number; topUp: number; rehea
   }
 }
 
+/** The engine refusing a plugin's compaction outside the REPL (the desktop app, an SDK or `-p` session): its reason names the headless or SDK session. */
+export function isHostNoCompact(error: unknown): boolean {
+  return error instanceof Error && /headless|\bSDK\b/i.test(error.message)
+}
+
+/** A fill the engine itself refused for want of a box (`no_composer`: the host draws its own composer, or has none). */
+export function isNoBox(filled: { isFilled: boolean; refusal?: string } | null): boolean {
+  return filled !== null && !filled.isFilled && filled.refusal === 'no_composer'
+}
+
 /** One of the pane's buttons: its key, label and hotkey, and why it is dim (empty when it can act). */
 export type HotpotButton = { key: string; label: string; hotkey?: string; reason: string; pick?: number; isOn?: boolean }
 
@@ -662,10 +676,11 @@ export function hotpotButtons(v: HotpotView): HotpotButton[] {
   const kept = v.cache.keepWarmUntil > v.now
   const bill: HotpotButton = { key: 'hotpot-bill', label: v.hotpot.isBillOpen ? 'Close the bill' : 'The bill', hotkey: 'b', reason: '' }
   const close: HotpotButton = { key: 'hotpot-close', label: 'Close', hotkey: 'c', reason: '' }
+  const clearReason = fl.noBox ? 'this app keeps its own prompt box: type /clear' : ''
   if (v.feast.phase === 'held') {
     return [
       { key: 'hotpot-tax-keep', label: kept ? 'Keep warm: on' : `Keep it warm after (${lengthText(v.pick)}) ≈${fmtUsd(pr.keep)}`, hotkey: 'w', reason: '' },
-      { key: 'hotpot-tax-clear', label: 'Start fresh (/clear)', hotkey: 'f', reason: '' },
+      { key: 'hotpot-tax-clear', label: 'Start fresh (/clear)', hotkey: 'f', reason: clearReason },
       { key: 'hotpot-tax-dismiss', label: 'Dismiss', hotkey: 'd', reason: '' },
       bill,
       close,
@@ -700,7 +715,7 @@ export function hotpotButtons(v: HotpotView): HotpotButton[] {
   const topup: HotpotButton = cold
     ? { key: 'hotpot-topup', label: ARMED(v, 'reheat') && forkReason === '' ? `Press again: re-write ≈${fmtUsd(pr.reheat)}` : `Re-heat now ≈${fmtUsd(pr.reheat)}`, hotkey: 't', reason: forkReason }
     : { key: 'hotpot-topup', label: `Top up now ≈${fmtUsd(pr.topUp)}${fiveMinNote}`, hotkey: 't', reason: forkReason }
-  const zosuiReason = fl.compactOff ? 'needs a newer Claude Code' : fl.compacting ? 'compacting' : fl.working ? 'a turn is running' : ''
+  const zosuiReason = fl.compactOff ? 'needs a newer Claude Code' : fl.noCompact ? 'this app compacts only from a typed /compact' : fl.compacting ? 'compacting' : fl.working ? 'a turn is running' : ''
   const zosui: HotpotButton = {
     key: 'hotpot-zosui',
     label: ARMED(v, 'zosui') && zosuiReason === '' ? `Press again: compact ${fmtTokens(v.cache.contextTokens)} tokens · one summarizing request` : 'Zosui (compact) · the next send writes the smaller pot',
@@ -709,9 +724,9 @@ export function hotpotButtons(v: HotpotView): HotpotButton[] {
   }
   const clear: HotpotButton = {
     key: 'hotpot-clear',
-    label: ARMED(v, 'clear') ? 'Press again: your draft gives way to /clear' : `Clear the table (/clear) · the next send writes a fresh pot${kept ? ' · keepwarm stays on' : ''}`,
+    label: ARMED(v, 'clear') && clearReason === '' ? 'Press again: your draft gives way to /clear' : `Clear the table (/clear) · the next send writes a fresh pot${kept ? ' · keepwarm stays on' : ''}`,
     hotkey: 'f',
-    reason: '',
+    reason: clearReason,
   }
   return [...keep, topup, zosui, clear, bill, close]
 }

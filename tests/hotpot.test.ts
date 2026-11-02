@@ -44,6 +44,8 @@ import {
   hotpotDue,
   hotpotLine,
   hotpotSvg,
+  isHostNoCompact,
+  isNoBox,
   judgeStep,
   keepwarmUsd,
   minutesText,
@@ -81,7 +83,7 @@ const near = (got: number, want: number, digits = 6) => expect(Math.abs(got - wa
 
 const cacheAt = (ageMs: number, over: Partial<{ keepWarmUntil: number; contextTokens: number; model: string; heldAt: number }> = {}) => ({ lastWarmAt: ageMs < 0 ? 0 : NOW - ageMs, keepWarmUntil: 0, contextTokens: 168_000, model: OPUS, heldAt: 0, ...over })
 const HOTPOT: KessokuHotpot = { isOpen: true, inBand: false, isBillOpen: false, pick: 0, armed: null, moment: null, note: null, sample: null }
-const FLAGS = { noSnapshot: false, compacting: false, working: false, forkOut: false, compactOff: false, draftOff: false, paying: false }
+const FLAGS = { noSnapshot: false, compacting: false, working: false, forkOut: false, compactOff: false, draftOff: false, paying: false, noCompact: false, noBox: false }
 
 /** A view of the pane: a cache warmed `ageMs` ago (-1: nothing cached), the ledger P at 168k, a one-hour TTL assumed. */
 function viewOf(ageMs: number, over: Partial<HotpotView> = {}, cacheOver: Parameters<typeof cacheAt>[1] = {}, flags: Parameters<typeof feastOf>[3] = {}): HotpotView {
@@ -477,6 +479,22 @@ test('the buttons say their prices and what is armed, and a dim one names why, i
   const off = viewOf(9 * MIN, { ledger: { ...INITIAL_LEDGER, prompt: 168_000, canFork: true, cacheless: 3 } })
   expect(hotpotButtons(off).filter(b => b.reason === 'prompt caching is off').map(b => b.key)).toEqual(['hotpot-keep', 'hotpot-topup'])
   expect(hotpotButtons(viewOf(9 * MIN, { flags: { ...FLAGS, compactOff: true } })).find(b => b.key === 'hotpot-zosui')?.reason).toBe('needs a newer Claude Code')
+  // outside the REPL (the desktop app, an SDK session) a plugin can neither compact nor fill the box: both dim, saying why
+  const sdk = { ...FLAGS, noCompact: true, noBox: true }
+  expect(hotpotButtons(viewOf(9 * MIN, { flags: sdk })).filter(b => b.reason !== '').map(b => `${b.key}: ${b.reason}`)).toEqual(['hotpot-zosui: this app compacts only from a typed /compact', 'hotpot-clear: this app keeps its own prompt box: type /clear'])
+  expect(hotpotButtons(viewOf(74 * MIN, { flags: sdk, slip: { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 } }, {}, { held: true })).find(b => b.key === 'hotpot-tax-clear')?.reason).toBe('this app keeps its own prompt box: type /clear')
+  expect(boardOf(viewOf(9 * MIN, { flags: sdk })).line).toMatch(/ · this app compacts only from a typed \/compact$/)
+  // the refusal a press learns it from: the engine's own reason outside the REPL, not a turn running or a missing call
+  expect(isHostNoCompact(new Error('kessoku-ultimate-bocchi: $.session.compact: not available in a headless (-p / SDK) session yet: compaction here runs inside a turn (a /compact prompt); catch it and carry on'))).toBe(true)
+  expect(isHostNoCompact(new Error('$.session.compact: a turn is running'))).toBe(false)
+  expect(isHostNoCompact(new TypeError('$.session.compact is not a function'))).toBe(false)
+  expect(isHostNoCompact('headless')).toBe(false)
+  // and a box's: only the engine's own no_composer says no box exists (a dialog, or a refusal with no cause, may pass)
+  expect(isNoBox({ isFilled: false, refusal: 'no_composer' })).toBe(true)
+  expect(isNoBox({ isFilled: false, refusal: 'dialog' })).toBe(false)
+  expect(isNoBox({ isFilled: false })).toBe(false)
+  expect(isNoBox({ isFilled: true })).toBe(false)
+  expect(isNoBox(null)).toBe(false)
   // during a hold: the Cache Tax card's three, then the bill and close
   const held = viewOf(74 * MIN, { slip: { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 } }, {}, { held: true })
   expect(keys(held)).toEqual(['hotpot-tax-keep:Keep it warm after (2h) ≈$0.07', 'hotpot-tax-clear:Start fresh (/clear)', 'hotpot-tax-dismiss:Dismiss', 'hotpot-bill:The bill', 'hotpot-close:Close'])

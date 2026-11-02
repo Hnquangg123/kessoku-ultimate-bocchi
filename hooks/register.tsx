@@ -146,6 +146,8 @@ import {
   hotpotFaces,
   hotpotLine,
   hotpotSvg,
+  isHostNoCompact,
+  isNoBox,
   isTtlDefault,
   keepwarmUsd,
   lengthText,
@@ -355,8 +357,13 @@ let retryTimer: Timer | null = null
 let pingsStopped = false
 /** The host keeps no snapshot a fork may share (a fork answered nothing-to-fork with the gate open): Keep the fire on, Top up and Re-heat stay dim. */
 let noSnapshot = false
-/** The session.compact hook ran for the compaction in progress (a Zosui press knows then that it drew and settled it). */
-let compactRan = false
+/**
+ * The host compacts only from a typed `/compact`: `$.session.compact` is refused outside the REPL (the desktop app, an
+ * SDK or `-p` session), so Zosui is dim there. Set at session.start (not interactive) and on that refusal.
+ */
+let hostNoCompact = false
+/** The host binds no prompt box a plugin may fill (the desktop app draws its own; `-p` has none): Clear the table is dim. */
+let hostNoBox = false
 /** A paid re-order's turn is under way: the Hotpot keeps the feast drawn until its first step books it warm (or the turn ends). */
 let paying = false
 const badSleepers = new Set<string>()
@@ -1864,7 +1871,7 @@ async function hotpotViewOf($: EngineInterface, e: Site | null, now: number): Pr
     ttl,
     pick: pickMs(h),
     slip: feast.phase === 'held' ? { writeUsd: c.heldUsd, warmUsd: c.warmUsd, tokens: held.tokens, ageMs: held.ageMs } : null,
-    flags: { noSnapshot, compacting: isCompacting, working: b.isWorking, forkOut, compactOff: !features.compact, draftOff: !features.draft, paying },
+    flags: { noSnapshot, compacting: isCompacting, working: b.isWorking, forkOut, compactOff: !features.compact, draftOff: !features.draft, paying, noCompact: hostNoCompact, noBox: hostNoBox },
     isTerminal: e?.surface === 'terminal',
     isFocused: e !== null && 'isFocused' in e.props ? e.props.isFocused === true : false,
   }
@@ -1982,44 +1989,40 @@ async function pressTopUp($: EngineInterface): Promise<void> {
 }
 
 /**
- * Zosui: `$.session.compact()` on a second press. The session.compact hook
- * draws the zosui and settles the cache; where it does not run (a managed
- * install passes it over), the press does both from the call's own figures.
+ * Zosui: `$.session.compact()` on a second press. The engine runs every
+ * session.compact hook but the calling plugin's, so the mod's own hook never
+ * sees its press: the press draws the zosui and settles the cache from the
+ * call's own figures (a veto lets Bocchi out again; a host that compacts only
+ * from a typed /compact dims Zosui from then on).
  */
 async function pressZosui($: EngineInterface): Promise<void> {
   const now = await $.clock.now()
   if ((await liveButton($, 'hotpot-zosui', now)) === null) return
   if (!(await secondPress($, 'zosui', now))) return
-  compactRan = false
   isCompacting = true
   await setMood($, 'melting', 'compacting the set…').catch(() => undefined)
   try {
     const r = await $.session.compact()
+    isCompacting = false
     if (r.skip !== undefined) {
       await noteHotpot($, `no zosui: ${r.skip}`)
-      if (!compactRan) {
-        isCompacting = false
-        await revertMood($)
-      }
+      await revertMood($)
       return
     }
-    if (!compactRan) {
-      isCompacting = false
-      await settleCompaction($, r.tokensBefore, r.tokensAfter, r.usage)
-    }
+    await settleCompaction($, r.tokensBefore, r.tokensAfter, r.usage)
   } catch (error) {
+    isCompacting = false
     if (isMissingApi(error)) features.compact = false
-    if (!compactRan || isMissingApi(error)) {
-      isCompacting = false
-      await revertMood($).catch(() => undefined)
-    }
-    await noteHotpot($, isMissingApi(error) ? 'zosui needs a newer Claude Code' : `zosui failed: ${error instanceof Error ? error.message : String(error)}`)
+    if (isHostNoCompact(error)) hostNoCompact = true
+    await revertMood($).catch(() => undefined)
+    await noteHotpot($, isMissingApi(error) ? 'zosui needs a newer Claude Code' : isHostNoCompact(error) ? 'no zosui: this app compacts only from a typed /compact' : `zosui failed: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
 /** Clear the table: /clear put in the box for the person to send; over a draft, a second press first. */
 async function pressClear($: EngineInterface): Promise<void> {
   const now = await $.clock.now()
+  if ((await liveButton($, 'hotpot-clear', now)) === null) return
   let isDraft = true
   if (features.draft) {
     try {
@@ -2032,7 +2035,9 @@ async function pressClear($: EngineInterface): Promise<void> {
   if (isDraft && !(await secondPress($, 'clear', now))) return
   await update($, hotpot, h => ({ ...h, armed: null }))
   const filled = await $.prompt.fill({ text: '/clear', mode: 'replace' }).catch(() => null)
-  await noteHotpot($, filled !== null && filled.isFilled ? '/clear is in the box: Esc, then Enter' : 'the box could not take /clear: type it')
+  // No box to fill on this host (it draws its own composer): Clear the table is dim from now on.
+  if (isNoBox(filled)) hostNoBox = true
+  await noteHotpot($, filled !== null && filled.isFilled ? '/clear is in the box: Esc, then Enter' : hostNoBox ? 'this app keeps its own prompt box: type /clear' : 'the box could not take /clear: type it')
 }
 
 // ---- The panel ---------------------------------------------------------------
@@ -3939,6 +3944,9 @@ export const register: Register = (on, options) => {
     cwd = e.cwd
     isInteractive = e.isInteractive
     hasSurface = e.surface !== null
+    // Outside the REPL (the desktop app, an SDK or -p session) a plugin can neither compact nor fill the box.
+    hostNoCompact = !e.isInteractive
+    hostNoBox = !e.isInteractive
     uiStarted = false
     // A reload keeps $.state (the ledger and its learned TTL) and forgets the module: mirror the TTL, note when we loaded.
     if (loadedAt === 0) loadedAt = await $.clock.now()
@@ -4251,7 +4259,6 @@ export const register: Register = (on, options) => {
       }
       return r
     }
-    compactRan = true
     isCompacting = true
     await setMood($, 'melting', 'compacting the set…').catch(() => undefined)
     const r = await next(e).catch(async (error: unknown) => {
