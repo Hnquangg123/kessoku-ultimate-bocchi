@@ -22,6 +22,7 @@ import {
   SEAT_ORDER,
   SEAT_ROW,
   SEAT_SIDE,
+  SIGHTING_MAX_GAP,
   TABLE,
   bandParts,
   billRows,
@@ -319,6 +320,26 @@ test('the TTL is learned from what the steps show: a warm step after 6 minutes t
   expect(bookMainStep(warmed(NOW - 10 * MIN, { seenWarmAt: 0 }), step({ read: 0, write: 170_000 }), ctxOf(NOW - 10 * MIN)).taught).toBeNull()
   // while the engine has spoken, no evidence
   expect(bookMainStep(warmed(NOW - 6 * MIN, { ttl: { ms: 5 * MIN, how: 'engine' } }), step({ read: 168_000, write: 1000 }), ctxOf(NOW - 6 * MIN)).taught).toBeNull()
+})
+
+test('keepwarm’s own pings at an assumed hour teach a five-minute TTL: a missed ping 59 minute ticks (and the timer’s lateness) after the last warmth is a sighting, a second settles it', async () => {
+  // what the minute tick sends: the first tick at or after the TTL less 90 s, 59 minutes on, a little late
+  const gap = 59 * MIN + 80
+  const ctx = (lastWarmAt: number) => ({ lastWarmAt, loadedAt: 0, ttlMs: HOUR, context: 168_000 })
+  const missAt = (calledAt: number) => ({ kind: 'ping' as const, usage: { input: 30, output: 8, read: 0, write: 168_000 }, calledAt, gateOpen: true, model: OPUS })
+  const first = bookFork(warmed(NOW - gap), missAt(NOW), ctx(NOW - gap))
+  expect(first.taught).toBe('sighting')
+  // the miss re-wrote the pot, so it is warm from the ping's call, and the next ping comes 59 ticks after that
+  expect(first.warmAt).toBe(NOW)
+  const second = bookFork(first.ledger, missAt(NOW + gap), ctx(NOW))
+  expect(second.taught).toBe('5m')
+  expect(second.ledger).toMatchObject({ ttl: { ms: 5 * MIN, how: 'seen' }, sighting: 0 })
+  // within 45 s of the hour it is no evidence: an hour's cache may have lapsed by the server's clock
+  expect(SIGHTING_MAX_GAP).toBe(HOUR - 45_000)
+  expect(bookFork(warmed(NOW - (HOUR - 30_000)), missAt(NOW), ctx(NOW - (HOUR - 30_000))).taught).toBeNull()
+  // a step's sighting spans the same
+  expect(bookMainStep(warmed(NOW - gap), step({ read: 0, write: 170_000 }), ctxOf(NOW - gap)).taught).toBe('sighting')
+  expect(bookMainStep(warmed(NOW - (HOUR - 30_000)), step({ read: 0, write: 170_000 }), ctxOf(NOW - (HOUR - 30_000))).taught).toBeNull()
 })
 
 test('a five-minute TTL once settled stays so: a cold step or a missed top-up after it records no sighting, and the board marks a sighting only of a longer TTL', async () => {

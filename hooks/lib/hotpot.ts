@@ -44,6 +44,12 @@ export const MOMENT_MS = 2400
 export const NOTE_MS = 6000
 /** Keepwarm pings once the cache is this close to its TTL (its minute tick finds it so). */
 export const PING_LEAD_MS = 90_000
+/**
+ * The longest gap a five-minute sighting may span: inside the hour, so an hour's cache would still be warm and a
+ * miss shows a shorter TTL, with 45 s spare for the clock reads; wide enough that keepwarm's own pings at an
+ * assumed hour (59 minute ticks after the last warmth, plus the timer's lateness) teach a five-minute TTL.
+ */
+export const SIGHTING_MAX_GAP = HOUR - 45_000
 /** A ping's own tokens: its few words in, its word out. */
 export const PING_INPUT = 30
 export const PING_OUTPUT = 8
@@ -395,7 +401,7 @@ export function bookMainStep(l: KessokuLedger, s: MainStep, ctx: StepContext): S
     if (gap > 5.5 * MINUTE && u.read >= 0.9 * P && u.write < 0.5 * P) {
       next = { ...next, ttl: { ms: HOUR, how: 'seen' }, sighting: 0 }
       taught = '1h'
-    } else if (next.ttl.ms > 5 * MINUTE && gap >= 5.5 * MINUTE && gap <= 59 * MINUTE && ctx.lastWarmAt >= ctx.loadedAt && u.model === l.warmModel && s.effort === l.warmEffort && u.write >= 0.5 * P && u.read < 0.1 * P) {
+    } else if (next.ttl.ms > 5 * MINUTE && gap >= 5.5 * MINUTE && gap <= SIGHTING_MAX_GAP && ctx.lastWarmAt >= ctx.loadedAt && u.model === l.warmModel && s.effort === l.warmEffort && u.write >= 0.5 * P && u.read < 0.1 * P) {
       if (next.sighting > 0) {
         next = { ...next, ttl: { ms: 5 * MINUTE, how: 'seen' }, sighting: 0 }
         taught = '5m'
@@ -461,7 +467,7 @@ export function bookFork(l: KessokuLedger, fk: ForkFacts, ctx: { lastWarmAt: num
     if (gap > 5.5 * MINUTE && u.read >= 0.9 * P && u.write < 0.1 * P) {
       next = { ...next, ttl: { ms: HOUR, how: 'seen' }, sighting: 0 }
       taught = '1h'
-    } else if (next.ttl.ms > 5 * MINUTE && gap >= 5.5 * MINUTE && gap <= 59 * MINUTE && ctx.lastWarmAt >= ctx.loadedAt && u.write >= 0.5 * P) {
+    } else if (next.ttl.ms > 5 * MINUTE && gap >= 5.5 * MINUTE && gap <= SIGHTING_MAX_GAP && ctx.lastWarmAt >= ctx.loadedAt && u.write >= 0.5 * P) {
       if (next.sighting > 0) {
         next = { ...next, ttl: { ms: 5 * MINUTE, how: 'seen' }, sighting: 0 }
         taught = '5m'
