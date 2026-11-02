@@ -1105,8 +1105,9 @@ async function coldWatch($: EngineInterface): Promise<void> {
   if (!(await notify($, text))) toast($, `${MEMBERS.bocchi.faces.anxious} ${text}`)
 }
 
+/** The Cache Tax hold's words, as the drop's reason: how long the cache has been cold (since it lapsed, as the strip counts), the re-write and its price. */
 function cacheTaxReason(c: KessokuCache, now: number): string {
-  const age = c.lastWarmAt > 0 ? fmtDuration(now - c.lastWarmAt) : '?'
+  const age = c.lastWarmAt > 0 ? fmtDuration(Math.max(0, now - c.lastWarmAt - ttlMs())) : '?'
   return (
     `${MEMBERS.bocchi.faces.panic} CACHE TAX — the prompt cache went cold ${age} ago! ` +
     `Sending this re-writes ${fmtTokens(c.contextTokens)} tokens ≈ ${fmtUsd(c.heldUsd)} ` +
@@ -3214,7 +3215,8 @@ async function dismissHold($: EngineInterface): Promise<void> {
 function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: KessokuCache, l: KessokuLedger, hp: KessokuHotpot, now: number): Draw {
   const { Box, Text, Button } = $.ui.resolve(e)
   const held = heldFigures(c, hp, now)
-  const age = held.ageMs > 0 ? fmtDuration(held.ageMs) : '?'
+  // cold since it lapsed (the warmth's age less the TTL), as the strip and the chalkboard's foot count it
+  const age = held.ageMs > 0 ? fmtDuration(Math.max(0, held.ageMs - ttlMs())) : '?'
   const { isExact } = priceInfo(held.model || 'default')
   const rate = writePerToken(held.model, l.engine, ttlMs()) * 1e6
   const rateWords = isEnginePrice({ ...c, model: held.model }, l) ? "the engine's rate" : `${isExact ? '' : '~'}$${Number(rate.toFixed(2))}/MTok`
