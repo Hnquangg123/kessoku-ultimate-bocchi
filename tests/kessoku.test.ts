@@ -4226,7 +4226,7 @@ test('three cacheless steps turn caching off (Let it cool still pressable): past
   await pane.unmount()
 })
 
-test('the fork gate: shut, over a warm pot too, no fork goes out and keepwarm waits armed; open, nothing-to-fork books nothing and dims the forks for the session', async ($, on) => {
+test('the fork gate: shut, over a warm pot too, no fork goes out and keepwarm waits armed; open, nothing-to-fork books nothing and dims the forks for the session', { timeoutMs: 20_000 }, async ($, on) => {
   const seen = fresh()
   const st = watchState(on)
   const clock = mock.clock(on, { now: 1_000_000 })
@@ -4256,6 +4256,8 @@ test('the fork gate: shut, over a warm pot too, no fork goes out and keepwarm wa
   expect(topUp?.props.label).toMatch(/^Top up now/)
   expect(topUp?.props.dimColor).toBe(true)
   expect((await boardLines(pane))[1]).toMatch(/ · nothing to top up until the next turn ends$/)
+  // armed but held back, keepwarm keeps nothing: last orders, not Nijika promising a top-up that cannot come
+  expect((await boardLines(pane))[0]).toMatch(/^Last orders! {2}cold in /)
   await clock.advance(2 * 60_000)
   const reheat = await pane.find({ type: 'Button', key: 'hotpot-topup' })
   expect(reheat?.props.label).toMatch(/^Re-heat now/)

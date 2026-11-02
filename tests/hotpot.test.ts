@@ -151,7 +151,7 @@ test('the strip, the foot and the rail read their words off the phase, in whole 
   const words = (age: number, flags: Parameters<typeof feastOf>[3] = {}, keep = 0) => {
     const c = cacheAt(age, { keepWarmUntil: keep })
     const fe = feastOf(c, NOW, HOUR, flags)
-    return [stripWords(fe, c, NOW), railWords(fe, c, NOW)]
+    return [stripWords(fe, c, NOW, flags.keepwarmHeld === true), railWords(fe, c, NOW, flags.keepwarmHeld === true)]
   }
   expect(words(-1)).toEqual(['no cache yet', '○ no cache yet'])
   expect(words(-1, { cleared: true })).toEqual(['no cache yet', '○ no cache yet'])
@@ -161,6 +161,13 @@ test('the strip, the foot and the rail read their words off the phase, in whole 
   expect(words(57 * MIN)).toEqual(['last orders, cold in 3m', '☀ last orders 3m'])
   expect(words(72 * MIN)).toEqual(['cold for 12m', '❄ cold'])
   expect(words(72 * MIN, {}, NOW + HOUR)).toEqual(['cold for 12m · keepwarm on', '❄ cold · keepwarm on'])
+  // keepwarm armed but held back (the gate shut, the pings stopped, no snapshot, too little to keep) keeps nothing: it says it waits, and
+  // last orders stay last orders (no Nijika with the pot promising a top-up that cannot come)
+  expect(words(12 * MIN, { keepwarmHeld: true }, NOW + 5 * HOUR)).toEqual(['warm, 48m left · keepwarm waits', '☀ warm 48m'])
+  expect(words(57 * MIN, { keepwarmHeld: true }, NOW + HOUR)).toEqual(['last orders, cold in 3m · keepwarm waits', '☀ last orders 3m'])
+  expect(feastOf(cacheAt(57 * MIN, { keepWarmUntil: NOW + HOUR }), NOW, HOUR, { keepwarmHeld: true }).phase).toBe('last')
+  expect(feastOf(cacheAt(57 * MIN, { keepWarmUntil: NOW + HOUR }), NOW, HOUR).phase).toBe('tend')
+  expect(words(72 * MIN, { keepwarmHeld: true }, NOW + HOUR)).toEqual(['cold for 12m · keepwarm on', '❄ cold · keepwarm on'])
   expect(words(72 * MIN, { held: true })).toEqual(['cold for 12m · a send is held', '❄ cold · held'])
   expect(words(12 * MIN, { compacting: true })).toEqual(['zosui (compacting)', '〆 zosui'])
   expect(minutesText(59_999)).toBe('under 1m')

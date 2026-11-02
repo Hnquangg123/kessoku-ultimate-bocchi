@@ -73,7 +73,14 @@ export type FeastLevel = 0 | 1 | 2 | 3 | 4 | 5
 
 export type Feast = { phase: FeastPhase; level: FeastLevel; leftMs: number; ageMs: number }
 
-export type FeastFlags = { held?: boolean; compacting?: boolean; cleared?: boolean; cachingOff?: boolean }
+export type FeastFlags = {
+  held?: boolean
+  compacting?: boolean
+  cleared?: boolean
+  cachingOff?: boolean
+  /** Keepwarm is armed but no ping can go now (the fork gate shut, stopped after a second 429, no snapshot, caching off, too little to keep): it keeps nothing, so last orders stay last orders. */
+  keepwarmHeld?: boolean
+}
 
 /** The last stretch of the TTL: the cold notice's window, which is last orders. */
 export function lastWindow(ttlMs: number): number {
@@ -94,7 +101,7 @@ export function feastOf(cache: Pick<KessokuCache, 'lastWarmAt' | 'keepWarmUntil'
   if (flags.cachingOff === true) return at('off', 0)
   if (!warmed) return at(flags.cleared === true ? 'cleared' : 'none', 0)
   if (leftMs <= 0) return at('cold', 0)
-  if (leftMs <= lastWindow(ttlMs)) return at(cache.keepWarmUntil > now ? 'tend' : 'last', 1)
+  if (leftMs <= lastWindow(ttlMs)) return at(cache.keepWarmUntil > now && flags.keepwarmHeld !== true ? 'tend' : 'last', 1)
   const w = leftMs / ttlMs
   return w > 0.84 ? at('feast', 5) : w > 2 / 3 ? at('feast', 4) : w > 1 / 3 ? at('simmer', 3) : at('low', 2)
 }
@@ -123,9 +130,14 @@ export function lengthText(ms: number): string {
   return h > 0 ? (m > 0 ? `${h}h${m}m` : `${h}h`) : `${m}m`
 }
 
-/** The warmth in the strip's words (the desktop sign, both terminal strips, after `cache `) and the chalkboard's foot. */
-export function stripWords(fe: Feast, cache: Pick<KessokuCache, 'keepWarmUntil'>, now: number): string {
-  const kept = cache.keepWarmUntil > now
+/**
+ * The warmth in the strip's words (the desktop sign, both terminal strips, after `cache `) and the chalkboard's foot;
+ * keepwarm armed but held back (FeastFlags.keepwarmHeld) keeps nothing and says it waits.
+ */
+export function stripWords(fe: Feast, cache: Pick<KessokuCache, 'keepWarmUntil'>, now: number, keepwarmHeld = false): string {
+  const armed = cache.keepWarmUntil > now
+  const kept = armed && !keepwarmHeld
+  const waits = armed && keepwarmHeld ? ' · keepwarm waits' : ''
   switch (fe.phase) {
     case 'none':
     case 'cleared':
@@ -133,21 +145,22 @@ export function stripWords(fe: Feast, cache: Pick<KessokuCache, 'keepWarmUntil'>
     case 'off':
       return 'no cache here (caching off)'
     case 'last':
-      return `last orders, cold in ${minutesText(fe.leftMs)}`
+      return `last orders, cold in ${minutesText(fe.leftMs)}${waits}`
     case 'cold':
-      return `cold for ${minutesText(-fe.leftMs)}${kept ? ' · keepwarm on' : ''}`
+      return `cold for ${minutesText(-fe.leftMs)}${armed ? ' · keepwarm on' : ''}`
     case 'held':
       return fe.ageMs > 0 ? `cold for ${minutesText(-fe.leftMs)} · a send is held` : 'a send is held'
     case 'zosui':
       return 'zosui (compacting)'
     default:
-      return kept ? `kept warm, ${minutesText(cache.keepWarmUntil - now)} left` : `warm, ${minutesText(fe.leftMs)} left`
+      return kept ? `kept warm, ${minutesText(cache.keepWarmUntil - now)} left` : `warm, ${minutesText(fe.leftMs)} left${waits}`
   }
 }
 
-/** The warmth on the terminal panel's rail. */
-export function railWords(fe: Feast, cache: Pick<KessokuCache, 'keepWarmUntil'>, now: number): string {
-  const kept = cache.keepWarmUntil > now
+/** The warmth on the terminal panel's rail (keepwarm held back keeps nothing here either). */
+export function railWords(fe: Feast, cache: Pick<KessokuCache, 'keepWarmUntil'>, now: number, keepwarmHeld = false): string {
+  const armed = cache.keepWarmUntil > now
+  const kept = armed && !keepwarmHeld
   switch (fe.phase) {
     case 'none':
     case 'cleared':
@@ -157,7 +170,7 @@ export function railWords(fe: Feast, cache: Pick<KessokuCache, 'keepWarmUntil'>,
     case 'last':
       return `☀ last orders ${minutesText(fe.leftMs, true)}`
     case 'cold':
-      return `❄ cold${kept ? ' · keepwarm on' : ''}`
+      return `❄ cold${armed ? ' · keepwarm on' : ''}`
     case 'held':
       return '❄ cold · held'
     case 'zosui':

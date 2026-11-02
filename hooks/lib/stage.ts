@@ -268,7 +268,7 @@ function actView(b: KessokuBand, a: KessokuAgent, now: number): ActView {
 
 /** The cache's warmth for the session's figures: its kind by the warmth alone, its words the strip's, read off the feast's phase. */
 function ampOf(c: KessokuCache, now: number, ttlMs: number, flags: FeastFlags): PanelView['amp'] {
-  return { kind: ampKind(c, now, ttlMs), words: stripWords(feastOf(c, now, ttlMs, flags), c, now) }
+  return { kind: ampKind(c, now, ttlMs), words: stripWords(feastOf(c, now, ttlMs, flags), c, now, flags.keepwarmHeld === true) }
 }
 
 /**

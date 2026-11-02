@@ -446,9 +446,18 @@ async function writeLedger($: EngineInterface, fn: (l: KessokuLedger) => Kessoku
   return l
 }
 
-/** What decides the feast's phase beyond the warmth: a send held, a compaction running, a cleared table, caching off. */
+/** What decides the feast's phase beyond the warmth: a send held, a compaction running, a cleared table, caching off, keepwarm held back. */
 function feastFlags(c: KessokuCache, l: KessokuLedger, now: number): FeastFlags {
-  return { held: c.heldAt > 0 && now - c.heldAt < HELD_PROMPT_MS, compacting: isCompacting, cleared: l.cleared, cachingOff: cachingOff(l) }
+  return { held: c.heldAt > 0 && now - c.heldAt < HELD_PROMPT_MS, compacting: isCompacting, cleared: l.cleared, cachingOff: cachingOff(l), keepwarmHeld: keepwarmHeld(c, l) }
+}
+
+/**
+ * Keepwarm armed but no ping can go until something changes: the fork gate shut (before the first turn ends, after a
+ * switch), the pings stopped by a second 429, no snapshot to fork, caching off, too little to keep. (A ping in flight
+ * or a 429's retry still keeps it.)
+ */
+function keepwarmHeld(c: KessokuCache, l: KessokuLedger): boolean {
+  return !l.canFork || noSnapshot || pingsStopped || cachingOff(l) || c.contextTokens < TOP_UP_MIN_TOKENS
 }
 
 /** Whether the cache has lapsed: cold by `feastOf` (a TTL or more since it was warmed; never while caching is off). */
@@ -2891,7 +2900,7 @@ function drawPanel($: EngineInterface, e: Site, b: KessokuBand, c: KessokuCache,
       {compact ? <Button key="panel-hide" label="Hide" hotkey="h" plain dimColor onPress={() => void update($, ui, x => ({ ...x, isPanelOpen: false, panelWhere: 'none' as const }))} /> : null}
     </Box>
   )
-  const amp = railWords(feastOf(c, now, ttlMs(), fl), c, now)
+  const amp = railWords(feastOf(c, now, ttlMs(), fl), c, now, fl.keepwarmHeld === true)
   const rail = (
     <Text wrap="truncate-end">
       <Text dimColor>CTX </Text>
@@ -2998,7 +3007,7 @@ function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: Kessoku
           )}
         </Text>
         <Text dimColor wrap="truncate-end">
-          {words} · {fmtUsd(b.sessionUsd)} · cache {stripWords(feastOf(c, now, ttlMs(), fl), c, now)}
+          {words} · {fmtUsd(b.sessionUsd)} · cache {stripWords(feastOf(c, now, ttlMs(), fl), c, now, fl.keepwarmHeld === true)}
         </Text>
         <Box flexDirection="row" gap={2}>
           {r.tracks.length > 0 && !r.isOpen ? <Button key="strip-replay" label={`Replay ${r.tracks.length}`} hotkey="r" plain onPress={() => void openReplay($)} /> : null}
@@ -3040,7 +3049,7 @@ function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>, b: Kessoku
       })}
       <Box flexShrink={1} minWidth={8}>
         <Text dimColor wrap="truncate-end">
-          │ {words} · {fmtUsd(b.sessionUsd)} · cache {stripWords(feastOf(c, now, ttlMs(), fl), c, now)}
+          │ {words} · {fmtUsd(b.sessionUsd)} · cache {stripWords(feastOf(c, now, ttlMs(), fl), c, now, fl.keepwarmHeld === true)}
         </Text>
       </Box>
       {r.tracks.length > 0 && !r.isOpen ? (
