@@ -27,8 +27,8 @@ export const seatSlump: SeatPoseDef = {
         'qyyqqqqqqq.......q..pppYyy.wwwwwwwwwwwwyqssssp.', // 52
         'qywww..............sssSpYY.yyyyyyyyyyyyYqSsSsSp', // 53
         'qYyyy...............sSsp....qqqqqqqqqqqqqpSpSpp', // 54
-        '.qYYY............p.pSpp...._...................', // 55
-        '..qqq......................_...................', // 56
+        '.qYYY............p.pSpp........................', // 55
+        '..qqq..........................................', // 56
       ],
     },
   ],
