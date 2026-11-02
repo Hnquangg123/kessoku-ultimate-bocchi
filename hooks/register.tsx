@@ -1889,6 +1889,8 @@ async function closeHotpot($: EngineInterface): Promise<void> {
   await update($, hotpot, x => ({ ...x, isOpen: false, inBand: false, armed: null, moment: null, note: null }))
   // Always by id: a pane that waited undrawn in a narrow terminal is open to the engine too.
   await $.ui.close({ id: HOTPOT }).catch(() => undefined)
+  // Its sprites go with it here too: a close from its own button or ♨ raises no ui.close hook of the mod's.
+  dropSprites(HOTPOT)
 }
 
 /** `/hotpot`, `/bocchi hotpot` and the ♨ buttons: the pane opened or closed; with no screen, the wooden board as one line. */

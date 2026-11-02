@@ -3610,6 +3610,26 @@ test('♨ Hotpot: the button on all three strips and under the chalkboard opens 
   await band.unmount()
 })
 
+test('a Hotpot closed by its own Close (or a ♨) lets its sprites go: nothing of it is repainted once it is closed', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await aTurn($, 't1')
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  // the minis at the pot's corners play on the sprite clock while it is open
+  await clock.advance(3000)
+  expect(seen.blits.some(b => b.requestId === HOTPOT_ID)).toBe(true)
+  await pane.press({ key: 'hotpot-close' })
+  await clock.settle()
+  const from = seen.blits.length
+  await clock.advance(5000)
+  expect(seen.blits.slice(from).filter(b => b.requestId === HOTPOT_ID)).toHaveLength(0)
+  await pane.unmount()
+})
+
 test('the Hotpot draws the feast, the wooden board\'s two lines and its buttons on the terminal, the desktop and with kaomoji', async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
