@@ -333,7 +333,7 @@ or `refused to go on`) and a tilted `FAILED` stamp. An act that hit a tool error
 `⚠ last error: …` line instead: it did not fail.
 
 The foot shows `main ctx`, `limit N%` (when there is a rate-limit figure) and the cache (`warm, 48m left`, `last orders, cold in 3m`,
-`cold for 12m`, `kept warm, 5m left`, `no cache yet`), over a chalk tray. A solo page with no songs on it says the
+`cold for 12m`, `kept warm, 5m left`, `not warmed yet`), over a chalk tray. A solo page with no songs on it says the
 band is tuning up.
 
 **Hover a song** for its details: the whole title, its tools by count with tally strokes, the model
@@ -475,9 +475,9 @@ A line of the band sits above the prompt whenever nothing else needs that spot. 
 Buttons, on both: `Replay 3` (`r`; when the last set left edits and Replay is not open), `Panel` (`k`; opens or
 closes the panel), `♨ Hotpot` (`o`; while the [Hotpot](#-hotpot) is closed) and `Hide` (`h`).
 
-The cache's words, here and on the chalkboard's foot, count whole minutes: `no cache yet`, `warm, 48m left`
-(`kept warm, 5h 12m left` while keepwarm runs), `last orders, cold in 3m`, `cold for 12m`, `cold for 12m · a send is
-held`, `zosui (compacting)`, `no cache here (caching off)`. The terminal panel's rail says the same in short
+The cache's words, here and on the chalkboard's foot, read after `cache ` and count whole minutes: `not warmed yet`,
+`warm, 48m left` (`kept warm, 5h 12m left` while keepwarm runs), `last orders, cold in 3m`, `cold for 12m`, `cold for
+12m · a send is held`, `compacting (zosui)`, `off (caching is off)`. The terminal panel's rail says the same in short
 (`☀ warm 48m`, `● keepwarm 5h12m`, `❄ cold`).
 
 **Who gets the spot above the prompt**, highest first:
@@ -503,16 +503,16 @@ you pay.
 
 **The hold.** When the cache has gone cold, the next prompt you send is held once, and Bocchi panics:
 
-- `CACHE TAX · the cache went cold 12:04 ago!!`, the tokens it would re-write, the rate, the cost, and what a warm
+- `CACHE TAX · the cache went cold 12m ago!!`, the tokens it would re-write, the rate, the cost, and what a warm
   turn would have cost
 - your prompt is back in the box: Enter sends it (the same prompt sent again within 15 minutes passes, and the
   re-write is booked as Cache Tax paid); where the box cannot take it back, the card says so and your next send
   passes, whatever it says, and once the app is known to keep its own box the hold's message carries your prompt
   whole
 - `Keep it warm after (6h) ≈$0.19` (`w`) arms keepwarm for the Hotpot's chosen length, from the moment you press it;
-  `Start fresh (/clear)` (`f`) puts `/clear` in the box; `Dismiss` (`d`) lets the hold go and brings Bocchi out of
-  her panic (the box keeps what it has, your prompt unless it could not go back, and the next send is judged
-  afresh)
+  `Start fresh (/clear)` (`f`) puts `/clear` in the box (the card and the Hotpot then say Enter starts fresh); `Dismiss`
+  (`d`) lets the hold go and brings Bocchi out of her panic (the box keeps what it has, your prompt unless it could not
+  go back, and the next send is judged afresh)
 - it holds only a person's prompt, between turns, with someone at a screen, once the cache has been warmed, and at
   20,000 context tokens or more; never while caching is off
 
@@ -598,7 +598,8 @@ down. One speech line shows at a time; with reduced motion the steam, bubbles, f
 `Last orders!` `cold in 3m`, `❄ Gone cold` `14m ago: the next send re-orders everything`, and while a paid send's
 first request re-writes the pot `♨ Re-ordering` `your prompt writes 304k tokens back into the pot`), then the
 context and its prices (`168k on the table · a re-order ≈$1.34 · a top-up ≈$0.03 · a day of keepwarm ≈$0.83 ·
-keepwarm off`), the TTL's mark while it is unsettled, and why a button is dim.
+keepwarm off`), the TTL's mark while it is unsettled, and why a button is dim. Before the first reply it names no
+prices (`nothing on the table yet · prices after the first reply`), nor with caching off, and the buttons show none.
 
 **The buttons:**
 
@@ -615,6 +616,9 @@ keepwarm off`), the TTL's mark while it is unsettled, and why a button is dim.
 - `The bill` (`b`) and `Close` (`c`). During a Cache Tax hold the row is the card's (`Keep it warm after`, `Start
   fresh`, `Dismiss`), then the bill and close.
 
+In a terminal each button shows its key before its label (`w: Keep the fire on · 2h ≈$0.07`), the lengths in
+brackets.
+
 A button that cannot act now is dim, and the board says why: `this host keeps no snapshot to fork`, `prompt caching
 is off`, `a turn is running`, `a top-up is on its way`, `nothing to top up until the next turn ends`, and so on.
 
@@ -624,10 +628,10 @@ such as a background report's, and mid-turn ones named), the pings and top-ups, 
 summarizing requests, what the cache saved against sending it all uncached (in red when it cost more), the hit rate
 overall and by member, a re-order, and a day of keepwarm. Every figure is a list price × tokens, not your bill.
 
-**In a terminal** the same pane in cells: the four mini heads at the pot's corners (Bocchi above Nijika at its left,
-Ryo above Kita at its right) over a pixel pot, in half blocks from 74 columns and 24 rows, quadrants from 36; then
-the board's two lines and the buttons. With **Character art** on `kaomoji`, on every surface, the faces round a
-text gauge (`♨ ▰▰▰▱▱`, cold `❄ ▱▱▱▱▱`).
+**In a terminal** the same pane in cells: the four mini heads at the pot's corners (Bocchi above Nijika at its left, Ryo
+above Kita at its right) over a pixel pot, in half blocks from 74 columns where the rows over the board and the buttons
+(and the bill, open) leave room for them, quadrants from 36; then the board's two lines and the buttons. With
+**Character art** on `kaomoji`, on every surface, the faces round a text gauge (`♨ ▰▰▰▱▱`, cold `❄ ▱▱▱▱▱`).
 
 ## Blast Radius
 
@@ -856,8 +860,9 @@ cache warnings, and the notifications still go out. `none` silences the toasts a
 ## Keys
 
 A hotkey fires only while the mod's drawing holds the focus: after `ctrl+x tab`, a click, or in a pane that opened
-with the focus (the dropped-guitar screen and Replay Theater do, and the Hotpot when `/hotpot` is typed at an empty
-prompt; opened by a ♨ button it takes its keys only after `ctrl+x tab`, so on the panel `b` stays Bocchi's solo). From the prompt the letters just type, which is why
+with the focus (the dropped-guitar screen and Replay Theater do; the Hotpot never does, since its letters spend or
+close it: it takes its keys after `ctrl+x tab` or a click, so a prompt typed on after `/hotpot` goes to the prompt,
+and on the panel `b` stays Bocchi's solo). From the prompt the letters just type, which is why
 `/bocchi solo` exists. The one exception is a bare digit in an empty prompt, which can press a button in what is
 drawn above the prompt. Keys belong to the drawing that has the focus, so `r` is Ryo on the panel and Replay on the
 strip.
