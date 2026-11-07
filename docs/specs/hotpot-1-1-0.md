@@ -163,7 +163,8 @@ step books.
 
 - Opened by `/hotpot` (a toggle), the ♨ Hotpot buttons (`o`) and `/bocchi hotpot` (the same, for the typeahead):
   `$.ui.open({ id: 'kessoku-hotpot', title: '♨ Hotpot', closeOnEscape: true, rows: 28, columns: 74 })`
-  after `reopenSprites`: 28 rows hold the picture, the wooden board and the buttons inline (the bill scrolls); 74
+  after `reopenSprites`: 28 rows hold the picture, the wooden board and the buttons inline (an open bill drops the
+  picture to quadrants where half blocks would leave it no room; a long bill can still scroll); 74
   columns are the half-block tier's, which a dock (at most 45% of the terminal) gets only from about 165 terminal
   columns, a narrower dock drawing quadrants. Closed by Esc, `Close` (`c`), the panel's ♨ button again (the strip's
   shows only while the Hotpot is closed), `/hotpot` again or the person; always by id.
@@ -178,7 +179,8 @@ step books.
   (The actions' "What a press says") and `sample: { model; tokens; ageMs; heldAt } | null` (the `/bocchi tax`
   preview's model, size and age, stamped with its hold's `heldAt`; its age the cache's only once it has gone cold,
   else two TTLs back, and running on from `heldAt`, so the card reads and counts as a real hold would; The cache's
-  truth). A separate atom (as the
+  truth), and an optional `freshAt` (the hold whose Start fresh put `/clear` in the box, by its `heldAt`; The
+  actions'). A separate atom (as the
   tour's), so no older value needs a filler. The `ui.close` hook sets `isOpen` and `inBand` false and clears `armed`,
   `moment` and `note`, keeping `pick`, `isBillOpen` and `sample`; `/clear` and an in-process `/resume` clear `armed`,
   `moment` and `note` and keep the rest; `startUi` reconciles it with `$.ui.panes()`.
@@ -219,7 +221,8 @@ step books.
      the box could not take the prompt back,
      `your prompt could not go back in the box: your next send pays and sends it, Start fresh puts /clear in the box`,
      ending `type /clear to start fresh` once no box is bound; once Start fresh has put `/clear` in the box,
-     `/clear is in the box: Enter starts fresh`. On an unfocused terminal it too ends `· ctrl+x tab for its keys`.
+     `/clear is in the box: Enter starts fresh` (in a terminal, `Esc, then Enter starts fresh`). On an unfocused
+     terminal it too ends `· ctrl+x tab for its keys`.
 3. The buttons: native Buttons, letter hotkeys only, each under a fixed key that the focus ring, a second press and
    the tests follow while its label changes (live prices, armed words). Each with a key is `plain`, so a terminal
    draws the key before the label (`w: Keep the fire on`; the length chips stay bracketed); resting labels are short
@@ -231,9 +234,13 @@ step books.
      `hotpot-keep`).
    - `Top up now ≈$0.03` (`t`, `hotpot-topup`) while warm (its five-minute hedge is the bill's `A top-up now` row);
      while cold, `Re-heat now ≈$1.34` (`t`, `hotpot-topup`),
-     which arms on the first press (`Press again: re-write ≈$1.34`) and runs on a second within 10 s.
+     which arms on the first press (`Press again`; the board's tail `press again within 10 s to re-write <168k>
+     tokens ≈$1.34`) and runs on a second within 10 s.
    - `Zosui (compact)` (`z`, `hotpot-zosui`), which arms on the first press
-     (`Press again: compact <168k> tokens · one summarizing request`) and runs on a second within 10 s.
+     (`Press again`; the board's tail `press again within 10 s to compact <168k> tokens in one summarizing request`)
+     and runs on a second within 10 s. An armed button's `Press again` is padded with no-break spaces to its resting
+     label's width, so arming moves nothing in the row, and the board's tail says what the second press does, before
+     any note.
    - `Clear the table (/clear)` (`f`, as the Cache Tax card's `Start fresh`; `hotpot-clear`; over a draft it arms
      first, as The actions says); its note says the next send writes a fresh pot, and that keepwarm stays on.
    - `The bill` / `Close the bill` (`b`, `hotpot-bill`); `Close` (`c`, `hotpot-close`).
@@ -254,8 +261,10 @@ desktop's table, Bocchi above Nijika on the left and Ryo above Kita on the right
 pixels between. The pot (broth and food by level) uses the desktop props' pixel helpers at its own size (the desktop's
 is 80 pixels across), on opaque backdrop cells so the cold blue reads on a light terminal. Half blocks (70×17 cells)
 need 74 body columns and 17 body rows over what the wooden board, the buttons and an open bill take
-(`terminalRowsBelow`, from the resting labels, so arming a press never flips the tier); quadrants (35×9 cells) need
-36 columns; narrower, text alone. The heads take the mood minis by phase: happy at `feast` and `zosui`;
+(`terminalRowsBelow`: the board's lines wrapped at spaces, the buttons as their row packs them, an open bill's title,
+rows and foot; counted on a fixed worst case of what comes and goes, resting labels, no note, the keys hint and room
+for a passing dim reason, so a press, a turn, a fork out or the focus never flips the tier); quadrants (35×9 cells)
+need 36 columns; narrower, text alone. The heads take the mood minis by phase: happy at `feast` and `zosui`;
 focused at `simmer`, `low` and `tend` (Nijika happy at `tend`) and, as the desktop's `wait`, at `none`, `cleared` and
 `off`; anxious at `last`; panic at `held`; at `cold` Bocchi hides (her box), Nijika and Kita melt and Ryo is anxious
 (her deadpan `(-_-)`; her `hiding` is a box too, and the cold gives the box to Bocchi alone). Then the wooden board's
@@ -289,7 +298,7 @@ the pot's corners as the minis sit, and the pot between them as a text gauge of 
   foot count (the time left, and the time since it went cold while that is counted in minutes), keepwarm's end and a
   hold's end (`heldAt` + 15 min, where their held words go). A pure `hotpotDue(cache, hotpot, now, ttl)` returns the
   soonest of that, a moment's end (`moment.until`), a note's end (`note.until`), an armed window's end (`armed.at` +
-  10 s, so `Press again: …` goes back on time) and the next whole minute of each count on the wooden board (the time
+  10 s, so `Press again` goes back on time) and the next whole minute of each count on the wooden board (the time
   left or since it went cold, keepwarm's time left, the next ping at its `pingAt`, as the phase function has it).
 - `drawPanel` and the strip's drawings hand `scheduleTail` `warmthDue` too, whether or not the Hotpot is open (one
   timer serves them all), so an idle session's counts stay fresh with the Hotpot closed. The Cache Tax card, which
@@ -458,7 +467,8 @@ Each button lists its dim reasons in order; the one said is the first that appli
   plugin's, so the mod's own hook never sees its own press, on any install. That hook draws the zosui for the other
   triggers (`manual`, `auto` and another plugin's `plugin`, not `precompute`) and settles the cache.
 - **Clear the table**: `$.prompt.fill({ text: '/clear', mode: 'replace' })`, for the person to send. Over a draft
-  (`$.prompt.read()`; exactly `/clear` is not one) the first press arms (`Press again: your draft gives way to /clear`)
+  (`$.prompt.read()`; exactly `/clear` is not one) the first press arms (`Press again`; the board's tail `press again
+  within 10 s: your draft gives way to /clear`)
   and a second within 10 s fills. A fill that lands says `/clear is in the box: Esc, then Enter, and the next send
   writes a fresh pot` (ending ` (keepwarm stays on)` while it runs; while the Hotpot
   holds the keys Enter presses its focus ring, and that Esc closes it: `closeOnEscape`); `isFilled: false` from a
@@ -469,7 +479,9 @@ Each button lists its dim reasons in order; the one said is the first that appli
 - **Start fresh** (the card's and the pane's, during a hold): the same fill, in one press, in the held prompt's place.
   A fill that lands says `/clear is in the box: Esc, then Enter starts fresh`, and from then on the card says
   `/clear is in the box: press Enter to start fresh.` and the board's held line `/clear is in the box: Enter starts
-  fresh` (module state: the hold's `heldAt`, so the next hold reads as before).
+  fresh`; in a terminal, where the press left the keys with the band or the pane, both say `Esc, then Enter starts
+  fresh`. Kept as the hotpot atom's `freshAt` (the hold's `heldAt`), so a reload keeps it with the hold and the next
+  hold reads as before; a refused fill keeps the pay words.
 - **The bill** toggles `isBillOpen`; **Close** closes the pane.
 - **What a press says**: an action's outcome, and a keepwarm ping's while the pane is open, is the hotpot atom's
   `note`: 6 s in place of the tail of the wooden board's first line, whatever the **Toasts** option (toasts go out
@@ -499,14 +511,15 @@ The pane's only place for the reads, writes, tax paid, saving and hit rate; rows
 | A top-up now | `≈$0.84 if the cache lives 5m` | `$0.03` |
 | A day of keepwarm | `≈24 pings at a 1h TTL, assumed · ≈$12.2 if it lives 5m` | `$0.83` |
 
-Rows with nothing to say (no pings, no re-heats, no compaction) and members with no steps are left out; Bocchi's rate
-is the main loop's and her acts' (The ledger). `A day of keepwarm` names the TTL in force, with `assumed` and the
-five-minute price only while it is assumed; `A top-up now` only while it is assumed and the cache was last warmed
-over 5 minutes ago (the hedge the Top up button carried). `If it goes cold`, `A top-up now` and `A day of keepwarm`
-only while the pot is priced (`isPriced`). Under the rows, `cost ≈ list prices × tokens, not your bill`. The sample
-is Opus 5.5 at a one-hour TTL ($4.00/M input, $20.00/M output, $0.20/M read, $8.00/M write) with P at 168k: saved =
-1.32M × $3.80/M − 226k × $4.00/M − $0.10 − $1.34 ≈ $2.67; a top-up = 168k × $0.20/M plus a ping's own 30 input and 8
-output tokens ≈ $0.0339, so a day of keepwarm is 24.4 × that ≈ $0.83, and at five minutes 360 × that ≈ $12.2.
+Rows with nothing to say (no pings, no re-heats, no compaction) and members with no steps are left out; Bocchi's rate is
+the main loop's and her acts' (The ledger). `A day of keepwarm` names the TTL in force, with `assumed` and the
+five-minute price only while it is assumed; `A top-up now` only while it is assumed, the pot warm (cold or held the
+press is a re-heat) and last warmed over 5 minutes ago (the hedge the Top up button carried). `If it goes cold`,
+`A top-up now` and `A day of keepwarm` only while the pot is priced (`isPriced`). Under the rows,
+`cost ≈ list prices × tokens, not your bill`. The sample is Opus 5.5 at a one-hour TTL ($4.00/M input, $20.00/M output,
+$0.20/M read, $8.00/M write) with P at 168k: saved = 1.32M × $3.80/M − 226k × $4.00/M − $0.10 − $1.34 ≈ $2.67; a top-up
+= 168k × $0.20/M plus a ping's own 30 input and 8 output tokens ≈ $0.0339, so a day of keepwarm is 24.4 × that ≈ $0.83,
+and at five minutes 360 × that ≈ $12.2.
 
 ### The cache's truth (fixes the pane depends on)
 
@@ -842,16 +855,18 @@ The seams, agreed before any test is written:
    on the pot) and the palette, `FEAST_FX_COLORS` included, against the 268-character
    alphabet.
 
-Existing tests that change: the command list, the `/bocchi` verbs and the `/keepwarm` offers in the typeahead tests;
-the help test (help names `/hotpot` and `/bocchi hotpot`; `allOn` gains `compact` and `draft`); the sprite count (98,
-now 123: 24 feast animations and `nijika-feast-headband`) and id pattern; the `panelView` amp tests, whose words
-come from `feastOf` (`warm 59:00` becomes `warm, 59m left` and `cold 10:00` becomes `cold for 10m`; the `keepwarm`
-kind and `no cache yet` stand); the native-notifications test, whose stepless error and interrupted
-turns (t3, t4) get a step with usage for its second warm period (no `turn.complete` warms the cache now), while its
-cold notice's `30[34]k` stands: `$.session.usage()` (refreshUsage, the kit's 24k) leaves P and `contextTokens`
-alone and still writes only the band's figures. `claude plugin validate`, `claude plugin test` and the type check
-against the 2.1.308 declarations pass; the 2.1.299 type check is not run (those declarations are gone), and the two
-calls they cannot vouch for are gated (`compact`, `draft`).
+Existing tests that change: the command list, the `/bocchi` verbs and the `/keepwarm` offers in the typeahead tests; the
+help test (help names `/hotpot` and `/bocchi hotpot`; `allOn` gains `compact` and `draft`); the sprite count (98, now
+123: 24 feast animations and `nijika-feast-headband`) and id pattern; the `panelView` amp tests, whose words come from
+`feastOf` (`warm 59:00` becomes `warm, 59m left` and `cold 10:00` becomes `cold for 10m`, and with the UI polish
+`no cache yet` becomes `not warmed yet`; the `keepwarm` kind stands); with the UI polish too, `/cache-tax`'s
+`nothing cached yet` becomes `cache not warmed yet` and `TTL 5:00` becomes `(TTL 5m)`, `/keepwarm`'s
+`keepwarm on for 2h00m` becomes `2h`, and the cold notice's `4:\d\d` becomes `4m`; the native-notifications test, whose
+stepless error and interrupted turns (t3, t4) get a step with usage for its second warm period (no `turn.complete` warms
+the cache now), while its cold notice's `30[34]k` stands: `$.session.usage()` (refreshUsage, the kit's 24k) leaves P and
+`contextTokens` alone and still writes only the band's figures. `claude plugin validate`, `claude plugin test` and the
+type check against the 2.1.308 declarations pass; the 2.1.299 type check is not run (those declarations are gone), and
+the two calls they cannot vouch for are gated (`compact`, `draft`).
 
 ## Out of Scope
 

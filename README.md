@@ -553,7 +553,8 @@ or more, and 5 minutes left (or half the TTL, if that is shorter):
   second refusal stops the pings until your next send. A host that keeps no snapshot to fork turns keepwarm off.
 - The pings run on a timer only a session with a screen keeps; without one, `/keepwarm` says nothing will ping.
 
-**`/cache-tax`** shows where things stand: warm with its time left, or `COLD` and for how long; the TTL; the context
+**`/cache-tax`** shows where things stand, in the strip's words (`cache warm, 48m left`, `cache cold for 14m`); the
+TTL (`TTL 1h?` while assumed); the context
 and the model; what a cold and a warm send would cost; keepwarm with its time left, its pings so far and their cost;
 what the cache `saved` this conversation and its hit rate; and the Cache Tax `tax paid`.
 
@@ -606,18 +607,18 @@ prices (`nothing on the table yet · prices after the first reply`), nor with ca
 - `Keep the fire on · 2h ≈$0.07` (`w`), with `30m`, `1h`, `2h` and `6h` to choose the length; while keepwarm runs,
   `Let it cool (keepwarm off)`.
 - `Top up now ≈$0.03` (`t`): one keepwarm ping now. While cold it is `Re-heat now ≈$1.34`, a re-write paid on
-  purpose so your next prompt starts warm: the first press asks (`Press again: re-write ≈$1.34`), a second within
-  10 s sends it.
-- `Zosui (compact)` (`z`): `/compact`'s own call, on a second press (`Press again: compact 168k tokens · one
-  summarizing request`); the next send writes the smaller pot. In the desktop app, where a plugin cannot compact, it
-  is dim: type `/compact`.
+  purpose so your next prompt starts warm: the first press arms it (the button says `Press again`, the board what
+  the second press does: `press again within 10 s to re-write 168k tokens ≈$1.34`), a second within 10 s sends it.
+- `Zosui (compact)` (`z`): `/compact`'s own call, on a second press (the board says
+  `press again within 10 s to compact 168k tokens in one summarizing request`); the next send writes the smaller pot.
+  In the desktop app, where a plugin cannot compact, it is dim: type `/compact`.
 - `Clear the table (/clear)` (`f`): puts `/clear` in the box for you to send (over a draft, a second press first);
   the next send writes a fresh pot, and keepwarm stays on if it was.
 - `The bill` (`b`) and `Close` (`c`). During a Cache Tax hold the row is the card's (`Keep it warm after`, `Start
   fresh`, `Dismiss`), then the bill and close.
 
 In a terminal each button shows its key before its label (`w: Keep the fire on · 2h ≈$0.07`), the lengths in
-brackets.
+brackets. An armed button keeps its width, so nothing in the row moves under your second press.
 
 A button that cannot act now is dim, and the board says why: `this host keeps no snapshot to fork`, `prompt caching
 is off`, `a turn is running`, `a top-up is on its way`, `nothing to top up until the next turn ends`, and so on.
