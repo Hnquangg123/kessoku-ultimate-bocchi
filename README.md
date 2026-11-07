@@ -104,7 +104,8 @@ project's tour, and `/hotpot` the prompt cache as the band's after-show hotpot. 
 
 **Reference:** [Claude Code theme](#claude-code-theme) · [Skin](#skin) ·
 [The band and its moods](#the-band-and-its-moods) · [Kessoku Band panel](#kessoku-band-panel) ·
-[The strip](#the-strip-above-the-prompt) · [Cache Tax](#cache-tax-and-keepwarm) · [Blast Radius](#blast-radius) ·
+[The strip](#the-strip-above-the-prompt) · [Cache Tax](#cache-tax-and-keepwarm) · [♨ Hotpot](#-hotpot) ·
+[Blast Radius](#blast-radius) ·
 [Filetree](#filetree) · [Reflect](#reflect-and-the-memo-tool) · [Replay Theater](#replay-theater) ·
 [On tour](#on-tour) · [Notifications](#notifications) · [Commands](#commands) · [Keys](#keys) · [Settings](#settings) ·
 [Installing](#installing) · [Tweaking and development](#tweaking-and-development) · [Notes](#notes)
@@ -263,8 +264,8 @@ Bocchi's mood shows on the status line, on stage and across the panel.
 - **Refused** means you turned down one of the main loop's calls, or a hook refused it: `told no… hiding in the box`.
   The mod's own memo tool, calls another plugin makes, and anything while Blast Radius holds a command do not count.
 - **Cold cache.** Checked each minute. Between turns, once the prompt cache has expired, she goes into her box:
-  `the cache went cold… in the box till your next prompt`. Your next prompt brings her out, and so does `/clear`.
-  She stays in across a reload.
+  `the cache went cold… in the box till your next prompt`. Your next prompt brings her out, and so do `/clear` and a
+  re-heat in the Hotpot. She stays in across a reload.
 - When a timed mood ends she goes back to melting (compacting, or at 85 %), focused (a turn running), hiding (the
   cache cold) or anxious.
 - The melt is the one long mood, so it is calm: she stays about half melted all loop, her face and guitar above the
@@ -577,7 +578,7 @@ the chewing and a blink); at last orders and at the bill, at you. The same comma
 | less | the last few pieces |
 | the last 5 minutes (half the TTL, if that is shorter) | last orders: a LAST ORDER sign, a sputtering flame, one piece of meat left; all four look up at you, Ryo's chopsticks still on the last piece |
 | cold | an empty, frosted pot, no flame, blue light, snow; Bocchi in her box under a rain cloud, Ryo chewing a weed, Nijika and Kita slumped over the table, melting |
-| keepwarm on | Nijika in the nabe-bugyō headband, the stove's knob glowing; in the last minutes she has the pot, the flame steady |
+| keepwarm on | Nijika in the nabe-bugyō headband, the stove's knob glowing; in the last minutes she has the pot, the flame steady (while a ping can go: held back, by a model switch until the next turn ends or by a second rate limit, keepwarm waits, and the last minutes are last orders) |
 | caching off | the lid stays on and the platter full, all four waiting as before the first order |
 | a top-up or a keepwarm ping warms the pot | Nijika pours broth in from her ladle (it spills over the lip and a ripple steps out on the broth); the food comes back |
 | a re-heat warms the pot | the flame and the food come back; Bocchi comes out of her box |
@@ -590,9 +591,10 @@ tower on top from 250k; it is full before the first order and while caching is o
 down. One speech line shows at a time; with reduced motion the steam, bubbles, flames and the pour stand still.
 
 **The wooden board** under it: the state in a word and its tail in whole minutes (`♨ Bubbling` `51m of feast left`,
-`Last orders!` `cold in 3m`, `❄ Gone cold` `14m ago: the next send re-orders everything`), then the context and its
-prices (`168k on the table · a re-order ≈$1.34 · a top-up ≈$0.03 · a day of keepwarm ≈$0.83 · keepwarm off`), the
-TTL's mark while it is unsettled, and why a button is dim.
+`Last orders!` `cold in 3m`, `❄ Gone cold` `14m ago: the next send re-orders everything`, and while a paid send's
+first request re-writes the pot `♨ Re-ordering` `your prompt writes 304k tokens back into the pot`), then the
+context and its prices (`168k on the table · a re-order ≈$1.34 · a top-up ≈$0.03 · a day of keepwarm ≈$0.83 ·
+keepwarm off`), the TTL's mark while it is unsettled, and why a button is dim.
 
 **The buttons:**
 
@@ -602,20 +604,22 @@ TTL's mark while it is unsettled, and why a button is dim.
   purpose so your next prompt starts warm: the first press asks (`Press again: re-write ≈$1.34`), a second within
   10 s sends it.
 - `Zosui (compact)` (`z`): `/compact`'s own call, on a second press (`Press again: compact 168k tokens · one
-  summarizing request`); the next send writes the smaller pot.
+  summarizing request`); the next send writes the smaller pot. In the desktop app, where a plugin cannot compact, it
+  is dim: type `/compact`.
 - `Clear the table (/clear)` (`f`): puts `/clear` in the box for you to send (over a draft, a second press first);
-  the next send writes a fresh pot, and keepwarm stays on if it was.
+  the next send writes a fresh pot, and keepwarm stays on if it was. The desktop app keeps its own prompt box, so
+  there it is dim: type `/clear`.
 - `The bill` (`b`) and `Close` (`c`). During a Cache Tax hold the row is the card's (`Keep it warm after`, `Start
   fresh`, `Dismiss`), then the bill and close.
 
 A button that cannot act now is dim, and the board says why: `this host keeps no snapshot to fork`, `prompt caching
 is off`, `a turn is running`, `a top-up is on its way`, `nothing to top up until the next turn ends`, and so on.
 
-**The bill** (`お会計 · this conversation's cache`) starts over at `/clear` and `/resume`: the reads and writes
-(the writes at the TTL's rate), of which Cache Tax (silent re-orders, such as a background report's, and mid-turn
-ones named), the pings and top-ups, the re-heats, the compactions' summarizing requests, what the cache saved
-against sending it all uncached (in red when it cost more), the hit rate overall and by member, a re-order, and a
-day of keepwarm. Every figure is a list price × tokens, not your bill.
+**The bill** (`お会計 · this conversation's cache`, on the board's wood so it reads on any theme) starts over at
+`/clear` and `/resume`: the reads and writes (the writes at the TTL's rate), of which Cache Tax (silent re-orders,
+such as a background report's, and mid-turn ones named), the pings and top-ups, the re-heats, the compactions'
+summarizing requests, what the cache saved against sending it all uncached (in red when it cost more), the hit rate
+overall and by member, a re-order, and a day of keepwarm. Every figure is a list price × tokens, not your bill.
 
 **In a terminal** the same pane in cells: the four mini heads at the pot's corners (Bocchi above Nijika at its left,
 Ryo above Kita at its right) over a pixel pot, in half blocks from 74 columns and 24 rows, quadrants from 36; then
@@ -1087,10 +1091,11 @@ From `studio/`, after `npm install`:
 
 - `npm run dev` opens Remotion Studio on every sprite, slime, contact sheet and the showcase.
 - `npm run check` checks the grids in a second (sizes, palette, the face region identical across poses, the portrait
-  windows holding the face, the slimes on their canvas with Bocchi's two faces on one body, the seat poses with
-  stand's face region (`seat` with stand's whole head), the waist where `seat.ts` puts it and only hair and
-  chopsticks below it, the pot-look faces moving only the eyes, the headband, the feast loops' lengths and the faces
-  they play (at you at last orders and at the bill, on the pot while eating), the colours against the alphabet), then
+  windows holding the face, the slimes on their canvas with Bocchi's two faces on one body, every seat pose with
+  stand's whole head (nothing of it erased inside the window down to the face's foot, the arm poses keeping their
+  hair below it), the waist where `seat.ts` puts it and only hair and chopsticks below it, the pot-look faces moving
+  only the eyes, the headband, the feast loops' lengths, their beats apart and the faces they play (at you at last
+  orders and at the bill, on the pot while eating), the colours against the alphabet), then
   that `themes/*.json` still match the palette.
 - `npm run themes` writes both theme files from the palette's token maps (`npm run themes:check` only compares).
 - `npm run sprites` renders every sprite with Remotion and writes `hooks/lib/sprites.gen.ts`
@@ -1145,6 +1150,8 @@ From `studio/`, after `npm install`:
   resets Cache Tax (a Zosui press in the Hotpot still settles the cache from its own call); the cache figures Claude
   Code reports after a model switch go unread (a step on another model still reads as one); a resumed session reads
   as nothing cached until its first request; and a subagent the mod missed at spawn is picked up only by the 2 s poll.
+- **The desktop app** runs Claude Code as an SDK host, where a plugin can neither compact nor fill the prompt box:
+  the Hotpot's Zosui and Clear the table are dim there and say to type `/compact` or `/clear`.
 - **Several sessions** with keepwarm on are several pots pinged: each Hotpot says only its own session's.
 - **Older versions of Claude Code.** The mod expects Claude Code 2.1.287 or newer, and `/bocchi help` flags an older
   one. 1.1.0 was checked on 2.1.309 (validate, tests, type check; the type check on 2.1.308 too); 1.0.1 on 2.1.299,

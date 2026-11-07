@@ -1,6 +1,6 @@
 # Spec: Hotpot Night, the v1.1.0 release
 
-Status: ready for implementation · written 2026-10-31, revised 2026-11-01 · triage: `ready-for-agent`
+Status: implemented · written 2026-10-31, revised 2026-11-01, built 2026-11-01 and 2026-11-02 · triage: `done`
 
 Design brief: the throwaway page `npm run proto:1.1.0` in `studio/` (`studio/scripts/proto-1-1-0.mjs`, written to
 `studio/out/proto/1.1.0.html`), kept on the branch `prototype/hotpot-night-1-1-0` (last at `39f8034`) and not for
@@ -187,15 +187,19 @@ step books.
 **Desktop, VS Code and mobile** (with **Character art** on `sprites`), top to bottom:
 1. The feast: one `Svg` image (no `isInteractive`, so it scales to the pane's width) in a keyed Box `hotpot-scene`,
    alt `the band's hotpot · <state words>` (`· bubbling, 51m left`, `· last orders, cold in 3m`, `· cold for 12m`,
-   `· the bill: re-order ≈$1.34`, `· zosui`, `· the table is set`), declared at 4× its 288×184 viewBox.
+   `· the bill: re-order ≈$1.34`, `· re-ordering, 304k tokens being written back`, `· zosui`, `· the table is set`),
+   declared at 4× its 288×184 viewBox.
 2. The wooden board: a Box painted dark wood (`#3a2419`), two lines of native Text (no Svg) in its own cream colours,
    which a light theme does not darken. Its state tails show no clock times and count whole minutes (a note in a
    tail's place may name a time for its 6 s: The actions' rate limits), so an open pane redraws once a minute (a
    redraw is `$.ui.invalidate`, which redraws every drawing).
    - The state in a word (semibold, `heading` size) and its tail: `♨ Bubbling` `51m of feast left` (`Simmering` and
-     `Running low` take the same tail); `Last orders!` `cold in 3m`; `Nijika has the pot` `she tops it up in 2m`;
-     `❄ Gone cold` `14m ago: the next send re-orders everything`; `The bill came` `your prompt waits: re-ordering
-     costs ≈$1.34`; `〆 Zosui` `compacting 168k tokens` (as it lands, the note `168k → 40k tokens`); `The table is
+     `Running low` take the same tail); `Last orders!` `cold in 3m`; `Nijika has the pot` `she tops it up in 2m`
+     (only while keepwarm can ping: armed but held back it keeps nothing, and the board says `Last orders!`);
+     `❄ Gone cold` `14m ago: the next send re-orders everything`, and while a paid re-order's turn runs over the cold
+     cache `♨ Re-ordering` `your prompt writes 304k tokens back into the pot`; `The bill came` `your prompt waits:
+     re-ordering costs ≈$1.34`; `〆 Zosui` `compacting 168k tokens` (as it lands, the note `168k → 40.0k tokens`,
+     counted as every token count is); `The table is
      set` `the first order warms the pot` (`none`); `A fresh table` `nothing cached yet: the next prompt is the first
      order` (`cleared`); `No cache here` `prompt caching is off`.
    - The context and the prices: `168k on the table · a re-order ≈$1.34 · a top-up ≈$0.03 · a day of keepwarm
@@ -227,7 +231,9 @@ step books.
    - A button that cannot act now is drawn dim (`dimColor`, no `variant`) with an `onPress` that spends and arms
      nothing (Button requires one and has no disabled state), so its hotkey does nothing; the wooden board says why.
 4. The bill, when open: `お会計 · this conversation's cache` (not the session's: the ledger starts over at `/clear`
-   and `/resume`), then Text rows (label, detail, figure) as [The bill](#the-bill) lists them.
+   and `/resume`), then Text rows (label, detail, figure) as [The bill](#the-bill) lists them, on the wooden board's
+   paint in its own inks (the figures light green or rose for good and bad), never the theme's: the pane's wall stays
+   near-black on a light theme, where the theme's text would vanish.
 
 **Terminal**: one Raster keyed `hotpot-scene` (70×34 pixels) seats the mini heads at the pot's corners as at the
 desktop's table, Bocchi above Nijika on the left and Ryo above Kita on the right, the table and the pot in the 38
@@ -244,8 +250,9 @@ The pot rides with the heads: `LiveSprite` and `composite` take an optional stil
 pixels) that every repaint composites first, so the sprite clock repaints the heads over the pot and the pot changes
 only with a redraw (one picture, as the heads sit at its corners). HOTPOT joins `isLastingSite`, so repaints refused
 while it is off screen go on being retried every second for as long as it is open, not given up after a minute, and
-its Pane hook calls `beginSprites` (the open follows `reopenSprites`; the `ui.close` hook's `dropSprites` lets the
-heads go). The Hotpot never opens on its own (no `session.start` open, no timer); its one unasked open, `/bocchi
+its Pane hook calls `beginSprites` (the open follows `reopenSprites`; `closeHotpot`'s `dropSprites` lets the heads
+go, as does the `ui.close` hook's: the mod's own `$.ui.close`, from `Close` or a ♨, raises no `ui.close` hook of the
+mod's). The Hotpot never opens on its own (no `session.start` open, no timer); its one unasked open, `/bocchi
 hotpot` run from the queue, waits undrawn below 144 columns (110 for an id opened before) and meanwhile draws above
 the prompt, as above.
 
@@ -263,12 +270,12 @@ the pot's corners as the minis sit, and the pot between them as a text gauge of 
   restart.
 - While open, the pane schedules its redraws through the mod's tail timer (`scheduleTail`) at the time `hotpotDue`
   gives. A pure `warmthDue(cache, now, ttl)` returns the soonest of the next level step, last orders
-  (TTL − `min(5 min, TTL/2)`), cold (TTL) and the next whole minute of what the strip, the rail and the chalkboard's
-  foot count (the time left, and the time since it went cold while that is counted in minutes). A pure
-  `hotpotDue(cache, ledger, hotpot, now, ttl)` returns the soonest of that, a moment's end (`moment.until`), a note's
-  end (`note.until`), an armed window's end (`armed.at` + 10 s, so `Press again: …` goes back on time), keepwarm's
-  end, a hold's end (`heldAt` + 15 min) and the next whole minute of each count on the wooden board (the time left or
-  since it went cold, keepwarm's time left, the next ping).
+  (TTL − `min(5 min, TTL/2)`), cold (TTL), the next whole minute of what the strip, the rail and the chalkboard's
+  foot count (the time left, and the time since it went cold while that is counted in minutes), keepwarm's end and a
+  hold's end (`heldAt` + 15 min, where their held words go). A pure `hotpotDue(cache, hotpot, now, ttl)` returns the
+  soonest of that, a moment's end (`moment.until`), a note's end (`note.until`), an armed window's end (`armed.at` +
+  10 s, so `Press again: …` goes back on time) and the next whole minute of each count on the wooden board (the time
+  left or since it went cold, keepwarm's time left, the next ping).
 - `drawPanel` and the strip's drawings hand `scheduleTail` `warmthDue` too, whether or not the Hotpot is open (one
   timer serves them all), so an idle session's counts stay fresh with the Hotpot closed.
 - The strip (the desktop sign and both terminal strips, after `cache `), the chalkboard's foot and the rail read one
@@ -283,18 +290,21 @@ the pot's corners as the minis sit, and the pot between them as a text gauge of 
 | --- | --- | --- |
 | `none`, `cleared` | `no cache yet` | `○ no cache yet` |
 | `off` | `no cache here (caching off)` | `○ caching off` |
-| `feast`, `simmer`, `low`, `tend` | `warm, 48m left` (`kept warm, 5h 12m left` while keepwarm runs) | `☀ warm 48m` (`● keepwarm 5h12m`) |
-| `last` | `last orders, cold in 3m` | `☀ last orders 3m` |
+| `feast`, `simmer`, `low`, `tend` | `warm, 48m left` (`kept warm, 5h 12m left` while keepwarm runs; armed but held back, `warm, 48m left · keepwarm waits`) | `☀ warm 48m` (`● keepwarm 5h12m`; held back, `☀ warm 48m`) |
+| `last` | `last orders, cold in 3m` (`· keepwarm waits` while it is armed but held back) | `☀ last orders 3m` |
 | `cold` | `cold for 12m` (`cold for 12m · keepwarm on` while it is on) | `❄ cold` (`❄ cold · keepwarm on`) |
-| `held` | `cold for 12m · a send is held` | `❄ cold · held` |
+| `held` | `cold for 12m · a send is held` (over a warm pot, which only `/bocchi tax`'s preview holds, `warm, 48m left · a send is held`; with nothing cached, `a send is held`) | `❄ cold · held` (`☀ warm · held`; `○ no cache · held`) |
 | `zosui` | `zosui (compacting)` | `〆 zosui` |
 
 ### The phase function (`hooks/lib/hotpot.ts`)
 
-`feastOf(cache, now, ttlMs, flags: { held, compacting, cleared, cachingOff })` returns
+`feastOf(cache, now, ttlMs, flags: { held, compacting, cleared, cachingOff, keepwarmHeld })` returns
 `{ phase, level, leftMs, ageMs }`. Its phases, first match wins: `zosui` while compacting, `held` while a send is
 held, `off` while caching is off, `none`/`cleared` with nothing cached, `cold` once lapsed, `last` or `tend` (keepwarm
-on) in the cold notice's window, else `feast`/`simmer`/`low` by warmth. `level` is 5 for `zosui`; 0 for `held`,
+on and able to ping) in the cold notice's window, else `feast`/`simmer`/`low` by warmth. `keepwarmHeld` is keepwarm
+armed with no ping able to go: the fork gate shut, the pings stopped after a second 429, no snapshot, caching off or
+`contextTokens` under 1,000 (one in flight or a 429's retry still keeps the pot); it keeps nothing, so last orders
+stay `last`. `level` is 5 for `zosui`; 0 for `held`,
 `off`, `none`, `cleared` and `cold`; 1 for `last` and `tend`. Cold means `now − lastWarmAt ≥ TTL` everywhere:
 `isColdRoom` (`≥`) and `warmth`, `ampOf` and `coldWatch`'s notice (`left ≤ 0`) have it, keepwarm (`age > ttl`),
 the rail, the hold and `/cache-tax`'s face (`>`) move to it, and all take it from `feastOf`. `hotpot.ts` is a leaf
@@ -415,16 +425,20 @@ Each button lists its dim reasons in order; the one said is the first that appli
     again. A top-up's or a re-heat's 429 is not retried and pauses nothing (a top-up says `rate-limited: the cache
     lapses at 14:32`).
 - **Zosui**: `$.session.compact()` after the second press. Dim: `needs a newer Claude Code` (`compact` off, below),
-  `compacting`, `a turn is running` (the call rejects then). A hook's veto (`{ skip }`) says so, as does any other
-  rejection. The `session.compact` hook draws the zosui (`manual`, `auto` and `plugin`, not `precompute`) and settles
-  the cache; where an organization manages Claude Code without listing the mod it does not run, and the press does
-  both: the zosui until the call resolves, then the cache settled from the call's own `tokensBefore` and
-  `tokensAfter`, its `usage` booked (a module flag the hook sets tells the two apart).
+  `this app compacts only from a typed /compact` (outside the REPL: the desktop app and other SDK hosts refuse the
+  call, known from `session.start`'s `isInteractive` and from the refusal itself), `compacting`, `a turn is running`
+  (the call rejects then). A hook's veto (`{ skip }`) says so and lets Bocchi out of melting, as does any other
+  rejection. The press draws the zosui until the call resolves, then settles the cache from the call's own
+  `tokensBefore` and `tokensAfter` and books its `usage`: the engine runs every `session.compact` hook but the calling
+  plugin's, so the mod's own hook never sees its own press, on any install. That hook draws the zosui for the other
+  triggers (`manual`, `auto` and another plugin's `plugin`, not `precompute`) and settles the cache.
 - **Clear the table**: `$.prompt.fill({ text: '/clear', mode: 'replace' })`, for the person to send. Over a draft
   (`$.prompt.read()`; exactly `/clear` is not one) the first press arms (`Press again: your draft gives way to /clear`)
   and a second within 10 s fills. A fill that lands says `/clear is in the box: Esc, then Enter` (while the Hotpot
   holds the keys Enter presses its focus ring, and that Esc closes it: `closeOnEscape`); `isFilled: false` (a dialog
-  holds the keys, or no box is bound) says `the box could not take /clear: type it` and disarms.
+  holds the keys, or no box is bound) says `the box could not take /clear: type it` and disarms. Dim, with
+  `this app keeps its own prompt box: type /clear`, outside the REPL: the desktop app draws its own composer, so a
+  fill answers `no_composer` (known from `isInteractive`, and from that answer itself, which also says so).
 - **The bill** toggles `isBillOpen`; **Close** closes the pane.
 - **What a press says**: an action's outcome, and a keepwarm ping's while the pane is open, is the hotpot atom's
   `note`: 6 s in place of the tail of the wooden board's first line, whatever the **Toasts** option (toasts go out
@@ -441,7 +455,7 @@ The pane's only place for the reads, writes, tax paid, saving and hit rate; rows
 
 | Row | Detail | Figure |
 | --- | --- | --- |
-| Read from cache | `1.32M × $0.20/M` | `$0.26` |
+| Read from cache | `1.3M × $0.20/M` | `$0.26` |
 | Written to cache | `226k × $8.00/M` (the TTL's rate) | `$1.81` |
 | of which Cache Tax | `1 cold re-write · 1 silent (a background report)` (`· 1 mid-turn` when one was) | `$0.88` |
 | Keepwarm | `3 pings`, top-ups included (`· 1 found it cold` when one did) | `$0.10` |
@@ -478,15 +492,17 @@ output tokens ≈ $0.0339, so a day of keepwarm is 24.4 × that ≈ $0.83, and a
     forks, judged against P (The ledger's) over the gap from a `lastWarmAt` the mod saw (a main-loop step's or a
     fork's; never 0 or one a resume set) to the request's start. **One hour**: after more than 5.5 minutes (a step
     starts before its request reaches the API, retries included), a step that reads at least 90 % of P and writes
-    under half of it, or a fork that reads as much and writes under 0.1 × P. **Five minutes**: after 5.5 to 59
-    minutes with no reload of the mod in it, a step on the model (`usage.model`) and effort of the request that last
-    warmed the pot, or a fork (which re-sends that request), that writes at least half of P and, for a main-loop
-    step, reads under 10 % of it (a fork is judged by its write, as The ledger judges it). A re-write has other causes
-    (a changed tool list or system prompt, a speed or effort change, a turn past the cache's 20-position lookback),
-    so a first sighting only shows `TTL 5m?`, the TTL in force staying an hour, and a second with no one-hour
-    evidence between them sets five minutes. One-hour evidence clears a pending sighting and replaces a learned five
-    minutes; two sightings replace a learned hour, even one taught by a refresh the mod cannot see (another plugin's
-    `$.model.fork`).
+    under half of it, or a fork that reads as much and writes under 0.1 × P. **Five minutes**: after 5.5 minutes to
+    an hour less 20 s (`SIGHTING_MAX_GAP`: keepwarm's own pings at an assumed hour go out on the first tick of its
+    minute beat from TTL − 90 s, 58:30 to 59:30 after a step's warmth and about 59 minutes after a ping's, so a miss
+    among them is a sighting) with no reload of the mod in it, a step on the model (`usage.model`) and effort of the
+    request that last warmed the pot, or a fork (which re-sends that request), that writes at least half of P and,
+    for a main-loop step, reads under 10 % of it (a fork is judged by its write, as The ledger judges it). A re-write
+    has other causes (a changed tool list or system prompt, a speed or effort change, a turn past the cache's
+    20-position lookback), so a first sighting only shows `TTL 5m?`, the TTL in force staying an hour, and a second
+    with no one-hour evidence between them sets five minutes. One-hour evidence clears a pending sighting and
+    replaces a learned five minutes; two sightings replace a learned hour, even one taught by a refresh the mod
+    cannot see (another plugin's `$.model.fork`).
 - **A model switch is a new pot.** A switch forfeits the entry (`prompt_cache_warm`: "likely still warm (a switch
   then forfeits it)"), so every `classic.PostModelSwitch` whose `source` is not `resume` and whose `to_model` differs
   from `from_model` sets `lastWarmAt` to 0 whatever that flag says, and no fork goes out until a main-loop turn on the
@@ -636,7 +652,8 @@ are, and the four feast faces are the only new face art (`bite` is `idle` with i
   while cold) as `Pix`, built once and memoised the way `kitArt` is, the broth per level and the food (in the pot by
   level, on the platter by level and context) in a small memo. The table is one polygon, so the seats' clips follow
   its side edges exactly. Steam, bubbles, flames, the lantern's sway, sparkles, snow, the cloud's drips and the gloom
-  lines are CSS-classed layers, which the reduced-motion rule stops (the band's SMIL loops play on); so is the
+  lines (over Nijika's, Ryo's and Kita's heads from the row under each one's speech bubble tip, so no bubble covers
+  them) are CSS-classed layers, which the reduced-motion rule stops (the band's SMIL loops play on); so is the
   top-up's pour, drawn for a `ping` moment only: whole-pixel rects of broth spilling over the lip of Nijika's ladle's
   cup (`NIJIKA_CUP`, the studio's tip) toward the pot's middle and a ripple stepping out three rings wide where it
   lands, played once over the moment (reduced motion keeps the spill and the middle ring as a still).
@@ -682,9 +699,10 @@ are, and the four feast faces are the only new face art (`bite` is `idle` with i
   `ledger: KessokuLedger` (what The ledger keeps), each with an initial value that stands in for a value an older
   version never wrote. `KessokuCache` and `KessokuAgent` gain nothing, so the tests' literals of both stand.
 - Module state, which a reload forgets (keepwarm may then ping once more): the fork in flight, the 429 retry's
-  timer, the stop after a second 429, a host found to keep no snapshot, the flag by which a Zosui press knows the
-  `session.compact` hook ran, when the module loaded (for the five-minute evidence's "no reload"), and a paid
-  re-order's turn under way (`paying`: the feast stays drawn until its first step books, or the turn ends).
+  timer, the stop after a second 429, a host found to keep no snapshot, a host that cannot compact or fill its box
+  (outside the REPL, or found so by a refusal), when the module loaded (for the five-minute evidence's "no reload"),
+  and a paid re-order's turn under way (`paying`, set once the held prompt has entered: the feast stays drawn and the
+  board says `♨ Re-ordering` until its first step books, or the turn ends).
 
 ## Testing Decisions
 
@@ -697,13 +715,15 @@ The seams, agreed before any test is written:
    at `context_tokens` 0, at any `pricing` but `catalog` and on a `resume` switch, and P left alone by a step that ran
    server tools; the figures (hit rate, a negative saving, the write rate by TTL, a top-up and a re-heat priced from
    P, a day of keepwarm); the wooden board's two lines in every phase, the TTL marks too; the bill's rows and the rows
-   left out; the seats and eyes in every phase, Bocchi's box too (Bocchi and Nijika at the table's left edge, Ryo and
-   Kita at its right, each placed so the outer end of her waist lies on the table's side edge and the table covers
-   what is below it; the `feast.waist` constants against the sprites' pixels; the pot under all four, the far two's
-   chopsticks ending in its opening and wholly inside their clips' window over it, the window only theirs and only
+   left out; the seats and eyes in every phase and moment, Bocchi's box too (Bocchi and Nijika at the table's left
+   edge, Ryo and Kita at its right, each placed so the outer end of her waist lies on the table's side edge and the
+   table covers what is below it: each lap's clip read by the nonzero rule against every pixel she plays; the
+   `feast.waist` constants against the sprites' pixels; the pot under all four, the far two's chopsticks ending in its
+   opening and wholly inside their clips' window over it, the window only theirs and only
    while they eat; Kita's flash whole and centred on `KITA_LENS`, over the pot; the pour during a ping only, whole
    pixels from Nijika's cup (`NIJIKA_CUP`, held to the serve loop's cup), played once; each zabuton's corner showing,
-   100 pixels or more clear of the table and the band; no headband without Nijika); every figure the feast draws (the
+   100 pixels or more clear of the table and the band; no headband without Nijika; while cold, the gloom lines over
+   the heads, clear of every bubble); every figure the feast draws (the
    feast family and Bocchi's box) whole, at level 0, within 24,000 characters; the scene under `SVG_LIMIT` with all
    four (and the headband exactly while keepwarm runs) whole at level 0 in it, never the `capped` fallback, for every
    phase × platter × keepwarm × moment, and its largest 40,000 characters or more under the limit; the same key
@@ -715,11 +735,14 @@ The seams, agreed before any test is written:
    and both `Keep it warm after` buttons write keepwarm, timed from the press, not the draw; top up forks and books a
    ping, and while it is out no second press or minute tick sends another; re-heat and zosui need two presses (a
    re-heat warms the pot, from the clock read before the call, only when its read and write reach 0.9 × P, a written
-   prefix or a live entry read; zosui's second press calls `$.session.compact`, which the mod's own hook draws and
-   settles for the `plugin` trigger); clear fills `/clear`, on the second press over a draft, and arms nothing on
-   `isFilled: false`; the bill (`b`) shows the figures nothing else in the pane does; a paid held send books the tax
-   and keeps the feast drawn until its first step books it warm, a send after `/bocchi tax`'s preview plays no
-   `…paid.`, and a cold `task-notification` turn books a silent one; acts' steps, a `fork: true` act's included, land on their members
+   prefix or a live entry read; zosui's second press calls `$.session.compact` and settles it itself, a slow one drawn
+   until it resolves and a vetoed one saying so); outside the REPL (the desktop app's start) Zosui and Clear are dim
+   with their reasons; clear fills `/clear`, on the second press over a draft, and arms nothing on `isFilled: false`;
+   a Hotpot closed by its own `Close` lets its sprites go; the bill (`b`) shows the figures nothing else in the pane
+   does, on the board's paint; a paid held send books the tax and keeps the feast drawn, the board saying
+   `♨ Re-ordering`, until its first step books it warm, a held send re-sent and refused beneath plays nothing, a send
+   after `/bocchi tax`'s preview plays no `…paid.`, and a cold `task-notification` turn books a silent one; acts'
+   steps, a `fork: true` act's included, land on their members
    (`demo-` acts' nowhere) and never move `lastWarmAt`, so after a long background act the main loop's next step is
    held, or booked as a silent re-order when it is the act's report; `/clear`, and `session.end` with reason `resume`,
    reset the ledger, the band and the cache, drop the engine's price per token and keep the learned TTL and its
@@ -739,8 +762,9 @@ The seams, agreed before any test is written:
    and `tax paid`; with no screen `/hotpot` answers in one line and `/keepwarm` says that nothing will ping, and on a
    cold or empty cache `/keepwarm`, still opening `keepwarm on for <d>`, says the next send warms it and the pings
    start then; `/bocchi tax` touches neither the ledger nor the cache's model, context and warmth, so the next step
-   books no tax; the scene's alt and the wooden board's first line move with `clock.advance` by whole minutes (long
-   advances on the desktop drawing: a terminal Raster's 100 ms sprite clock fails them).
+   (a cold first order, on a real date's clock) books no tax; the scene's alt and the wooden board's first line move
+   with `clock.advance` by whole minutes (long advances on the desktop drawing: a terminal Raster's 100 ms sprite clock
+   fails them).
 
    One bottom per event, so the knobs live in `bottoms()`: `model.fork` gains `forkReason` (`nothing-to-fork`, or
    `api-error` with `forkStatus` and the usage spent before the failure), `forkMs` (it answers that much later) and
@@ -750,10 +774,11 @@ The seams, agreed before any test is written:
    counts its calls in `seen.compacts`, `compactMs` and `compactSkip` making a zosui slow or vetoed (over a
    transcript: the kit refuses an empty compaction). Catches wiring, the band's priority and the redraw schedule;
    misses the desktop's paint, the engine's real fork and a missing hook or call.
-3. **The studio**: `npm run check` with Art's feast checks (the seat poses held to stand's face region as
-   `HEAD_POSES` are and `seat` to stand's whole head, the window holding the face, the hands and the bowl, the
-   pot-look eyes, and the rest it lists), one loop length per state (`cold` and `serve` excepted), the faces each loop
-   plays (reacting at us, eating on the pot) and the palette, `FEAST_FX_COLORS` included, against the 268-character
+3. **The studio**: `npm run check` with Art's feast checks (every seat pose held to stand's whole head: nothing of
+   it erased inside the window down to the face's foot, and the arm poses keeping seat's hair and stand's behind it;
+   the window holding the face, the hands and the bowl, the pot-look eyes, and the rest it lists), one loop length per
+   state (`cold` and `serve` excepted), the four loops' beats apart, the faces each loop plays (reacting at us, eating
+   on the pot) and the palette, `FEAST_FX_COLORS` included, against the 268-character
    alphabet.
 
 Existing tests that change: the command list, the `/bocchi` verbs and the `/keepwarm` offers in the typeahead tests;
@@ -787,6 +812,9 @@ calls they cannot vouch for are gated (`compact`, `draft`).
   module when `claude --resume` starts a new process. Where it does not, or a managed install passes it over (if
   `claude plugin validate` names it, the README's note on such installs counts five hooks and says so), a resumed
   session reads as nothing cached until its first step.
+- The desktop app runs the engine as an SDK host (`--input-format stream-json`): there `$.session.compact` is
+  refused ("not available in a headless (-p / SDK) session yet") and `$.prompt.fill` finds no composer, so Zosui and
+  Clear the table are dim there with their reasons (found by the review on 2026-11-02, after this spec was written).
 - Several sessions with keepwarm on are several pots pinged: each pane says only its own session's.
 - The pane writes numbers, times and model ids, never prompt text. In the README, what the mod touches gains the
   top-up and the re-heat (one request each, through the session's own fork); "Five features switch themselves off"
