@@ -318,12 +318,13 @@ seat art over the band for that run.
 The feast's part of `npm run check`: each seat pose keeps stand's face region and draws over her head
 and the hair beside her face without erasing them (inside the portrait window nothing of stand's down
 to the face box's foot, outside it none of her hair; below it `seat` keeps her hair inside the window,
-above her waist's row and on her outer side from that row down, and the poses built on `seat` keep its
-hair); the waist row ends at `waist` on her outer side, with only her hair and the chopsticks below it;
-the window holds all of her; the feast faces are the overlays' size, the pot looks move only the eyes,
-each iris toward the pot, and `bite` keeps idle's eyes; every pose that holds something has a tip in
-the window; the headband covers only pixels her seat poses share; and the loops (`src/anim/feast.ts`)
-keep their lengths, their eyes and their beats (see `ANIM-BRIEF.md`).
+down to her waist's row and on her outer side below it, but for `SEAT_WAIST_GAPS` (two pixels of
+Bocchi's), and the poses built on `seat` keep its hair); the waist row ends at `waist` on her outer
+side, with only her hair and the chopsticks below it; the window holds all of her; the feast faces are
+the overlays' size, the pot looks move only the eyes, each iris toward the pot, and `bite` keeps idle's
+eyes; every pose that holds something has a tip in the window; the headband covers only pixels her seat
+poses share; and the loops (`src/anim/feast.ts`) keep their lengths, their eyes and their beats (see
+`ANIM-BRIEF.md`).
 
 Look at what you drew, at 4x or more, beside the reference, after every change. Do not run
 `scripts/sprites.mjs` while drawing: it rewrites the mod's sprites.

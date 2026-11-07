@@ -40,6 +40,11 @@ export const FEAST_SIDE: Readonly<Record<MemberId, 'left' | 'right'>> = { bocchi
  * left out): below the face box, the head check keeps them where her pose's base draws them beside her face.
  */
 export const HEAD_HAIR: Readonly<Record<MemberId, string>> = { bocchi: 'hHr', nijika: 'hHru', ryo: 'UHhrRN', kita: 'hHrv' }
+/**
+ * Stand's hair a `seat` leaves out on her waist row, as drawn ("x,y"): Bocchi's turned body ends at x 57 there, where
+ * stand's hair hung on to 59. Draw them back and drop the entry; anything else on the row is held.
+ */
+export const SEAT_WAIST_GAPS: Readonly<Record<MemberId, readonly string[]>> = { bocchi: ['58,56', '59,56'], nijika: [], ryo: [], kita: [] }
 
 /** The seat poses that hold something with a point that acts (`tips`): the chopsticks' tips, the ladle's cup, the phone's lens. */
 export const TIPPED_SEATS: readonly SeatPose[] = ['seatPot', 'seatBowl', 'seatUp', 'seatPoint', 'seatLadle', 'seatPhone']
@@ -972,11 +977,12 @@ function checkFeast(
     // And every pose keeps that head. Above the face box's foot: inside the portrait window it may draw over stand's
     // pixels (a hand raised beside her face) but never cut one, and outside it never cut her hair (HEAD_HAIR: an ahoge's
     // tip, a side tail). Below the face box her hair stays where her base draws it, drawn over or kept: `seat` keeps
-    // stand's inside the window, above her waist's row, and on her outer side from that row down (beside the table;
-    // inward of her waist, her waist row is her turned body's, as the waist check has it, and below it the table), and
-    // the poses patched on `seat` keep its hair anywhere on the canvas (the flips on her shoulders, a side tail, hair
-    // hanging past her waist).
+    // stand's wherever the table does not hide her (inside the window, down to her waist's row, which the lap clip
+    // draws over the table, and on her outer side below it, beside the table), but for SEAT_WAIST_GAPS; and the poses
+    // patched on `seat` keep its hair anywhere on the canvas (the flips on her shoulders, a side tail, hair hanging past
+    // her waist).
     const hair = new Set([...HEAD_HAIR[art.id]])
+    const gaps = new Set(SEAT_WAIST_GAPS[art.id])
     const below = art.face.y + fh
     const inWindow = (x: number, y: number) => y >= art.head.y && y < art.head.y + PH && x >= art.head.x && x < art.head.x + PW
     const outer = (x: number) => (feast.side === 'left' ? x < feast.waist.x : x > feast.waist.x)
@@ -991,7 +997,7 @@ function checkFeast(
           let lost = ''
           // above the face box's foot (`seat`'s window is held whole by the check above)
           if (y < below) lost = !inWindow(x, y) ? hairOf(x, y) : name === 'seat' ? '' : at(stand, x, y) === '.' ? '' : at(stand, x, y)
-          else if (name === 'seat') lost = inWindow(x, y) || y < feast.waist.y || outer(x) ? hairOf(x, y) : ''
+          else if (name === 'seat') lost = (inWindow(x, y) || y <= feast.waist.y || outer(x)) && !gaps.has(`${x},${y}`) ? hairOf(x, y) : ''
           else {
             // her base's hair, or the hair behind what `seat` drew there (stand's: an arm lifted away from in front of
             // her side tail leaves the tail, not a hole)
@@ -1003,6 +1009,11 @@ function checkFeast(
           if (first === '') first = ` (first at ${x},${y}: "${lost}")`
         }
       if (cut > 0) problems.push(`feast pose ${name}: cuts ${cut} ${cut === 1 ? 'pixel' : 'pixels'} of her head${first}; a seat pose draws over her head and the hair beside her face, never erases them`)
+    }
+    // each gap let pass is one still: stand's hair, on her waist row, that `seat` leaves out (else the entry is stale)
+    for (const g of gaps) {
+      const [gx = -1, gy = -1] = g.split(',').map(Number)
+      if (seat === undefined || gy !== feast.waist.y || at(seat, gx, gy) !== '.' || hairOf(gx, gy) === '') problems.push(`SEAT_WAIST_GAPS: ${g} is not stand's hair that ${art.name}'s seat leaves out on her waist row (${feast.waist.y}): drop it`)
     }
   }
 
