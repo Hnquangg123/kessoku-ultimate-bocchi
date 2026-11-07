@@ -969,27 +969,34 @@ function checkFeast(
         }
       if (diff > 0) problems.push(`feast pose seat: the head (the portrait window at ${art.head.x},${art.head.y}, ${PW} wide, down to row ${art.face.y + fh - 1}) differs from stand's in ${diff} pixels${first}: the heads are reused as they are`)
     }
-    // And every pose keeps that head: inside the portrait window, down to the face box's foot, it may draw over stand's
-    // pixels (a hand raised beside her face) but never cut one; below the face box her hair (HEAD_HAIR) stays where her
-    // base draws it, drawn over or kept: `seat` keeps stand's inside the window (below it the table hides what it
-    // drops), and the poses patched on `seat` keep its hair anywhere on the canvas (the flips on her shoulders, a side
-    // tail, hair hanging past her waist).
+    // And every pose keeps that head. Above the face box's foot: inside the portrait window it may draw over stand's
+    // pixels (a hand raised beside her face) but never cut one, and outside it never cut her hair (HEAD_HAIR: an ahoge's
+    // tip, a side tail). Below the face box her hair stays where her base draws it, drawn over or kept: `seat` keeps
+    // stand's inside the window and wherever the table does not hide her (above her waist's row, and on her outer side
+    // below it: the lap clip takes only the table nearer than her waist), and the poses patched on `seat` keep its hair
+    // anywhere on the canvas (the flips on her shoulders, a side tail, hair hanging past her waist).
     const hair = new Set([...HEAD_HAIR[art.id]])
     const below = art.face.y + fh
     const inWindow = (x: number, y: number) => y >= art.head.y && y < art.head.y + PH && x >= art.head.x && x < art.head.x + PW
+    const outer = (x: number) => (feast.side === 'left' ? x < feast.waist.x : x > feast.waist.x)
+    const hairOf = (x: number, y: number) => (hair.has(at(stand, x, y)) ? at(stand, x, y) : '')
     for (const [name, grid] of seats) {
       const base = name === 'seat' ? stand : (seats.get('seat') ?? stand)
       let cut = 0
       let first = ''
-      for (let y = art.head.y; y < H; y += 1)
+      for (let y = 0; y < H; y += 1)
         for (let x = 0; x < W; x += 1) {
-          if ((y < below || name === 'seat') && !inWindow(x, y)) continue
-          if (at(grid, x, y) !== '.' || (name === 'seat' && y < below)) continue
-          const was = y < below ? at(stand, x, y) : at(base, x, y)
-          if (was === '.') continue
-          // below the face box: her base's hair, or for an arm pose the hair behind what `seat` drew there (stand's: an
-          // arm lifted away from in front of her side tail leaves the tail, not a hole)
-          const lost = y < below ? was : hair.has(was) ? was : name !== 'seat' && hair.has(at(stand, x, y)) ? at(stand, x, y) : ''
+          if (at(grid, x, y) !== '.') continue
+          let lost = ''
+          // above the face box's foot (`seat`'s window is held whole by the check above)
+          if (y < below) lost = !inWindow(x, y) ? hairOf(x, y) : name === 'seat' ? '' : at(stand, x, y) === '.' ? '' : at(stand, x, y)
+          else if (name === 'seat') lost = inWindow(x, y) || y < feast.waist.y || outer(x) ? hairOf(x, y) : ''
+          else {
+            // her base's hair, or the hair behind what `seat` drew there (stand's: an arm lifted away from in front of
+            // her side tail leaves the tail, not a hole)
+            const was = at(base, x, y)
+            lost = was === '.' ? '' : hair.has(was) ? was : hairOf(x, y)
+          }
           if (lost === '') continue
           cut += 1
           if (first === '') first = ` (first at ${x},${y}: "${lost}")`

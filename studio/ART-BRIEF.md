@@ -316,7 +316,9 @@ laid over the member for that run (preview a stand without wiring it in). `feast
 seat art over the band for that run.
 
 The feast's part of `npm run check`: each seat pose keeps stand's face region and draws over her
-head and the hair beside her face without erasing them (`seat` keeps the whole head); the waist
+head and the hair beside her face without erasing them (inside the portrait window nothing of
+stand's down to the face box's foot, outside it none of her hair; below it `seat` keeps her hair
+wherever the table does not hide her, and the poses built on `seat` keep its hair); the waist
 row ends at `waist` on her outer side, with only her hair and the chopsticks below it; the window
 holds all of her; the feast faces are the overlays' size, the pot looks move only the eyes, each
 iris toward the pot, and `bite` keeps idle's eyes; every pose that holds something has a tip in
