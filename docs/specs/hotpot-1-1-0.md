@@ -226,21 +226,25 @@ step books.
 3. The buttons: native Buttons, letter hotkeys only, each under a fixed key that the focus ring, a second press and
    the tests follow while its label changes (live prices, armed words). Each with a key is `plain`, so a terminal
    draws the key before the label (`w: Keep the fire on`; the length chips stay bracketed); resting labels are short
-   enough for a docked terminal pane, what a press does being said in its armed label and its note; unpriced
-   (`isPriced`), no label names a price:
+   enough for a docked terminal pane, what a press does being said on the board (an armed button's second press over
+   it, an outcome in its note); unpriced (`isPriced`), no label names a price:
    - `Keep the fire on · <pick> ≈<price>` (`w`, `hotpot-keep`; `Keep the fire on · 2h ≈$0.07`: priced as a day of
      keepwarm is, over `pick`), then `30m`, `1h`, `2h`, `6h` (no hotkeys; `hotpot-pick-30m`, `hotpot-pick-1h`,
      `hotpot-pick-2h`, `hotpot-pick-6h`) setting `pick`; while keepwarm runs, `Let it cool (keepwarm off)` (`w`,
      `hotpot-keep`).
    - `Top up now ≈$0.03` (`t`, `hotpot-topup`) while warm (its five-minute hedge is the bill's `A top-up now` row);
      while cold, `Re-heat now ≈$1.34` (`t`, `hotpot-topup`),
-     which arms on the first press (`Press again`; the board's tail `press again within 10 s to re-write <168k>
-     tokens ≈$1.34`) and runs on a second within 10 s.
+     which arms on the first press (over the board, `press again within 10 s to re-write <168k> tokens ≈$1.34`) and
+     runs on a second within 10 s.
    - `Zosui (compact)` (`z`, `hotpot-zosui`), which arms on the first press
-     (`Press again`; the board's tail `press again within 10 s to compact <168k> tokens in one summarizing request`)
-     and runs on a second within 10 s. An armed button's `Press again` is padded with no-break spaces to its resting
-     label's width, so arming moves nothing in the row, and the board's tail says what the second press does, before
-     any note.
+     (over the board, `press again within 10 s to compact <168k> tokens in one summarizing request`) and runs on a
+     second within 10 s. Armed, a button says `Press again` in a terminal, padded with no-break spaces (a cell each)
+     to its resting label's width; elsewhere it keeps its label (a proportional face cannot be padded to a width),
+     drawn `variant: 'primary'`. What its second press does is drawn over the wooden board in a Box keyed
+     `hotpot-armed` (`position: 'absolute'` over the board's two lines, on its paint, `overflow: 'hidden'`), out of
+     the flow: the board beneath keeps what it showed as the button armed (the note up then, else the tail; a later
+     note waits for the arm to end), so nothing moves under the second press. A press on any other button lets the
+     arm go first (`disarm`): the armed button rests again, and that press's note shows.
    - `Clear the table (/clear)` (`f`, as the Cache Tax card's `Start fresh`; `hotpot-clear`; over a draft it arms
      first, as The actions says); its note says the next send writes a fresh pot, and that keepwarm stays on.
    - `The bill` / `Close the bill` (`b`, `hotpot-bill`); `Close` (`c`, `hotpot-close`).
@@ -261,12 +265,17 @@ desktop's table, Bocchi above Nijika on the left and Ryo above Kita on the right
 pixels between. The pot (broth and food by level) uses the desktop props' pixel helpers at its own size (the desktop's
 is 80 pixels across), on opaque backdrop cells so the cold blue reads on a light terminal. Half blocks (70×17 cells)
 need 74 body columns and 17 body rows over what the wooden board, the buttons and an open bill take
-(`terminalRowsBelow`: the board's lines wrapped at spaces, the buttons as their row packs them, an open bill's title,
-rows and foot; counted on a fixed worst case of what comes and goes, resting labels, no note, the keys hint and room
-for a passing dim reason, so a press, a turn, a fork out or the focus never flips the tier); quadrants (35×9 cells)
-need 36 columns; narrower, text alone. The heads take the mood minis by phase: happy at `feast` and `zosui`;
-focused at `simmer`, `low` and `tend` (Nijika happy at `tend`) and, as the desktop's `wait`, at `none`, `cleared` and
-`off`; anxious at `last`; panic at `held`; at `cold` Bocchi hides (her box), Nijika and Kita melt and Ryo is anxious
+(`terminalRowsBelow`: the board's lines wrapped as the terminal wraps them, wrap-ansi's with `trim: false`, where a
+space after a word that fills its row opens the next; the buttons as their row packs them; an open bill's title, rows
+and foot. Counted on the worst case of what a press, a turn, a fork out or the focus changes: keepwarm off at each
+length and on at its longest words (`under 1m` left), the held line before and after Start fresh, a turn running, a
+fork out and compacting each with its dim reason, the keys hint, the bill's top-up row wherever it can show; no note,
+nothing armed (an arm's words are drawn over the board). So none of those flips the tier: the pane's size, opening
+the bill and the pot's own state move it, its phase (by time, a send, or a press that warms, compacts or ends a
+hold) and the fork gate shutting or opening); quadrants (35×9 cells) need 36 columns; narrower, text alone. The
+heads take the mood minis by phase: happy at `feast` and `zosui`; focused at `simmer`, `low` and `tend` (Nijika happy
+at `tend`) and, as the desktop's `wait`, at `none`, `cleared` and `off`; anxious at `last`; panic at `held`; at
+`cold` Bocchi hides (her box), Nijika and Kita melt and Ryo is anxious
 (her deadpan `(-_-)`; her `hiding` is a box too, and the cold gives the box to Bocchi alone). Then the wooden board's
 two lines as text, the buttons and the bill, as on the desktop.
 
@@ -298,7 +307,7 @@ the pot's corners as the minis sit, and the pot between them as a text gauge of 
   foot count (the time left, and the time since it went cold while that is counted in minutes), keepwarm's end and a
   hold's end (`heldAt` + 15 min, where their held words go). A pure `hotpotDue(cache, hotpot, now, ttl)` returns the
   soonest of that, a moment's end (`moment.until`), a note's end (`note.until`), an armed window's end (`armed.at` +
-  10 s, so `Press again` goes back on time) and the next whole minute of each count on the wooden board (the time
+  10 s, so an armed button rests again on time) and the next whole minute of each count on the wooden board (the time
   left or since it went cold, keepwarm's time left, the next ping at its `pingAt`, as the phase function has it).
 - `drawPanel` and the strip's drawings hand `scheduleTail` `warmthDue` too, whether or not the Hotpot is open (one
   timer serves them all), so an idle session's counts stay fresh with the Hotpot closed. The Cache Tax card, which
@@ -467,17 +476,19 @@ Each button lists its dim reasons in order; the one said is the first that appli
   plugin's, so the mod's own hook never sees its own press, on any install. That hook draws the zosui for the other
   triggers (`manual`, `auto` and another plugin's `plugin`, not `precompute`) and settles the cache.
 - **Clear the table**: `$.prompt.fill({ text: '/clear', mode: 'replace' })`, for the person to send. Over a draft
-  (`$.prompt.read()`; exactly `/clear` is not one) the first press arms (`Press again`; the board's tail `press again
-  within 10 s: your draft gives way to /clear`)
-  and a second within 10 s fills. A fill that lands says `/clear is in the box: Esc, then Enter, and the next send
-  writes a fresh pot` (ending ` (keepwarm stays on)` while it runs; while the Hotpot
-  holds the keys Enter presses its focus ring, and that Esc closes it: `closeOnEscape`); `isFilled: false` from a
+  (`$.prompt.read()`; exactly `/clear` is not one) the first press arms (over the board, `press again within 10 s:
+  your draft gives way to /clear`)
+  and a second within 10 s fills. A fill that lands says, in a terminal, `/clear is in the box: Esc, then Enter, and
+  the next send writes a fresh pot` (the press left the keys with the Hotpot, where Enter presses its focus ring, and
+  Esc hands them back: `closeOnEscape`), and elsewhere `/clear is in the box: press Enter, and the next send writes a
+  fresh pot`, ending ` (keepwarm stays on)` while it runs; `isFilled: false` from a
   dialog holding the keys (or a hook's refusal with no cause) says `the box could not take /clear: type it` and
   disarms. A `no_composer` answer (no box bound: a host with no client that takes fills, as `-p`; the desktop app
   takes them into its own box) says `this app keeps its own prompt box: type /clear` and dims Clear the table and
   Start fresh, the pane's and the card's, from then on (module state, learned from that answer alone).
 - **Start fresh** (the card's and the pane's, during a hold): the same fill, in one press, in the held prompt's place.
-  A fill that lands says `/clear is in the box: Esc, then Enter starts fresh`, and from then on the card says
+  A fill that lands notes it in the held line's words for the surface pressed on, `/clear is in the box: Enter
+  starts fresh` (in a terminal, `/clear is in the box: Esc, then Enter starts fresh`), and from then on the card says
   `/clear is in the box: press Enter to start fresh.` and the board's held line `/clear is in the box: Enter starts
   fresh`; in a terminal, where the press left the keys with the band or the pane, both say `Esc, then Enter starts
   fresh`. Kept as the hotpot atom's `freshAt` (the hold's `heldAt`), so a reload keeps it with the hold and the next
@@ -485,7 +496,8 @@ Each button lists its dim reasons in order; the one said is the first that appli
 - **The bill** toggles `isBillOpen`; **Close** closes the pane.
 - **What a press says**: an action's outcome, and a keepwarm ping's while the pane is open, is the hotpot atom's
   `note`: 6 s in place of the tail of the wooden board's first line, whatever the **Toasts** option (toasts go out
-  as stated besides).
+  as stated besides). Under an arm the board keeps the note that was up as it armed, beneath the arm's words; a press
+  on another button lets the arm go, so that press's note shows at once.
 - **Two calls the mod has not made before**, `$.session.compact` and `$.prompt.read`, are guarded where they are made,
   like the five features `FEATURES` (`hooks/lib/engine.ts`) lists: a missing call (`isMissingApi`) switches its
   feature off for the session. `FEATURES` gains `compact` (`$.session.compact`, `the Hotpot's zosui`) and `draft`
