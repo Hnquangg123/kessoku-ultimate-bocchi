@@ -46,10 +46,12 @@ export const NOTE_MS = 6000
 export const PING_LEAD_MS = 90_000
 /**
  * The longest gap a five-minute sighting may span: inside the hour, so an hour's cache would still be warm and a
- * miss shows a shorter TTL, with 45 s spare for the clock reads; wide enough that keepwarm's own pings at an
- * assumed hour (59 minute ticks after the last warmth, plus the timer's lateness) teach a five-minute TTL.
+ * miss shows a shorter TTL (unless the request itself waited the 20 s spare); wide enough that keepwarm's own pings
+ * at an assumed hour teach a five-minute TTL. They go out on the first tick of the minute beat from the TTL less 90 s:
+ * 58:30 to 59:30 after a step's warmth (the beat runs from the session's start, not from the step), about 59:00
+ * after a ping's, plus the timer's lateness.
  */
-export const SIGHTING_MAX_GAP = HOUR - 45_000
+export const SIGHTING_MAX_GAP = HOUR - 20_000
 /** A ping's own tokens: its few words in, its word out. */
 export const PING_INPUT = 30
 export const PING_OUTPUT = 8
