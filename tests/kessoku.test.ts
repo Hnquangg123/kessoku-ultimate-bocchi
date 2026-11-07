@@ -4091,8 +4091,11 @@ test('a switch to another model empties the pot, a resume\'s does not; a step on
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await aTurn($, 't1')
   const sw = { requested_model: null, context_tokens: 300_000, prompt_cache_warm: true, cache_ttl: '1h' as const, estimated_cache_write_usd: 1.2, pricing: 'catalog' as const }
-  await $.classic.PostModelSwitch({ ...sw, from_model: 'claude-sonnet-5-5', to_model: 'claude-sonnet-5-5', source: 'resume' })
-  expect((await stateOf(st, 'cache')).lastWarmAt).toBeGreaterThan(0)
+  const warmAt = (await stateOf(st, 'cache')).lastWarmAt
+  expect(warmAt).toBeGreaterThan(0)
+  // A resume's switch names the model the transcript was cached on, another than the session's: it forfeits nothing.
+  await $.classic.PostModelSwitch({ ...sw, from_model: 'claude-opus-5-5', to_model: 'claude-sonnet-5-5', source: 'resume' })
+  expect((await stateOf(st, 'cache'))).toMatchObject({ lastWarmAt: warmAt, model: 'claude-sonnet-5-5' })
   // A turn opens the gate the resume shut, so the switch below is what shuts it again.
   await aTurn($, 't-open')
   expect((await stateOf(st, 'ledger')).canFork).toBe(true)
@@ -4433,9 +4436,12 @@ test('/keepwarm on a cold or empty cache still opens with its length and says th
 test('/bocchi tax touches neither the ledger nor the cache\'s model, context and warmth, so the next step books no tax', async ($, on) => {
   const seen = fresh()
   const st = watchState(on)
-  const clock = mock.clock(on, { now: 1_000_000 })
+  // a real date's clock, so a warmth two TTLs back is still a time (the tour's day)
+  const clock = mock.clock(on, { now: TOUR_NOW })
   bottoms(on, clock, seen)
-  stepBottom(on)
+  // The first order writes the whole prompt, cold: judged against a sample written into the cache (1.0.1's preview
+  // set its model, its context and a warmth two TTLs old), it would be booked as a Cache Tax.
+  usageBottom(on, [{ read: 0, write: 300_000 }])
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   // The book as the mod last wrote it before the preview (or never), as it stands after.
   const book = st.ledger

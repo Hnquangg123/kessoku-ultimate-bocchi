@@ -69,7 +69,7 @@ import {
   warmthDue,
   writeRate,
 } from '../hooks/lib/hotpot'
-import type { HotpotView, MainStep, StepContext, StepUsage, TtlInForce } from '../hooks/lib/hotpot'
+import type { FeastPhase, HotpotView, MainStep, StepContext, StepUsage, TtlInForce } from '../hooks/lib/hotpot'
 import { MEMBERS } from '../hooks/lib/palette'
 import { SVG_LIMIT, animOf, fitSprites, framePixels, viewSize } from '../hooks/lib/sprite'
 import type { SpritePart } from '../hooks/lib/sprite'
@@ -570,15 +570,26 @@ test('the bill: reads, writes and the tax among them, pings, re-heats, compactio
 })
 
 test('who plays what, the terminal’s heads, the kaomoji gauge and the speech, by phase and moment', async () => {
-  expect(seatStates('feast', null)).toEqual({ bocchi: 'eat', nijika: 'eat', ryo: 'eat', kita: 'eat' })
-  expect(seatStates('zosui', null).ryo).toBe('eat')
-  expect(seatStates('simmer', null).kita).toBe('calm')
-  expect(seatStates('tend', null).nijika).toBe('calm')
-  expect(seatStates('last', null).ryo).toBe('worry')
-  expect(seatStates('cold', null)).toEqual({ bocchi: 'box', nijika: 'cold', ryo: 'cold', kita: 'cold' })
-  expect(seatStates('held', null).bocchi).toBe('shock')
-  expect(seatStates('none', null).kita).toBe('wait')
-  expect(seatStates('feast', { kind: 'ping', until: NOW }).nijika).toBe('serve')
+  // every phase's seats (the record names all eleven), and of the moments only a ping changes anyone: Nijika serves
+  const all = (s: string) => ({ bocchi: s, nijika: s, ryo: s, kita: s })
+  const seats: Record<FeastPhase, Record<string, string>> = {
+    feast: all('eat'),
+    zosui: all('eat'),
+    simmer: all('calm'),
+    low: all('calm'),
+    tend: all('calm'),
+    last: all('worry'),
+    cold: { ...all('cold'), bocchi: 'box' },
+    held: all('shock'),
+    none: all('wait'),
+    cleared: all('wait'),
+    off: all('wait'),
+  }
+  for (const [phase, want] of Object.entries(seats) as [FeastPhase, Record<string, string>][]) {
+    expect(seatStates(phase, null)).toEqual(want)
+    for (const kind of ['reheat', 'keepon', 'paid'] as const) expect(seatStates(phase, { kind, until: NOW })).toEqual(want)
+    expect(seatStates(phase, { kind: 'ping', until: NOW })).toEqual({ ...want, nijika: 'serve' })
+  }
   expect(miniMoods('feast').bocchi).toBe('happy')
   expect(miniMoods('tend')).toEqual({ bocchi: 'focused', nijika: 'happy', ryo: 'focused', kita: 'focused' })
   expect(miniMoods('cold')).toEqual({ bocchi: 'hiding', nijika: 'melting', ryo: 'anxious', kita: 'melting' })
@@ -829,6 +840,111 @@ test('the far two reach over the pot’s back rim into its opening, through the 
     for (const k of ['b', 'r']) expect(clip(svg, k).includes(window)).toBe(open)
     for (const k of ['n', 'k']) expect(clip(svg, k)).not.toContain(window)
   }
+})
+
+/** Whether an SVG path's d (M, L, H, V, Z, and an A that is half an ellipse between two points on one row) fills (x, y), by the nonzero rule. */
+function fills(d: string, x: number, y: number): boolean {
+  const rings: (readonly [number, number])[][] = []
+  let ring: (readonly [number, number])[] = []
+  let px = 0
+  let py = 0
+  for (const [, cmd, args] of d.matchAll(/([MLHVAZ])([^MLHVAZ]*)/g)) {
+    const n = (args ?? '').trim().split(/[\s,]+/).filter(Boolean).map(Number)
+    if (cmd === 'M') {
+      if (ring.length > 0) rings.push(ring)
+      px = n[0] ?? 0
+      py = n[1] ?? 0
+      ring = [[px, py]]
+    } else if (cmd === 'L') {
+      px = n[0] ?? 0
+      py = n[1] ?? 0
+      ring.push([px, py])
+    } else if (cmd === 'H') {
+      px = n[0] ?? 0
+      ring.push([px, py])
+    } else if (cmd === 'V') {
+      py = n[0] ?? 0
+      ring.push([px, py])
+    } else if (cmd === 'A') {
+      const [rx = 0, ry = 0, , , sweep, ex = 0, ey = 0] = n
+      if (ey !== py || Math.abs(Math.abs(ex - px) / 2 - rx) > 1e-9) throw new Error(`not half an ellipse: A${args}`)
+      const cx = (px + ex) / 2
+      const from = px > ex ? 0 : Math.PI
+      for (let i = 1; i <= 256; i += 1) {
+        const a = from + ((sweep === 1 ? 1 : -1) * Math.PI * i) / 256
+        ring.push([cx + rx * Math.cos(a), py + ry * Math.sin(a)])
+      }
+      px = ex
+      py = ey
+    } else if (cmd === 'Z') {
+      if (ring.length > 0) rings.push(ring)
+      ring = []
+    }
+  }
+  if (ring.length > 0) rings.push(ring)
+  let wind = 0
+  for (const r of rings)
+    for (let i = 0; i < r.length; i += 1) {
+      const [x1, y1] = r[i] ?? [0, 0]
+      const [x2, y2] = r[(i + 1) % r.length] ?? [0, 0]
+      const side = (x2 - x1) * (y - y1) - (x - x1) * (y2 - y1)
+      if (y1 <= y && y2 > y && side > 0) wind += 1
+      else if (y2 <= y && y1 > y && side < 0) wind -= 1
+    }
+  return wind !== 0
+}
+
+test('the table hides what is below each waist: her lap’s clip shows her above it and beside the table, and over it only the far two’s window onto the pot while they eat', async () => {
+  const o = OVER_POT
+  const cx = (o.x0 + o.x1) / 2
+  const oval = (x: number, y: number) => ((x - cx) / o.rx) ** 2 + ((y - o.cy) / o.ry) ** 2
+  const inWindow = (x: number, y: number) => (x >= o.x0 && x <= o.x1 && y >= o.top && y <= o.cy) || (y > o.cy && oval(x, y) <= 1)
+  // the table nearer than her waist (and its front, down the scene): below the row under her waist, between its side edges
+  const onTable = (m: (typeof SEAT_ORDER)[number], x: number, y: number) => y > SEAT_ROW[m] + 1 && x > edgeL(y) && x < edgeR(y)
+  // a pixel a slanted or curved edge cuts through is the renderer's to blend
+  const onEdge = (x: number, y: number) => Math.abs(x - edgeL(y)) < 0.3 || Math.abs(x - edgeR(y)) < 0.3 || (y > o.cy && Math.abs(oval(x, y) - 1) < 0.01)
+  let boxHidden = 0
+  for (const [age, eating] of [[5 * MIN, true], [74 * MIN, false]] as const) {
+    const v = viewOf(age)
+    const svg = hotpotSvg(v, { width: 600 }).svg
+    const band = bandParts(drawnPhase(v).phase, momentOf(v), false)
+    for (const m of SEAT_ORDER) {
+      const d = svg.match(new RegExp(`<clipPath id="lp${m[0]}"><path d="([^"]+)"/></clipPath>`))?.[1]
+      if (d === undefined) throw new Error(`no lap clip for ${m}`)
+      const shows = (x: number, y: number) => fills(d, x, y)
+      const window = eating && (m === 'bocchi' || m === 'ryo')
+      // her waist's row shows to the table's edge on her side; from the row under it the table hides her, there and in
+      // its middle away from the pot; beside the table she shows all the way down
+      const row = SEAT_ROW[m]
+      const inner = (y: number) => (SEAT_SIDE[m] === 'left' ? Math.ceil(edgeL(y)) + 2.5 : Math.floor(edgeR(y)) - 2.5)
+      const outer = (y: number) => (SEAT_SIDE[m] === 'left' ? Math.floor(edgeL(y)) - 2.5 : Math.ceil(edgeR(y)) + 2.5)
+      expect(shows(inner(row), row + 0.5)).toBe(true)
+      for (const dy of [1, 5, 20]) {
+        expect(shows(inner(row + dy), row + dy + 0.5)).toBe(false)
+        expect(shows(outer(row + dy), row + dy + 0.5)).toBe(true)
+      }
+      expect(shows(100.5, row + 12.5)).toBe(false)
+      // the pot's opening: through the far two's window while they eat; else under the table that hides them
+      expect(shows(144.5, 126.5)).toBe(window || row >= 126)
+      // and every pixel of what she plays, where the scene draws it
+      band.parts.forEach((p, i) => {
+        if (band.wraps[i] !== `clip-path="url(#lp${m[0]})"`) return
+        const anim = animOf(p.id)
+        if (anim === undefined) throw new Error(p.id)
+        framePixels(p.id, 0).forEach((c, k) => {
+          if (c === null) return
+          const x = p.x + (k % anim.w) + 0.5
+          const y = p.y + Math.floor(k / anim.w) + 0.5
+          if (onEdge(x, y)) return
+          const hidden = onTable(m, x, y) && !(window && inWindow(x, y))
+          expect(shows(x, y)).toBe(!hidden)
+          if (hidden && !eating && m === 'bocchi') boxHidden += 1
+        })
+      })
+    }
+  }
+  // the table does real work: it hides the foot of Bocchi's raised box
+  expect(boxHidden).toBeGreaterThan(0)
 })
 
 test('Kita’s flash bursts on KITA_LENS: every flash in her eat loop is whole and centred there, over the pot', async () => {
