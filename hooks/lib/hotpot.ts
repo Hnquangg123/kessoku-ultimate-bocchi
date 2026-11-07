@@ -149,7 +149,9 @@ export function stripWords(fe: Feast, cache: Pick<KessokuCache, 'keepWarmUntil'>
     case 'cold':
       return `cold for ${minutesText(-fe.leftMs)}${armed ? ' · keepwarm on' : ''}`
     case 'held':
-      return fe.ageMs > 0 ? `cold for ${minutesText(-fe.leftMs)} · a send is held` : 'a send is held'
+      // warm only under /bocchi tax's preview: a real hold needs the cache cold
+      if (fe.ageMs <= 0) return 'a send is held'
+      return fe.leftMs > 0 ? `warm, ${minutesText(fe.leftMs)} left · a send is held` : `cold for ${minutesText(-fe.leftMs)} · a send is held`
     case 'zosui':
       return 'zosui (compacting)'
     default:
@@ -172,7 +174,7 @@ export function railWords(fe: Feast, cache: Pick<KessokuCache, 'keepWarmUntil'>,
     case 'cold':
       return `❄ cold${armed ? ' · keepwarm on' : ''}`
     case 'held':
-      return '❄ cold · held'
+      return fe.ageMs <= 0 ? '○ no cache · held' : fe.leftMs > 0 ? '☀ warm · held' : '❄ cold · held'
     case 'zosui':
       return '〆 zosui'
     default:
@@ -209,9 +211,10 @@ function soonest(dues: readonly number[], now: number): number {
  * The next time the warmth's words or the feast change on their own: the
  * next level step, last orders, cold, and the next whole minute of what the
  * strip, the rail and the chalkboard's foot count (the time left or since it
- * went cold, keepwarm's time left, and its end). 0 when nothing is due.
+ * went cold, keepwarm's time left, and its end), and a hold's end, where their
+ * held words go. 0 when nothing is due.
  */
-export function warmthDue(cache: Pick<KessokuCache, 'lastWarmAt' | 'keepWarmUntil'>, now: number, ttlMs: number): number {
+export function warmthDue(cache: Pick<KessokuCache, 'lastWarmAt' | 'keepWarmUntil' | 'heldAt'>, now: number, ttlMs: number): number {
   const dues: number[] = []
   if (cache.lastWarmAt > 0) {
     const t0 = cache.lastWarmAt
@@ -220,6 +223,7 @@ export function warmthDue(cache: Pick<KessokuCache, 'lastWarmAt' | 'keepWarmUnti
     dues.push(left > 0 ? dropAt(left, now) : riseAt(-left, now))
   }
   if (cache.keepWarmUntil > now) dues.push(cache.keepWarmUntil, dropAt(cache.keepWarmUntil - now, now))
+  if (cache.heldAt > 0) dues.push(cache.heldAt + HELD_PROMPT_MS)
   return soonest(dues, now)
 }
 
@@ -229,16 +233,16 @@ export function nextPingAt(cache: Pick<KessokuCache, 'lastWarmAt'>, ttlMs: numbe
 }
 
 /**
- * The next redraw an open Hotpot needs: `warmthDue`, a moment's end, a
- * note's end, an armed press's end, keepwarm's end, a hold's end, and the
- * next whole minute of each count on the wooden board (the next ping too).
+ * The next redraw an open Hotpot needs: `warmthDue` (keepwarm's end and a
+ * hold's end among it), a moment's end, a note's end, an armed press's end,
+ * and the next whole minute of each count on the wooden board (the next ping
+ * too).
  */
 export function hotpotDue(cache: Pick<KessokuCache, 'lastWarmAt' | 'keepWarmUntil' | 'heldAt'>, hotpot: Pick<KessokuHotpot, 'moment' | 'note' | 'armed'>, now: number, ttlMs: number): number {
   const dues = [warmthDue(cache, now, ttlMs)]
   if (hotpot.moment !== null) dues.push(hotpot.moment.until)
   if (hotpot.note !== null) dues.push(hotpot.note.until)
   if (hotpot.armed !== null) dues.push(hotpot.armed.at + ARM_MS)
-  if (cache.heldAt > 0) dues.push(cache.heldAt + HELD_PROMPT_MS)
   if (cache.keepWarmUntil > now) {
     const ping = nextPingAt(cache, ttlMs)
     if (ping > now) dues.push(ping, dropAt(ping - now, now))
@@ -1583,8 +1587,10 @@ function snow(): string {
   return s
 }
 
-/** Gloom lines over a head. */
-function gloom(x: number, y: number): string {
+/** Gloom lines over her head, from the row under her speech bubble's tip, so her own bubble never covers them. */
+function gloom(m: Member): string {
+  const x = headAt(m).x - 8
+  const y = bubbleRow(m) + 12
   let s = '<g class="gm">'
   for (let i = 0; i < 4; i += 1) s += `<path d="M${f(x + i * 5)} ${f(y)}v${i % 2 ? 7 : 9}" stroke="#6d5a92" stroke-width="1" opacity=".8"/>`
   return `${s}</g>`
@@ -1628,6 +1634,11 @@ function pourMarkup(): string {
   return CRISP(`<g class="pour">${spill}</g><g class="pr1">${ring(0, '#fffaf0')}</g><g class="pr2">${ring(1, '#fff4c8')}</g><g class="pr3">${ring(2, '#fff4c8')}</g>`)
 }
 
+/** Her speech bubble's middle row: over her head, the far two's a little higher (its tip reaches 11 rows lower). */
+function bubbleRow(m: Member): number {
+  return Math.max(9, headAt(m).y - (m === 'bocchi' || m === 'ryo' ? 27 : 24))
+}
+
 /** A speech bubble over her head; of two, the second shows in turn. */
 function bubble(m: Member, text: string, cls: string): string {
   const h = headAt(m)
@@ -1636,7 +1647,7 @@ function bubble(m: Member, text: string, cls: string): string {
   const side = SEAT_SIDE[m]
   const far = m === 'bocchi' || m === 'ryo'
   const cx = Math.max(w / 2 + 2, Math.min(SCENE_W - w / 2 - 2, side === 'left' ? h.x - (far ? 10 : 18) : h.x + (far ? 10 : 18)))
-  const cy = Math.max(9, h.y - (far ? 27 : 24))
+  const cy = bubbleRow(m)
   const tip = side === 'left' ? Math.min(cx + w / 2 - 6, h.x - 2) : Math.max(cx - w / 2 + 6, h.x + 2)
   const color = MEMBERS[m].color
   return `<g class="${cls}"><path d="M${f(tip - 3)} ${f(cy + 6)}L${f(tip)} ${f(cy + 11)}L${f(tip + 3)} ${f(cy + 6)}z" fill="#fffaf2" stroke="${color}" stroke-width="1"/><rect x="${f(cx - w / 2)}" y="${f(cy - 6)}" width="${w}" height="12" rx="4" fill="#fffaf2" stroke="${color}" stroke-width="1"/><path d="M${f(tip - 2.4)} ${f(cy + 5.6)}h4.8" stroke="#fffaf2" stroke-width="1.2"/><text x="${f(cx)}" y="${f(cy + 2.5)}" text-anchor="middle" font-family="${SANS}" font-weight="700" font-size="${size}" fill="#2a1912">${esc(text)}</text></g>`
@@ -1760,7 +1771,7 @@ export function hotpotSvg(v: HotpotView, layout: SceneLayout): SceneSvg {
   if (phase === 'feast' && moment === null) after += photoSparkles()
   if (phase === 'cold') {
     const b = headAt('bocchi')
-    after += snow() + rainCloud(b.x, b.y - 26) + gloom(headAt('nijika').x - 8, headAt('nijika').y - 26) + gloom(headAt('ryo').x - 8, headAt('ryo').y - 28) + gloom(headAt('kita').x - 8, headAt('kita').y - 26)
+    after += snow() + rainCloud(b.x, b.y - 26) + gloom('nijika') + gloom('ryo') + gloom('kita')
   }
   after += lighting(phase, keepwarm)
   const lines = speechOf(phase, keepwarm, moment)

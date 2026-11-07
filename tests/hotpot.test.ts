@@ -35,6 +35,7 @@ import {
   drawnPhase,
   edgeL,
   edgeR,
+  headAt,
   enginePriceOf,
   feastOf,
   fitBand,
@@ -169,6 +170,9 @@ test('the strip, the foot and the rail read their words off the phase, in whole 
   expect(feastOf(cacheAt(57 * MIN, { keepWarmUntil: NOW + HOUR }), NOW, HOUR).phase).toBe('tend')
   expect(words(72 * MIN, { keepwarmHeld: true }, NOW + HOUR)).toEqual(['cold for 12m · keepwarm on', '❄ cold · keepwarm on'])
   expect(words(72 * MIN, { held: true })).toEqual(['cold for 12m · a send is held', '❄ cold · held'])
+  // a hold over a warm pot or none (only /bocchi tax's preview makes one) says so, never cold
+  expect(words(12 * MIN, { held: true })).toEqual(['warm, 48m left · a send is held', '☀ warm · held'])
+  expect(words(-1, { held: true })).toEqual(['a send is held', '○ no cache · held'])
   expect(words(12 * MIN, { compacting: true })).toEqual(['zosui (compacting)', '〆 zosui'])
   expect(minutesText(59_999)).toBe('under 1m')
   expect(minutesText(48 * MIN + 59_999)).toBe('48m')
@@ -177,7 +181,7 @@ test('the strip, the foot and the rail read their words off the phase, in whole 
 
 // ---- when to redraw ----------------------------------------------------------------------------------
 
-test('warmthDue is the next minute of the count, a level step, last orders, cold or keepwarm’s end; hotpotDue adds the moments, notes, presses, the hold and the next ping', async () => {
+test('warmthDue is the next minute of the count, a level step, last orders, cold, keepwarm’s end or a hold’s end; hotpotDue adds the moments, notes, presses and the next ping', async () => {
   // 12m 30s old at an hour: 47m 30s left, so the count drops to 47m in 30 s
   expect(warmthDue(cacheAt(12.5 * MIN), NOW, HOUR)).toBe(NOW + 30_000 + 1)
   // just before the level step at 16 % (9m 36s): the step comes first
@@ -200,6 +204,10 @@ test('warmthDue is the next minute of the count, a level step, last orders, cold
   expect(warmthDue(cacheAt(-1, { keepWarmUntil: NOW + 90_000 }), NOW, HOUR)).toBe(NOW + 30_000 + 1)
   expect(warmthDue(cacheAt(-1, { keepWarmUntil: NOW + 30_000 }), NOW, HOUR)).toBe(NOW + 30_000)
   expect(warmthDue(cacheAt(12.5 * MIN, { keepWarmUntil: NOW + 20_000 }), NOW, HOUR)).toBe(NOW + 20_000)
+  // a hold's end, where the held words go: with nothing cached (the preview on an empty session) the only thing due, and
+  // over a cold pot it comes before the count's next minute
+  expect(warmthDue(cacheAt(-1, { heldAt: NOW - 5 * MIN }), NOW, HOUR)).toBe(NOW - 5 * MIN + HELD_PROMPT_MS)
+  expect(warmthDue(cacheAt(72 * MIN + 10_000, { heldAt: NOW - HELD_PROMPT_MS + 5000 }), NOW, HOUR)).toBe(NOW + 5000)
   const c = cacheAt(70 * MIN + 30_000)
   const h = (over: Partial<KessokuHotpot>) => ({ ...HOTPOT, ...over })
   expect(hotpotDue(c, h({}), NOW, HOUR)).toBe(NOW + 30_000)
@@ -945,6 +953,31 @@ test('the table hides what is below each waist: her lap’s clip shows her above
   }
   // the table does real work: it hides the foot of Bocchi's raised box
   expect(boxHidden).toBeGreaterThan(0)
+})
+
+test('while cold, the gloom lines hang over each glum head where no speech bubble covers them, keepwarm on or off', async () => {
+  for (const keep of [0, NOW + HOUR]) {
+    const svg = hotpotSvg(viewOf(74 * MIN, {}, { keepWarmUntil: keep }), { width: 600 }).svg
+    const gloom = [...svg.matchAll(/<g class="gm">(.*?)<\/g>/g)].map(g => [...(g[1] ?? '').matchAll(/M([\d.]+) ([\d.]+)v(\d+)/g)].map(p => ({ x: Number(p[1]), y: Number(p[2]), len: Number(p[3]) })))
+    expect(gloom.map(g => g.length)).toEqual([4, 4, 4])
+    // over Nijika's, Ryo's and Kita's heads
+    for (const [i, m] of (['nijika', 'ryo', 'kita'] as const).entries())
+      for (const s of gloom[i] ?? []) {
+        expect(Math.abs(s.x - headAt(m).x)).toBeLessThanOrEqual(10)
+        expect(s.y).toBeGreaterThanOrEqual(headAt(m).y - 30)
+        expect(s.y + s.len).toBeLessThanOrEqual(headAt(m).y)
+      }
+    // and clear of every bubble shown, its box and its tip each with its outline (the tip's point mitred a pixel on)
+    const boxes = [...svg.matchAll(/<g class="s[abp]"><path d="M([\d.]+) ([\d.]+)L([\d.]+) ([\d.]+)L([\d.]+) ([\d.]+)z"[^>]*\/><rect x="([\d.]+)" y="([\d.]+)" width="(\d+)" height="(\d+)"/g)].flatMap(b => {
+      const [tx0 = 0, ty0 = 0, , ty1 = 0, tx1 = 0, , rx = 0, ry = 0, rw = 0, rh = 0] = b.slice(1).map(Number)
+      return [
+        { x0: tx0 - 0.5, x1: tx1 + 0.5, y0: ty0 - 0.5, y1: ty1 + 1 },
+        { x0: rx - 0.5, x1: rx + rw + 0.5, y0: ry - 0.5, y1: ry + rh + 0.5 },
+      ]
+    })
+    expect(boxes).toHaveLength(keep > 0 ? 2 : 4)
+    for (const s of gloom.flat()) for (const b of boxes) expect(s.x + 0.5 <= b.x0 || s.x - 0.5 >= b.x1 || s.y + s.len <= b.y0 || s.y >= b.y1).toBe(true)
+  }
 })
 
 test('Kita’s flash bursts on KITA_LENS: every flash in her eat loop is whole and centred there, over the pot', async () => {
