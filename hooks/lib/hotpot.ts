@@ -17,7 +17,7 @@
 // A leaf: no value imports from stage.ts (whose `ampOf` calls `feastOf`).
 
 import type { KessokuCache, KessokuCacheShare, KessokuFeastState, KessokuHotpot, KessokuLedger, KessokuMember, KessokuMood } from '../../types'
-import { fmtDuration, fmtTokens, fmtUsd, priceInfo } from './band'
+import { fmtTokens, fmtUsd, priceInfo } from './band'
 import { MEMBERS } from './palette'
 import { block, oval, pix, pixPaths, placedArt, pline, put, pxAt, rim, spliceAfter } from './pixart'
 import type { Pix } from './pixart'
@@ -143,8 +143,9 @@ export function lengthText(ms: number): string {
 }
 
 /**
- * The warmth in the strip's words (the desktop sign, both terminal strips, after `cache `) and the chalkboard's foot;
- * keepwarm armed but held back (FeastFlags.keepwarmHeld) keeps nothing and says it waits.
+ * The warmth in the strip's words, each read after `cache ` (the desktop sign, both terminal strips, the chalkboard's
+ * foot: `cache not warmed yet`, `cache warm, 48m left`); keepwarm armed but held back (FeastFlags.keepwarmHeld) keeps
+ * nothing and says it waits.
  */
 export function stripWords(fe: Feast, cache: Pick<KessokuCache, 'keepWarmUntil'>, now: number, keepwarmHeld = false): string {
   const armed = cache.keepWarmUntil > now
@@ -153,19 +154,19 @@ export function stripWords(fe: Feast, cache: Pick<KessokuCache, 'keepWarmUntil'>
   switch (fe.phase) {
     case 'none':
     case 'cleared':
-      return 'no cache yet'
+      return 'not warmed yet'
     case 'off':
-      return 'no cache here (caching off)'
+      return 'off (caching is off)'
     case 'last':
       return `last orders, cold in ${minutesText(fe.leftMs)}${waits}`
     case 'cold':
       return `cold for ${minutesText(-fe.leftMs)}${armed ? ' · keepwarm on' : ''}`
     case 'held':
       // warm only under /bocchi tax's preview: a real hold needs the cache cold
-      if (fe.ageMs <= 0) return 'a send is held'
+      if (fe.ageMs <= 0) return 'not warmed yet · a send is held'
       return fe.leftMs > 0 ? `warm, ${minutesText(fe.leftMs)} left · a send is held` : `cold for ${minutesText(-fe.leftMs)} · a send is held`
     case 'zosui':
-      return 'zosui (compacting)'
+      return 'compacting (zosui)'
     default:
       return kept ? `kept warm, ${minutesText(cache.keepWarmUntil - now)} left` : `warm, ${minutesText(fe.leftMs)} left${waits}`
   }
@@ -638,6 +639,8 @@ export type HotpotFlags = {
   noBox: boolean
   /** A held prompt is back in the box (its put-back fill landed, or the hold is `/bocchi tax`'s preview): Enter pays and sends it. */
   promptBack: boolean
+  /** Start fresh put /clear in the box during this hold, in the held prompt's place: Enter now starts fresh. */
+  clearInBox: boolean
 }
 
 /** Everything the pane's drawings read, built where the state is read. */
@@ -661,6 +664,14 @@ export type HotpotView = {
 
 export function cachingOff(l: Pick<KessokuLedger, 'cacheless'>): boolean {
   return l.cacheless >= CACHELESS_RUN
+}
+
+/**
+ * Whether the pane prices the pot: a context size known (a new session, and one after /clear, wait for their first
+ * reply's) and caching on (else there is no pot to price). Unpriced, the board and the buttons show no figures.
+ */
+export function isPriced(v: Pick<HotpotView, 'cache' | 'ledger'>): boolean {
+  return v.cache.contextTokens > 0 && !cachingOff(v.ledger)
 }
 
 /** P for a price: the main loop's last prompt, else the context the cache knows (a resumed session before its first step). */
@@ -694,12 +705,12 @@ export function isNoBox(filled: { isFilled: boolean; refusal?: string } | null):
 }
 
 /**
- * The Cache Tax hold's words, the drop's reason: how long the cache has been cold (`coldMs`, since it lapsed, as the
- * strip counts; null with nothing warmed), the re-write and its price, and where the prompt is: back in the box, or,
+ * The Cache Tax hold's words, the drop's reason: how long the cache has been cold (`coldMs`, since it lapsed, in the
+ * strip's whole minutes; null with nothing warmed), the re-write and its price, and where the prompt is: back in the box, or,
  * where the host binds none to put it in (`lost`), here whole, so nothing of it is lost.
  */
 export function taxReason(coldMs: number | null, tokens: number, heldUsd: number, warmUsd: number, lost: string | null = null): string {
-  const age = coldMs === null ? '?' : fmtDuration(Math.max(0, coldMs))
+  const age = coldMs === null ? '?' : minutesText(Math.max(0, coldMs))
   return (
     `${MEMBERS.bocchi.faces.panic} CACHE TAX — the prompt cache went cold ${age} ago! ` +
     `Sending this re-writes ${fmtTokens(tokens)} tokens ≈ ${fmtUsd(heldUsd)} ` +
@@ -725,19 +736,23 @@ function gateReason(l: KessokuLedger): string {
  * The pane's buttons in their row, each under a fixed key: keepwarm (and its
  * lengths while it is off), top up or re-heat, zosui, clear the table, the
  * bill, close; during a hold, the Cache Tax card's three and then the bill
- * and close. A dim one names why, in its order of reasons.
+ * and close. A dim one names why, in its order of reasons. Resting labels stay
+ * short (a terminal's row is 72 cells, a docked pane's fewer); what a press
+ * does is said where it is decided, in its armed label and its note. An
+ * unpriced pot (`isPriced`) shows no prices.
  */
 export function hotpotButtons(v: HotpotView): HotpotButton[] {
   const { flags: fl, ledger: l } = v
   const off = cachingOff(l)
   const pr = pricesOf(v)
+  const price = (usd: number) => (isPriced(v) ? ` ≈${fmtUsd(usd)}` : '')
   const kept = v.cache.keepWarmUntil > v.now
   const bill: HotpotButton = { key: 'hotpot-bill', label: v.hotpot.isBillOpen ? 'Close the bill' : 'The bill', hotkey: 'b', reason: '' }
   const close: HotpotButton = { key: 'hotpot-close', label: 'Close', hotkey: 'c', reason: '' }
   const clearReason = fl.noBox ? 'this app keeps its own prompt box: type /clear' : ''
   if (v.feast.phase === 'held') {
     return [
-      { key: 'hotpot-tax-keep', label: kept ? 'Keep warm: on' : `Keep it warm after (${lengthText(v.pick)}) ≈${fmtUsd(pr.keep)}`, hotkey: 'w', reason: '' },
+      { key: 'hotpot-tax-keep', label: kept ? 'Keep warm: on' : `Keep it warm after (${lengthText(v.pick)})${price(pr.keep)}`, hotkey: 'w', reason: '' },
       { key: 'hotpot-tax-clear', label: 'Start fresh (/clear)', hotkey: 'f', reason: clearReason },
       { key: 'hotpot-tax-dismiss', label: 'Dismiss', hotkey: 'd', reason: '' },
       bill,
@@ -748,7 +763,7 @@ export function hotpotButtons(v: HotpotView): HotpotButton[] {
   const keep: HotpotButton[] = kept
     ? [{ key: 'hotpot-keep', label: 'Let it cool (keepwarm off)', hotkey: 'w', reason: '' }]
     : [
-        { key: 'hotpot-keep', label: `Keep the fire on · ${lengthText(v.pick)} ≈${fmtUsd(pr.keep)}`, hotkey: 'w', reason: keepReason },
+        { key: 'hotpot-keep', label: `Keep the fire on · ${lengthText(v.pick)}${price(pr.keep)}`, hotkey: 'w', reason: keepReason },
         ...[30, 60, 120, 360].map(min => ({ key: `hotpot-pick-${lengthText(min * MINUTE)}`, label: lengthText(min * MINUTE), reason: '', pick: min * MINUTE, isOn: v.pick === min * MINUTE })),
       ]
   const cold = v.feast.phase === 'cold'
@@ -769,20 +784,20 @@ export function hotpotButtons(v: HotpotView): HotpotButton[] {
                 : v.cache.contextTokens < TOP_UP_MIN_TOKENS
                   ? 'under 1k tokens'
                   : ''
-  const fiveMinNote = v.ttl.how === 'assumed' && v.cache.lastWarmAt > 0 && v.now - v.cache.lastWarmAt > 5 * MINUTE ? ` (≈${fmtUsd(pr.topUp5m)} if the cache lives 5m)` : ''
+  // (the five-minute hedge on a top-up's price is the bill's, beside a day of keepwarm's)
   const topup: HotpotButton = cold
-    ? { key: 'hotpot-topup', label: ARMED(v, 'reheat') && forkReason === '' ? `Press again: re-write ≈${fmtUsd(pr.reheat)}` : `Re-heat now ≈${fmtUsd(pr.reheat)}`, hotkey: 't', reason: forkReason }
-    : { key: 'hotpot-topup', label: `Top up now ≈${fmtUsd(pr.topUp)}${fiveMinNote}`, hotkey: 't', reason: forkReason }
+    ? { key: 'hotpot-topup', label: ARMED(v, 'reheat') && forkReason === '' ? `Press again: re-write${price(pr.reheat)}` : `Re-heat now${price(pr.reheat)}`, hotkey: 't', reason: forkReason }
+    : { key: 'hotpot-topup', label: `Top up now${price(pr.topUp)}`, hotkey: 't', reason: forkReason }
   const zosuiReason = fl.compactOff ? 'needs a newer Claude Code' : fl.noCompact ? 'this app compacts only from a typed /compact' : fl.compacting ? 'compacting' : fl.working ? 'a turn is running' : ''
   const zosui: HotpotButton = {
     key: 'hotpot-zosui',
-    label: ARMED(v, 'zosui') && zosuiReason === '' ? `Press again: compact ${fmtTokens(v.cache.contextTokens)} tokens · one summarizing request` : 'Zosui (compact) · the next send writes the smaller pot',
+    label: ARMED(v, 'zosui') && zosuiReason === '' ? `Press again: compact ${fmtTokens(v.cache.contextTokens)} tokens · one summarizing request` : 'Zosui (compact)',
     hotkey: 'z',
     reason: zosuiReason,
   }
   const clear: HotpotButton = {
     key: 'hotpot-clear',
-    label: ARMED(v, 'clear') && clearReason === '' ? 'Press again: your draft gives way to /clear' : `Clear the table (/clear) · the next send writes a fresh pot${kept ? ' · keepwarm stays on' : ''}`,
+    label: ARMED(v, 'clear') && clearReason === '' ? 'Press again: your draft gives way to /clear' : 'Clear the table (/clear)',
     hotkey: 'f',
     reason: clearReason,
   }
@@ -836,14 +851,20 @@ function stateWords(v: HotpotView): { word: string; short: string; tail: string;
   }
 }
 
-/** The second line's figures: the context and its prices, keepwarm, the TTL while unsettled. */
+/**
+ * The second line's figures: the context and its prices, keepwarm, the TTL while unsettled. Unpriced (`isPriced`),
+ * the context and keepwarm alone: before a first reply it says the prices come with it.
+ */
 function figuresLine(v: HotpotView): string[] {
   const pr = pricesOf(v)
   const kept = v.cache.keepWarmUntil > v.now
   const pings = v.ledger.pings.count
   const keep = kept ? `keepwarm ${minutesText(v.cache.keepWarmUntil - v.now, true)} · ${pings === 0 ? 'no pings yet' : `${pings} ${pings === 1 ? 'ping' : 'pings'} ≈${fmtUsd(pingsUsd(v.ledger, v.ttl.ms))}`}` : 'keepwarm off'
+  const table = v.cache.contextTokens > 0 ? `${fmtTokens(v.cache.contextTokens)} on the table` : 'nothing on the table yet'
+  if (cachingOff(v.ledger)) return [table, keep]
+  if (!isPriced(v)) return [table, 'prices after the first reply', keep]
   const mark = ttlMark(v.ttl)
-  return [`${fmtTokens(v.cache.contextTokens)} on the table`, `a re-order ≈${fmtUsd(pr.reorder)}`, `a top-up ≈${fmtUsd(pr.topUp)}`, `a day of keepwarm ≈${fmtUsd(pr.day)}`, keep, ...(mark === '' ? [] : [mark])]
+  return [table, `a re-order ≈${fmtUsd(pr.reorder)}`, `a top-up ≈${fmtUsd(pr.topUp)}`, `a day of keepwarm ≈${fmtUsd(pr.day)}`, keep, ...(mark === '' ? [] : [mark])]
 }
 
 /**
@@ -855,15 +876,40 @@ function figuresLine(v: HotpotView): string[] {
 export function boardOf(v: HotpotView): { word: string; tail: string; line: string } {
   const s = stateWords(v)
   const note = v.hotpot.note !== null && v.now < v.hotpot.note.until ? v.hotpot.note.text : ''
+  const keys = v.isTerminal && !v.isFocused ? ['ctrl+x tab for its keys'] : []
   if (v.feast.phase === 'held') {
-    // how to pay (the prompt back in the box, or, the box could not take it, the next send) and how to start fresh
+    // how to pay (the prompt back in the box, or, the box could not take it, the next send) and how to start fresh;
+    // once Start fresh has put /clear in the box, what Enter does now
     const pay = v.flags.promptBack ? 'your prompt is back in the box: Enter pays and sends it' : 'your prompt could not go back in the box: your next send pays and sends it'
     const fresh = v.flags.noBox ? 'type /clear to start fresh' : v.flags.promptBack ? 'Start fresh puts /clear in its place' : 'Start fresh puts /clear in the box'
-    return { word: s.word, tail: note || s.tail, line: `${pay}, ${fresh}` }
+    return { word: s.word, tail: note || s.tail, line: [v.flags.clearInBox ? '/clear is in the box: Enter starts fresh' : `${pay}, ${fresh}`, ...keys].join(' · ') }
   }
+  // a dim button's reason, unless the tail already says it (caching off)
   const reason = dimReason(hotpotButtons(v))
-  const parts = [...figuresLine(v), ...(reason === '' ? [] : [reason]), ...(v.isTerminal && !v.isFocused ? ['ctrl+x tab for its keys'] : [])]
+  const parts = [...figuresLine(v), ...(reason === '' || reason === s.tail ? [] : [reason]), ...keys]
   return { word: s.word, tail: note || s.tail, line: parts.join(' · ') }
+}
+
+/**
+ * The rows a terminal pane's board and buttons take at `columns` (inside its one-cell padding: a plain button is
+ * `k: label`, a length chip `[ label ]`, two cells apart, wrapped as the row wraps), and the bill's while it is open:
+ * what is left decides the picture's tier. Resting labels and no note, so arming a press or a note never flips it.
+ */
+export function terminalRowsBelow(v: HotpotView, columns: number): number {
+  const width = Math.max(1, columns - 2)
+  const lines = (text: string) => Math.max(1, Math.ceil([...text].length / width))
+  const rest: HotpotView = { ...v, hotpot: { ...v.hotpot, armed: null, note: null } }
+  const b = boardOf(rest)
+  let row = 1
+  let x = 0
+  for (const btn of hotpotButtons(rest)) {
+    const w = [...btn.label].length + (btn.hotkey !== undefined ? 3 : 4)
+    if (x > 0 && x + 2 + w > width) {
+      row += 1
+      x = w
+    } else x += (x > 0 ? 2 : 0) + w
+  }
+  return lines(`${b.word}  ${b.tail}`) + lines(b.line) + row + (v.hotpot.isBillOpen ? billRows(rest).rows.length + 1 : 0)
 }
 
 /** `/hotpot` where nothing can draw: the wooden board as one line. */
@@ -912,10 +958,15 @@ export function billRows(v: HotpotView): { title: string; rows: BillRow[]; foot:
     return all > 0 ? [`${MEMBERS[m].name} ${pct(s.read / all)}`] : []
   })
   if (members.length > 0) rows.push({ label: 'By member', detail: members.join(' · '), figure: '' })
-  rows.push({ label: 'If it goes cold', detail: `re-order ${fmtTokens(v.cache.contextTokens)}`, figure: fmtUsd(pr.reorder), tone: 'bad' })
-  const n = Math.round(pingsADay(ttl))
-  const assumed = v.ttl.how === 'assumed'
-  rows.push({ label: 'A day of keepwarm', detail: `≈${n} pings at a ${lengthText(ttl)} TTL${assumed ? `, assumed · ≈${fmtUsd(pingsADay(5 * MINUTE) * pr.topUp)} if it lives 5m` : ''}`, figure: fmtUsd(pr.day) })
+  // what the pot would cost from here: only where it can be priced (isPriced)
+  if (isPriced(v)) {
+    rows.push({ label: 'If it goes cold', detail: `re-order ${fmtTokens(v.cache.contextTokens)}`, figure: fmtUsd(pr.reorder), tone: 'bad' })
+    const n = Math.round(pingsADay(ttl))
+    const assumed = v.ttl.how === 'assumed'
+    // a top-up past five minutes under an hour assumed would re-write the pot if it lives five minutes
+    if (assumed && v.cache.lastWarmAt > 0 && v.now - v.cache.lastWarmAt > 5 * MINUTE) rows.push({ label: 'A top-up now', detail: `≈${fmtUsd(pr.topUp5m)} if the cache lives 5m`, figure: fmtUsd(pr.topUp) })
+    rows.push({ label: 'A day of keepwarm', detail: `≈${n} pings at a ${lengthText(ttl)} TTL${assumed ? `, assumed · ≈${fmtUsd(pingsADay(5 * MINUTE) * pr.topUp)} if it lives 5m` : ''}`, figure: fmtUsd(pr.day) })
+  }
   return { title: "お会計 · this conversation's cache", rows, foot: 'cost ≈ list prices × tokens, not your bill' }
 }
 

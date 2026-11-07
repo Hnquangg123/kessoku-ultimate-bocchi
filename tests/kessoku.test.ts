@@ -39,7 +39,7 @@ const BAND_PROPS = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumn
 
 type Entry = { name: string; kind: 'file' | 'dir'; size: number; mtimeMs: number; isLink: boolean }
 type Registered = { name: string; description: string; prompt?: string; tools?: readonly string[]; inputSchema?: Record<string, unknown>; isDeferred?: boolean }
-type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[]; suggested: string[]; notified: { text: string; title: string | undefined }[]; agents: Registered[]; tools: Registered[]; drafts: number; compacts: number }
+type Seen = { commands: string[]; status: (string | undefined)[]; toasts: string[]; opened: string[]; focused: string[]; closed: string[]; filled: string[]; written: Record<string, string>; sleeps: number; sleepers: string[]; forks: number; configSets: { key: string; value: unknown }[]; theme: string; asks: string[]; askAnswer: string; rendered: Record<string, unknown>; blits: { requestId: string; key: string; isTaken: boolean }[]; suggested: string[]; notified: { text: string; title: string | undefined }[]; agents: Registered[]; tools: Registered[]; drafts: number; compacts: number }
 /** What a test may vary in the engine beneath: one bottom per event, so the knobs live here. */
 type Answers = { sleepMs?: number; forkCacheRead?: number; gitLsFails?: boolean; os?: string; refuseBlits?: boolean; unplaced?: boolean; compactMs?: number; compactSkip?: string; notifyReason?: 'disabled' | 'no-channel' | 'no-surface' | 'refused'; engineVersion?: string; noVersion?: boolean; refuseRegister?: boolean; writeMs?: number; store?: Record<string, unknown>; storeFails?: boolean; repoRoot?: string; forkReason?: 'nothing-to-fork' | 'api-error'; forkStatus?: number; forkMs?: number; forkCacheWrite?: number; refuseFill?: boolean; draft?: string; dropSubmit?: string }
 const THEME_OPTION_LIGHT = 'Kessoku Bocchi Light (kessoku-ultimate-bocchi)'
@@ -114,6 +114,7 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
   })
   on('ui.open', ($, e) => {
     seen.opened.push(e.id)
+    if (e.focus === true) seen.focused.push(e.id)
     return { value: a.unplaced === true ? { isPlaced: false as const, reason: 'the terminal is too narrow for a pane' } : { isPlaced: true as const } }
   })
   on('ui.close', ($, e) => {
@@ -244,7 +245,7 @@ function bottoms(on: On, clock: ReturnType<typeof mock.clock>, seen: Seen, a: An
 }
 
 function fresh(): Seen {
-  return { commands: [], status: [], toasts: [], opened: [], closed: [], filled: [], written: {}, sleeps: 0, sleepers: [], forks: 0, configSets: [], theme: 'dark', asks: [], askAnswer: 'Not now', rendered: {}, blits: [], suggested: [], notified: [], agents: [], tools: [], drafts: 0, compacts: 0 }
+  return { commands: [], status: [], toasts: [], opened: [], focused: [], closed: [], filled: [], written: {}, sleeps: 0, sleepers: [], forks: 0, configSets: [], theme: 'dark', asks: [], askAnswer: 'Not now', rendered: {}, blits: [], suggested: [], notified: [], agents: [], tools: [], drafts: 0, compacts: 0 }
 }
 
 /** One warm main-thread turn, as the engine would report it: 300k tokens read from the cache. */
@@ -732,11 +733,11 @@ test('Cache Tax holds a cold send once, puts the prompt back, and lets the secon
   expect(held.drop).toMatch(/CACHE TAX/)
   expect(held.drop).toMatch(/30[34]k tokens/)
   // cold for a minute: 61 minutes after the warmth, an hour's TTL (the strip's count, not the warmth's age)
-  expect(held.drop).toMatch(/the prompt cache went cold 1:00 ago!/)
+  expect(held.drop).toMatch(/the prompt cache went cold 1m ago!/)
   await clock.advance(500)
   expect(seen.filled).toContain('where were we?')
   const band = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
-  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 1:00 ago!!$/ })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 1m ago!!$/ })).toBeDefined()
   await band.unmount()
   const sent = await $.prompt.submit(typed('where were we?'))
   expect(sent.drop).toBeUndefined()
@@ -753,9 +754,9 @@ test('the Cache Tax card counts on and gives way at its hold\'s end where it is 
   await clock.advance(61 * 60_000)
   expect((await $.prompt.submit(typed('where were we?'))).drop).toMatch(/CACHE TAX/)
   const band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
-  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 1:00 ago!!$/ })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 1m ago!!$/ })).toBeDefined()
   await clock.advance(61_000)
-  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 2:00 ago!!$/ })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 2m ago!!$/ })).toBeDefined()
   await clock.advance(13 * 60_000)
   expect(await band.find({ type: 'Text', text: /CACHE TAX/ })).toBeDefined()
   await clock.advance(60_000)
@@ -1257,7 +1258,7 @@ test('on a light theme the light twin is picked, and /clear forgets the old conv
   await clock.advance(61 * 60_000)
   const sent = await $.prompt.submit(typed('a fresh start'))
   expect(sent.drop).toBeUndefined()
-  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/nothing cached yet/)
+  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/cache not warmed yet/)
 })
 
 test('keepwarm pings with a fork shortly before the TTL lapses, books the ping, and notices a cold cache', async ($, on) => {
@@ -1270,7 +1271,7 @@ test('keepwarm pings with a fork shortly before the TTL lapses, books the ping, 
   const step = $.turn.step({ turnId: 't1', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })
   for await (const chunk of step) void chunk
   await $.turn.complete({ turnId: 't1', answer: 'ok', durationMs: 900, isAborted: false, reason: 'answer' })
-  expect((await $.command.run(cmd('keepwarm', '2h'))).text).toMatch(/keepwarm on for 2h00m/)
+  expect((await $.command.run(cmd('keepwarm', '2h'))).text).toMatch(/keepwarm on for 2h\b/)
   await clock.advance(57 * 60_000)
   expect(seen.forks).toBe(0)
   await clock.advance(2 * 60_000)
@@ -1280,7 +1281,7 @@ test('keepwarm pings with a fork shortly before the TTL lapses, books the ping, 
   expect(report).toMatch(/found it cold/)
   expect(seen.toasts.some(t => /keepwarm: the cache had gone cold/.test(t))).toBe(true)
   await $.classic.PostModelSwitch({ from_model: 'claude-sonnet-5-5', to_model: 'claude-opus-5-5', requested_model: 'opus', source: 'command', context_tokens: 300_000, prompt_cache_warm: false, cache_ttl: '5m', estimated_cache_write_usd: 1.5, pricing: 'catalog' })
-  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/TTL 5:00/)
+  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/\(TTL 5m\)/)
   expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/\$1\.50 to re-write the cache \(the engine's own estimate\)/)
 })
 
@@ -2469,7 +2470,7 @@ test('a compaction melts Bocchi in the strip, then the panel and Cache Tax read 
   await panel.unmount()
   // Cache Tax: nothing is cached for the new transcript, and the next write is priced at the compacted size.
   const report = (await $.command.run(cmd('cache-tax'))).text
-  expect(report).toMatch(/nothing cached yet/)
+  expect(report).toMatch(/cache not warmed yet/)
   expect(report).toMatch(/12\.0k tokens/)
   // An hour on, the send is not held: there is no cache entry to pay for (before the compaction it would have been).
   await clock.advance(61 * 60_000)
@@ -2592,7 +2593,7 @@ test('native notifications: the guard holding a command, a long set done, the ca
   expect(seen.notified).toHaveLength(2)
   await clock.advance(2 * 60_000)
   expect(seen.notified).toHaveLength(3)
-  expect(seen.notified[2]?.text).toMatch(/^Cache Tax: the cache goes cold in 4:\d\d · re-writing 30[34]k tokens would cost ≈\$\d/)
+  expect(seen.notified[2]?.text).toMatch(/^Cache Tax: the cache goes cold in 4m · re-writing 30[34]k tokens would cost ≈\$\d/)
   expect(seen.notified[2]?.text).toMatch(/\/keepwarm keeps it warm$/)
   await clock.advance(3 * 60_000)
   expect(seen.notified).toHaveLength(3)
@@ -3120,7 +3121,7 @@ test('panelView: who plays, what each act does, its context, cost, tools and fai
   expect(panelView(band, cache, { ...ui, solo: 'ryo', soloUntil: now - 1 }, now, 60 * 60_000).solo).toBeNull()
   expect(panelView(band, { ...cache, lastWarmAt: now - 70 * 60_000 }, ui, now, 60 * 60_000).amp).toEqual({ kind: 'cold', words: 'cold for 10m' })
   expect(panelView(band, { ...cache, keepWarmUntil: now + 7_200_000 }, ui, now, 60 * 60_000).amp.kind).toBe('keepwarm')
-  expect(panelView(band, { ...cache, lastWarmAt: 0 }, ui, now, 60 * 60_000).amp).toEqual({ kind: 'none', words: 'no cache yet' })
+  expect(panelView(band, { ...cache, lastWarmAt: 0 }, ui, now, 60 * 60_000).amp).toEqual({ kind: 'none', words: 'not warmed yet' })
   // State an older version wrote (no set, no solo, no tally) reads whole.
   const legacyBand = { ...band, set: undefined, setStartedAt: undefined, agents: band.agents.map(a => ({ ...a, toolTally: undefined, lastTool: undefined })) } as unknown as KessokuBand
   const legacy = panelView(legacyBand, cache, { isPanelOpen: true, isStripHidden: false, panelWhere: 'pane' } as unknown as KessokuUi, now, 60 * 60_000)
@@ -3391,6 +3392,7 @@ test("/bocchi stats opens the tour page with the project's figures, on the termi
   await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 90_000, isAborted: false, reason: 'answer' })
   await $.command.run(cmd('bocchi', 'stats'))
   expect(seen.opened).toContain('kessoku-tour')
+  expect(seen.focused).toContain('kessoku-tour')
   for (const surface of SURFACES) {
     const page = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: 'kessoku-tour', props: PANE_PROPS })
     expect(await page.find({ type: 'Text', text: /^♪ ON TOUR · proj$/ })).toBeDefined()
@@ -3692,6 +3694,8 @@ test('the Hotpot draws the feast, the wooden board\'s two lines and its buttons 
   await clock.advance(30_000)
   expect((await $.command.run(cmd('hotpot'))).text).toMatch(/sits down to eat/)
   expect(seen.opened).toContain(HOTPOT_ID)
+  // a prompt typed on after /hotpot goes to the prompt: the pane takes the keys only from ctrl+x tab or a click
+  expect(seen.focused).not.toContain(HOTPOT_ID)
   for (const surface of SURFACES) {
     const pane = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
     if (surface === 'desktop') {
@@ -3704,13 +3708,14 @@ test('the Hotpot draws the feast, the wooden board\'s two lines and its buttons 
     expect(first).toBe('♨ Bubbling  59m of feast left')
     expect(second).toMatch(/^304k on the table · a re-order ≈\$1\.21 · a top-up ≈\$0\.03 · a day of keepwarm ≈\$0\.74 · keepwarm off · TTL 1h\?/)
     expect(second?.endsWith(' · ctrl+x tab for its keys')).toBe(surface === 'terminal')
-    expect(await pane.find({ type: 'Button', key: 'hotpot-keep' })).toMatchObject({ props: { label: 'Keep the fire on · 6h ≈$0.19', hotkey: 'w' } })
-    expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).toMatchObject({ props: { label: 'Top up now ≈$0.03', hotkey: 't' } })
-    expect(await pane.find({ type: 'Button', key: 'hotpot-zosui' })).toMatchObject({ props: { hotkey: 'z' } })
-    expect(await pane.find({ type: 'Button', key: 'hotpot-clear' })).toMatchObject({ props: { hotkey: 'f' } })
-    expect(await pane.find({ type: 'Button', key: 'hotpot-bill' })).toMatchObject({ props: { label: 'The bill', hotkey: 'b' } })
-    expect(await pane.find({ type: 'Button', key: 'hotpot-close' })).toMatchObject({ props: { label: 'Close', hotkey: 'c' } })
-    for (const len of ['30m', '1h', '2h', '6h']) expect(await pane.find({ type: 'Button', key: `hotpot-pick-${len}` })).toBeDefined()
+    // plain, so a terminal draws each key before its label (`w: Keep the fire on`); the length chips stay bracketed
+    expect(await pane.find({ type: 'Button', key: 'hotpot-keep' })).toMatchObject({ props: { label: 'Keep the fire on · 6h ≈$0.19', hotkey: 'w', plain: true } })
+    expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).toMatchObject({ props: { label: 'Top up now ≈$0.03', hotkey: 't', plain: true } })
+    expect(await pane.find({ type: 'Button', key: 'hotpot-zosui' })).toMatchObject({ props: { label: 'Zosui (compact)', hotkey: 'z', plain: true } })
+    expect(await pane.find({ type: 'Button', key: 'hotpot-clear' })).toMatchObject({ props: { label: 'Clear the table (/clear)', hotkey: 'f', plain: true } })
+    expect(await pane.find({ type: 'Button', key: 'hotpot-bill' })).toMatchObject({ props: { label: 'The bill', hotkey: 'b', plain: true } })
+    expect(await pane.find({ type: 'Button', key: 'hotpot-close' })).toMatchObject({ props: { label: 'Close', hotkey: 'c', plain: true } })
+    for (const len of ['30m', '1h', '2h', '6h']) expect((await pane.find({ type: 'Button', key: `hotpot-pick-${len}` }))?.props.plain).toBeUndefined()
     await pane.unmount()
   }
   // Too narrow for quadrants: the faces round the gauge, as kaomoji draws everywhere.
@@ -3719,6 +3724,79 @@ test('the Hotpot draws the feast, the wooden board\'s two lines and its buttons 
   expect(await narrow.find({ type: 'Text', text: /^♨ ▰▰▰▰▰$/ })).toBeDefined()
   expect(await narrow.find({ type: 'Text', text: new RegExp(`^${MEMBERS_HAPPY.replace(/[()]/g, '\\$&')}$`) })).toBeDefined()
   await narrow.unmount()
+})
+
+test('before its first reply a session prices nothing: the board says the prices come with it, the buttons show none, and the strip reads cache not warmed yet', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  expect((await boardLines(pane))[1]).toMatch(/^nothing on the table yet · prices after the first reply · keepwarm off · /)
+  expect(await pane.find({ type: 'Button', key: 'hotpot-keep' })).toMatchObject({ props: { label: 'Keep the fire on · 6h' } })
+  expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).toMatchObject({ props: { label: 'Top up now' } })
+  await pane.unmount()
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await band.find({ type: 'Text', text: /· cache not warmed yet$/ })).toBeDefined()
+  await band.unmount()
+})
+
+test('Start fresh puts /clear in the held prompt\'s place, and the card and the board then say Enter starts fresh, not that it pays', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await aTurn($, 't1')
+  await clock.advance(61 * 60_000)
+  expect((await $.prompt.submit(typed('where were we?'))).drop).toMatch(/CACHE TAX/)
+  await clock.advance(1000)
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await band.find({ type: 'Text', text: /Your prompt is back in the box: press Enter to pay and send\./ })).toBeDefined()
+  await band.press({ key: 'tax-clear' })
+  await clock.settle()
+  expect(seen.filled.at(-1)).toBe('/clear')
+  expect(await band.find({ type: 'Text', text: /\/clear is in the box: press Enter to start fresh\./ })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /press Enter to pay and send/ })).toBeUndefined()
+  await band.unmount()
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  expect((await boardLines(pane))[1]).toBe('/clear is in the box: Enter starts fresh')
+  await pane.unmount()
+})
+
+test('the slash replies count time as the pane does: whole minutes, a length as its buttons name it, the TTL marked while assumed', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await aTurn($, 't1')
+  await clock.advance(30_000)
+  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/^state {6}cache warm, 59m left \(TTL 1h\?\)$/m)
+  expect((await $.command.run(cmd('keepwarm', '1m30'))).text).toMatch(/^keepwarm on for 1m30s: a cheap ping \(≈\$\d+\.\d\d at \d+k tokens\) lands shortly before the cache would lapse \(TTL 1h\?\), while the session is idle\.$/)
+  const report = (await $.command.run(cmd('cache-tax'))).text
+  expect(report).toMatch(/^state {6}cache kept warm, 1m left \(TTL 1h\?\)$/m)
+  expect(report).toMatch(/^keepwarm {3}on, 1m left · /m)
+})
+
+test('a terminal pane keeps half blocks while the board and the buttons leave them room, and draws quadrants once the bill needs it', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await aTurn($, 't1')
+  await clock.advance(30_000)
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: HOTPOT_ID, props: { ...PANE_PROPS, bodyColumns: 74, scroll: { offset: 0, bodyRows: 24 } } })
+  expect(await pane.find({ type: 'Raster', key: 'hotpot-scene' })).toMatchObject({ props: { columns: 70, rows: 17 } })
+  await pane.press({ key: 'hotpot-bill' })
+  await clock.settle()
+  expect(await pane.find({ type: 'Raster', key: 'hotpot-scene' })).toMatchObject({ props: { columns: 35, rows: 9 } })
+  await pane.unmount()
 })
 
 test('kaomoji: the Hotpot draws faces round a text gauge, the wooden board\'s two lines and its buttons, no Raster or Svg on any surface', { options: { characterArt: 'kaomoji' } }, async ($, on) => {
@@ -3766,7 +3844,7 @@ test('keep the fire on, let it cool and both Keep it warm after buttons write ke
   await clock.advance(60_000)
   await pane.press({ key: 'hotpot-keep' })
   await clock.settle()
-  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/keepwarm {3}on, 2h00m left/)
+  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/keepwarm {3}on, 2h left/)
   expect(await pane.find({ type: 'Button', key: 'hotpot-keep' })).toMatchObject({ props: { label: 'Let it cool (keepwarm off)' } })
   expect((await boardLines(pane))[0]).toMatch(/^♨ Bubbling {2}keepwarm on for 2h: Nijika tops it up before each lapse$/)
   await pane.press({ key: 'hotpot-keep' })
@@ -3781,7 +3859,7 @@ test('keep the fire on, let it cool and both Keep it warm after buttons write ke
   await clock.advance(60_000)
   await band.press({ key: 'tax-keepwarm' })
   await clock.settle()
-  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/keepwarm {3}on, 2h00m left/)
+  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/keepwarm {3}on, 2h left/)
   await band.unmount()
   await $.command.run(cmd('keepwarm', 'off'))
   const held = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
@@ -3791,7 +3869,7 @@ test('keep the fire on, let it cool and both Keep it warm after buttons write ke
   await clock.advance(60_000)
   await held.press({ key: 'hotpot-tax-keep' })
   await clock.settle()
-  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/keepwarm {3}on, 2h00m left/)
+  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/keepwarm {3}on, 2h left/)
   await held.unmount()
 })
 
@@ -3895,7 +3973,7 @@ test('re-heat and zosui take two presses; a re-heat warms, from the clock read b
   await clock.settle()
   expect(seen.compacts).toBe(1)
   expect(seen.toasts.some(t => /the set is compacted: 180k → 12\.0k tokens/.test(t))).toBe(true)
-  expect((await boardLines(pane))[0]).toBe('The table is set  180k → 12.0k tokens')
+  expect((await boardLines(pane))[0]).toBe('The table is set  180k → 12.0k tokens: the next send writes the smaller pot')
   await pane.press({ key: 'hotpot-bill' })
   await clock.settle()
   expect(await pane.find({ type: 'Text', text: /^Compaction · 1 zosui$/ })).toBeDefined()
@@ -3920,7 +3998,7 @@ test('a plugin\'s compaction with no press behind it is drawn and settled by the
   await clock.advance(3000)
   expect((await compacting).skip).toBeUndefined()
   expect(seen.toasts.some(t => /the set is compacted: 180k → 12\.0k tokens/.test(t))).toBe(true)
-  expect((await boardLines(pane))[0]).toBe('The table is set  180k → 12.0k tokens')
+  expect((await boardLines(pane))[0]).toBe('The table is set  180k → 12.0k tokens: the next send writes the smaller pot')
   expect((await stateOf(st, 'cache')).lastWarmAt).toBe(0)
   await pane.press({ key: 'hotpot-bill' })
   await clock.settle()
@@ -3941,7 +4019,7 @@ test('clear the table fills /clear, on a second press over a draft; a box that c
   await pane.press({ key: 'hotpot-clear' })
   await clock.settle()
   expect(seen.filled).toEqual(['/clear'])
-  expect((await boardLines(pane))[0]).toMatch(/ {2}\/clear is in the box: Esc, then Enter$/)
+  expect((await boardLines(pane))[0]).toMatch(/ {2}\/clear is in the box: Esc, then Enter, and the next send writes a fresh pot( \(keepwarm stays on\))?$/)
   knobs.draft = 'half a thought'
   await pane.press({ key: 'hotpot-clear' })
   await clock.settle()
@@ -3981,7 +4059,7 @@ test('in the desktop app (an SDK session, no REPL) Zosui is dim and says why, wh
   await pane.press({ key: 'hotpot-clear' })
   await clock.settle()
   expect(seen.filled).toEqual(['/clear'])
-  expect((await boardLines(pane))[0]).toMatch(/ {2}\/clear is in the box: Esc, then Enter$/)
+  expect((await boardLines(pane))[0]).toMatch(/ {2}\/clear is in the box: Esc, then Enter, and the next send writes a fresh pot( \(keepwarm stays on\))?$/)
   await pane.unmount()
 })
 
@@ -4007,7 +4085,7 @@ test('a slow zosui is drawn until its call resolves, the forks dim meanwhile; a 
   expect((await boardLines(pane))[1]).toMatch(/ · compacting$/)
   await clock.advance(3000)
   expect(seen.compacts).toBe(1)
-  expect((await boardLines(pane))[0]).toBe('The table is set  180k → 12.0k tokens')
+  expect((await boardLines(pane))[0]).toBe('The table is set  180k → 12.0k tokens: the next send writes the smaller pot')
   // a veto: said so, Bocchi out of her melt, nothing left compacting
   await aTurn($, 't2')
   knobs.compactMs = 0
@@ -4196,10 +4274,10 @@ test('a resume\'s SessionStart sets the warmth, the context and the model (never
   // The engine says it lapsed: cold whatever the TTL in force, the hour (200 s teaches none) or five minutes.
   await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 200, prompt_cache_likely_expired: true })
   expect((await stateOf(st, 'ledger')).ttl).toEqual({ ms: 60 * 60_000, how: 'engine' })
-  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/cache COLD/)
+  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/cache cold for /)
   await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 400, prompt_cache_likely_expired: true })
   expect((await stateOf(st, 'ledger')).ttl).toEqual({ ms: 5 * 60_000, how: 'engine' })
-  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/cache COLD/)
+  expect((await $.command.run(cmd('cache-tax'))).text).toMatch(/cache cold for /)
 })
 
 test('a resumed conversation\'s first step is judged against its context: one that re-writes it cold books the Cache Tax', async ($, on) => {
@@ -4472,7 +4550,7 @@ test('/cache-tax prints saved and tax paid; with no screen /hotpot answers in on
   expect(report).toMatch(/^tax paid {3}≈\$0\.00 · 0 cold re-writes$/m)
   expect((await $.command.run(cmd('hotpot'))).text).toBe('♨ Hotpot · bubbling, 59m of feast left · 304k on the table · a re-order ≈$1.21 · a top-up ≈$0.03 · a day of keepwarm ≈$0.74 · keepwarm off · TTL 1h?')
   expect(seen.opened).not.toContain(HOTPOT_ID)
-  expect((await $.command.run(cmd('keepwarm', '2h'))).text).toBe('keepwarm on for 2h00m, but nothing will ping: keepwarm\'s minute timer runs only in a session with a screen.')
+  expect((await $.command.run(cmd('keepwarm', '2h'))).text).toBe('keepwarm on for 2h, but nothing will ping: keepwarm\'s minute timer runs only in a session with a screen.')
   // with no minute tick, Nijika never has the pot
   await clock.advance(57 * 60_000)
   expect((await $.command.run(cmd('hotpot'))).text).toMatch(/^♨ Hotpot · last orders, cold in 2m · /)
@@ -4623,9 +4701,9 @@ test('the /bocchi tax preview\'s card counts on from its sample, as a real hold\
   // nothing cached: the sample is two TTLs back, its minutes its own
   await $.command.run(cmd('bocchi', 'tax'))
   let band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
-  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 1h00m ago!!$/ })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 1h ago!!$/ })).toBeDefined()
   await clock.advance(61_000)
-  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 1h01m ago!!$/ })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 1h 1m ago!!$/ })).toBeDefined()
   await band.unmount()
   // over a cache cold five minutes: the session's own age
   await clock.advance(15 * 60_000)
@@ -4633,9 +4711,9 @@ test('the /bocchi tax preview\'s card counts on from its sample, as a real hold\
   await clock.advance(65 * 60_000)
   await $.command.run(cmd('bocchi', 'tax'))
   band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
-  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 5:00 ago!!$/ })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 5m ago!!$/ })).toBeDefined()
   await clock.advance(61_000)
-  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 6:00 ago!!$/ })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 6m ago!!$/ })).toBeDefined()
   await band.unmount()
 })
 
@@ -4677,12 +4755,12 @@ test('/keepwarm on a cold or empty cache still opens with its length and says th
   bottoms(on, clock, seen)
   stepBottom(on)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
-  expect((await $.command.run(cmd('keepwarm', '2h'))).text).toBe('keepwarm on for 2h00m: nothing cached yet: the next send warms it, and the pings start then.')
+  expect((await $.command.run(cmd('keepwarm', '2h'))).text).toBe('keepwarm on for 2h: nothing cached yet: the next send warms it, and the pings start then.')
   // (left on, its own ping would keep the cache warm through the hour below)
   await $.command.run(cmd('keepwarm', 'off'))
   await aTurn($, 't1')
   await clock.advance(61 * 60_000)
-  expect((await $.command.run(cmd('keepwarm', '1h'))).text).toBe('keepwarm on for 1h00m: the cache is cold: the next send warms it, and the pings start then.')
+  expect((await $.command.run(cmd('keepwarm', '1h'))).text).toBe('keepwarm on for 1h: the cache is cold: the next send warms it, and the pings start then.')
 })
 
 test('/bocchi tax touches neither the ledger nor the cache\'s model, context and warmth, so the next step books no tax', async ($, on) => {
@@ -4703,6 +4781,8 @@ test('/bocchi tax touches neither the ledger nor the cache\'s model, context and
   expect((await stateOf(st, 'hotpot')).sample).toMatchObject({ model: 'claude-sonnet-5-5', tokens: 330_316 })
   const band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
   expect(await band.find({ type: 'Text', text: /330k tokens/ })).toBeDefined()
+  // nothing on the table yet: the card names no price for keepwarm either
+  expect(await band.find({ type: 'Button', key: 'tax-keepwarm' })).toMatchObject({ props: { label: 'Keep it warm after (6h)' } })
   await band.unmount()
   await aTurn($, 't1')
   expect((await stateOf(st, 'ledger')).tax.count).toBe(0)
@@ -4724,9 +4804,9 @@ test('a send after /bocchi tax plays no …paid.: the preview held nothing, befo
   // and over a warm cache
   await clock.advance(60_000)
   await $.command.run(cmd('bocchi', 'tax'))
-  // the sample is a cold one, two TTLs back, never a warm pot's "went cold 0:00 ago"
+  // the sample is a cold one, two TTLs back, never a warm pot's "went cold under 1m ago"
   const band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
-  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 1h00m ago!!$/ })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 1h ago!!$/ })).toBeDefined()
   await band.unmount()
   expect((await $.prompt.submit(typed('and a warm one'))).drop).toBeUndefined()
   expect((await stateOf(st, 'hotpot')).moment).toBeNull()

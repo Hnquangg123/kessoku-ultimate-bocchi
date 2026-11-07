@@ -148,6 +148,7 @@ import {
   hotpotSvg,
   isHostNoCompact,
   isNoBox,
+  isPriced,
   isTtlDefault,
   keepwarmUsd,
   lastWindow,
@@ -163,8 +164,10 @@ import {
   stripWords,
   taxPaidUsd,
   taxReason,
+  terminalRowsBelow,
   topUpUsd,
   ttlInForce,
+  ttlMark,
   warmthDue,
   writePerToken,
 } from './lib/hotpot'
@@ -370,6 +373,8 @@ let hostNoCompact = false
  * client, as `-p`: the desktop app takes fills into its own box): Clear the table and Start fresh are dim then.
  */
 let hostNoBox = false
+/** The hold (its `heldAt`) whose Start fresh put /clear in the box: the card and the board say what Enter does now. */
+let freshFor = 0
 /** A paid re-order's turn is under way: the Hotpot keeps the feast drawn until its first step books it warm (or the turn ends). */
 let paying = false
 const badSleepers = new Set<string>()
@@ -562,14 +567,22 @@ function setStatus($: EngineInterface, text: string): void {
   $.ui.status(text)
 }
 
-/** /cache-tax's state line: the warmth by `feastOf`, cold or warm. */
+/** /cache-tax's state line: the warmth in the strip's words (`cache cold for 14m`), as every surface counts it. */
 function warmth(c: KessokuCache, l: KessokuLedger, now: number): string {
-  const fe = feastOf(c, now, ttlMs(), { cachingOff: cachingOff(l) })
-  if (fe.phase === 'off') return 'cache: off (prompt caching is off)'
-  if (c.lastWarmAt <= 0) return 'cache: nothing cached yet'
-  if (fe.phase === 'cold') return `cache COLD ${fmtDuration(-fe.leftMs)} ago`
-  const keep = c.keepWarmUntil > now ? ` · keepwarm ${fmtDuration(c.keepWarmUntil - now)}` : ''
-  return `cache warm ${fmtDuration(fe.leftMs)}${keep}`
+  const fl = feastFlags(c, l, now)
+  return `cache ${stripWords(feastOf(c, now, ttlMs(), fl), c, now, fl.keepwarmHeld === true)}`
+}
+
+/** The TTL as the pane marks it while unsettled (`TTL 1h?`, `TTL 5m?`), else plainly (`TTL 5m`). */
+function ttlLabel(): string {
+  const t = ttlNow()
+  return ttlMark(t) || `TTL ${lengthText(t.ms)}`
+}
+
+/** A typed keepwarm length as the pane names lengths (`30m`, `1h30m`), with its seconds where it has them (`1m30s`). */
+function keepLengthText(ms: number): string {
+  const sec = Math.floor((ms % 60_000) / 1000)
+  return sec === 0 ? lengthText(ms) : ms < 60_000 ? `${sec}s` : `${lengthText(ms - (ms % 60_000))}${sec}s`
 }
 
 /** What re-writing the cache costs: a re-order at the engine's price per token while the cache's model is the one it priced, else at the TTL's list write rate. */
@@ -1121,7 +1134,7 @@ async function coldWatch($: EngineInterface): Promise<void> {
   const left = feastOf(c, now, ttl).leftMs
   if (left <= 0 || left > Math.min(COLD_NOTICE_MS, ttl / 2)) return
   coldNoticeFor = c.lastWarmAt
-  const text = `Cache Tax: the cache goes cold in ${fmtDuration(left)} · re-writing ${fmtTokens(c.contextTokens)} tokens would cost ≈${fmtUsd(coldWriteUsd(c, l))} · /keepwarm keeps it warm`
+  const text = `Cache Tax: the cache goes cold in ${minutesText(left)} · re-writing ${fmtTokens(c.contextTokens)} tokens would cost ≈${fmtUsd(coldWriteUsd(c, l))} · /keepwarm keeps it warm`
   if (!(await notify($, text))) toast($, `${MEMBERS.bocchi.faces.anxious} ${text}`)
 }
 
@@ -1151,7 +1164,7 @@ async function settleCompaction($: EngineInterface, before: number | undefined, 
   })
   await revertMood($)
   const shrank = before !== undefined && after !== undefined ? `${fmtTokens(before)} → ${fmtTokens(after)} tokens` : ''
-  if (shrank !== '') await noteHotpot($, shrank, false)
+  if (shrank !== '') await noteHotpot($, `${shrank}: the next send writes the smaller pot`, false)
   toast($, `${MEMBERS.nijika.faces.happy} Nijika: the set is compacted${shrank === '' ? '' : `: ${shrank}`}`, 'chatter')
 }
 
@@ -1896,16 +1909,20 @@ async function hotpotViewOf($: EngineInterface, e: Site | null, now: number): Pr
     pick: pickMs(h),
     slip: feast.phase === 'held' ? { writeUsd: c.heldUsd, warmUsd: c.warmUsd, tokens: held.tokens, ageMs: held.ageMs } : null,
     pingAt: pingGoesAt(c, now),
-    flags: { noSnapshot, compacting: isCompacting, working: b.isWorking, forkOut, compactOff: !features.compact, draftOff: !features.draft, paying, noCompact: hostNoCompact, noBox: hostNoBox, promptBack: promptIsBack(c, h) },
+    flags: { noSnapshot, compacting: isCompacting, working: b.isWorking, forkOut, compactOff: !features.compact, draftOff: !features.draft, paying, noCompact: hostNoCompact, noBox: hostNoBox, promptBack: promptIsBack(c, h), clearInBox: freshFor === c.heldAt && c.heldAt > 0 },
     isTerminal: e?.surface === 'terminal',
     isFocused: e !== null && 'isFocused' in e.props ? e.props.isFocused === true : false,
   }
 }
 
-/** The Hotpot opened: placed at any width when asked; where no surface places it (or it waits undrawn), above the prompt. */
+/**
+ * The Hotpot opened: placed at any width when asked; where no surface places it (or it waits undrawn), above the
+ * prompt. It leaves the keyboard with the prompt: its buttons' letters spend (a top-up, keepwarm) or close, so a prompt
+ * typed on after /hotpot must not press them; ctrl+x tab or a click hands the pane the keys.
+ */
 async function openHotpot($: EngineInterface): Promise<boolean> {
   reopenSprites(HOTPOT)
-  const placed = await $.ui.open({ id: HOTPOT, title: '♨ Hotpot', focus: true, closeOnEscape: true, rows: 28, columns: 74 })
+  const placed = await $.ui.open({ id: HOTPOT, title: '♨ Hotpot', closeOnEscape: true, rows: 28, columns: 74 })
   await update($, hotpot, x => ({ ...x, isOpen: true, inBand: !placed.isPlaced }))
   return placed.isPlaced
 }
@@ -2064,7 +2081,18 @@ async function pressClear($: EngineInterface): Promise<void> {
   const filled = await $.prompt.fill({ text: '/clear', mode: 'replace' }).catch(() => null)
   // No box to fill on this host (it draws its own composer): Clear the table is dim from now on.
   if (isNoBox(filled)) hostNoBox = true
-  await noteHotpot($, filled !== null && filled.isFilled ? '/clear is in the box: Esc, then Enter' : hostNoBox ? 'this app keeps its own prompt box: type /clear' : 'the box could not take /clear: type it')
+  const kept = (await read($, cache)).keepWarmUntil > now ? ' (keepwarm stays on)' : ''
+  await noteHotpot($, filled !== null && filled.isFilled ? `/clear is in the box: Esc, then Enter, and the next send writes a fresh pot${kept}` : hostNoBox ? 'this app keeps its own prompt box: type /clear' : 'the box could not take /clear: type it')
+}
+
+/** Start fresh, the Cache Tax card's and the pane's during a hold: /clear in the box in place of the held prompt, and the card and the board say Enter now starts fresh. */
+async function pressStartFresh($: EngineInterface): Promise<void> {
+  if (hostNoBox) return
+  const c = await read($, cache)
+  const filled = await $.prompt.fill({ text: '/clear', mode: 'replace' }).catch(() => null)
+  if (isNoBox(filled)) hostNoBox = true
+  if (filled !== null && filled.isFilled) freshFor = c.heldAt
+  await noteHotpot($, filled !== null && filled.isFilled ? '/clear is in the box: Esc, then Enter starts fresh' : hostNoBox ? 'this app keeps its own prompt box: type /clear' : 'the box could not take /clear: type it')
 }
 
 // ---- The panel ---------------------------------------------------------------
@@ -3210,7 +3238,9 @@ function keepPriceOf(c: KessokuCache, l: KessokuLedger, ms: number): number {
 
 /** The Cache Tax card's and the Hotpot's `Keep it warm after`: one label, one press, one length. */
 function keepAfterLabel(c: KessokuCache, l: KessokuLedger, h: KessokuHotpot, now: number): string {
-  return c.keepWarmUntil > now ? 'Keep warm: on' : `Keep it warm after (${lengthText(pickMs(h))}) ≈${fmtUsd(keepPriceOf(c, l, pickMs(h)))}`
+  if (c.keepWarmUntil > now) return 'Keep warm: on'
+  // unpriced as the pane is: no context size yet, or caching off
+  return `Keep it warm after (${lengthText(pickMs(h))})${isPriced({ cache: c, ledger: l }) ? ` ≈${fmtUsd(keepPriceOf(c, l, pickMs(h)))}` : ''}`
 }
 
 /** Keepwarm armed for a length from the clock read at the press (Nijika ties her headband on), or switched off; armed past its ping's time, it pings now. */
@@ -3237,9 +3267,10 @@ function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: Kess
   const { Box, Text, Button } = $.ui.resolve(e)
   const held = heldFigures(c, hp, now)
   const back = promptIsBack(c, hp)
-  // cold since it lapsed (the warmth's age less the TTL), as the strip and the chalkboard's foot count it
+  const fresh = freshFor === c.heldAt && c.heldAt > 0
+  // cold since it lapsed (the warmth's age less the TTL), in the whole minutes the strip and the board count
   const coldMs = Math.max(0, held.ageMs - ttlMs())
-  const age = held.ageMs > 0 ? fmtDuration(coldMs) : '?'
+  const age = held.ageMs > 0 ? minutesText(coldMs) : '?'
   // the card stands for the hold's 15 minutes and counts on: the count's next minute (a preview's runs on its sample's,
   // which the warmth's need not share) and the hold's end redraw the band, where no pane's tail may come
   scheduleTail($, warmthDue(c, now, ttlMs()), now)
@@ -3263,13 +3294,13 @@ function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: Kess
           <Text bold color="error">{fmtUsd(c.heldUsd)}</Text>
           <Text dimColor>
             {` (a warm turn: ≈${fmtUsd(c.warmUsd)}). `}
-            {back ? 'Your prompt is back in the box: press Enter to pay and send.' : 'Your prompt could not go back in the box: your next send pays and sends.'}
+            {fresh ? '/clear is in the box: press Enter to start fresh.' : back ? 'Your prompt is back in the box: press Enter to pay and send.' : 'Your prompt could not go back in the box: your next send pays and sends.'}
             {hostNoBox ? ' Type /clear to start fresh.' : ''}
           </Text>
         </Text>
         <Box flexDirection="row" flexWrap="wrap" columnGap={2} marginTop={1}>
           <Button key="tax-keepwarm" label={keepAfterLabel(c, l, hp, now)} hotkey="w" plain onPress={() => void setKeepwarm($, pickMs(hp))} />
-          <Button key="tax-clear" label="Start fresh (/clear)" hotkey="f" plain dimColor={hostNoBox} onPress={() => (hostNoBox ? undefined : void $.prompt.fill({ text: '/clear', mode: 'replace' }))} />
+          <Button key="tax-clear" label="Start fresh (/clear)" hotkey="f" plain dimColor={hostNoBox} onPress={() => void pressStartFresh($)} />
           <Button key="tax-dismiss" label="Dismiss" hotkey="d" plain dimColor onPress={() => void dismissHold($)} />
         </Box>
       </Box>
@@ -3428,9 +3459,11 @@ function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Dr
       </Box>
     )
   } else if (opts.characterArt === 'sprites' && isTerminal) {
-    // Half blocks (70 x 17 cells) with 74 columns and 24 rows to spare; quadrants (35 x 9) from 36 columns; else text.
+    // Half blocks (70 x 17 cells) with 74 columns and the rows for them over what the board and the buttons take (and
+    // the bill, open); quadrants (35 x 9) from 36 columns; else text.
     const rows = 'maxRows' in e.props ? e.props.maxRows : e.props.scroll.bodyRows
-    const mode: CellMode | null = e.props.bodyColumns >= 74 && rows >= 24 ? 'half' : e.props.bodyColumns >= 36 ? 'quad' : null
+    const fitsHalf = e.props.bodyColumns >= 74 && rows >= CELLS_H / 2 + terminalRowsBelow(v, e.props.bodyColumns)
+    const mode: CellMode | null = fitsHalf ? 'half' : e.props.bodyColumns >= 36 ? 'quad' : null
     if (mode !== null) {
       const cells = hotpotCells(v)
       feast = drawSprite($, e, { key: 'hotpot-scene', parts: cells.parts, w: cells.w, h: cells.h, mode, scale: 1, alt: hotpotAlt(v), under: cells.under }, now)
@@ -3465,7 +3498,7 @@ function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Dr
     'hotpot-bill': () => void update($, hotpot, h => ({ ...h, isBillOpen: !h.isBillOpen })),
     'hotpot-close': () => void closeHotpot($),
     'hotpot-tax-keep': () => void setKeepwarm($, v.pick),
-    'hotpot-tax-clear': () => void $.prompt.fill({ text: '/clear', mode: 'replace' }),
+    'hotpot-tax-clear': () => void pressStartFresh($),
     'hotpot-tax-dismiss': () => void dismissHold($),
   }
   const bill = v.hotpot.isBillOpen ? billRows(v) : null
@@ -3489,9 +3522,11 @@ function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Dr
             const ms = b.pick
             return <Button key={b.key} label={b.label} variant={b.isOn === true ? 'primary' : undefined} onPress={() => void update($, hotpot, h => ({ ...h, pick: ms }))} />
           }
-          // A button that cannot act now is dim, and its press spends and arms nothing (the board says why).
-          if (b.reason !== '') return <Button key={b.key} label={b.label} hotkey={b.hotkey} dimColor onPress={() => undefined} />
-          return <Button key={b.key} label={b.label} hotkey={b.hotkey} onPress={presses[b.key] ?? (() => undefined)} />
+          // A button that cannot act now is dim, and its press spends and arms nothing (the board says why). Plain, so a
+          // terminal draws its key before its label (`w: Keep the fire on`), as the board's `ctrl+x tab for its keys`
+          // promises; a desktop draws its native button either way.
+          if (b.reason !== '') return <Button key={b.key} label={b.label} hotkey={b.hotkey} plain dimColor onPress={() => undefined} />
+          return <Button key={b.key} label={b.label} hotkey={b.hotkey} plain onPress={presses[b.key] ?? (() => undefined)} />
         })}
       </Box>
       {bill === null ? null : (
@@ -4079,13 +4114,13 @@ export const register: Register = (on, options) => {
     const c = await read($, cache)
     const l = await read($, ledger)
     const now = await $.clock.now()
-    const head = `keepwarm on for ${fmtDuration(ms)}`
+    const head = `keepwarm on for ${keepLengthText(ms)}`
     // The pings run on the minute timer, which only a session with a screen keeps.
     if (!canDraw()) return { text: `${head}, but nothing will ping: keepwarm's minute timer runs only in a session with a screen.` }
     if (c.lastWarmAt <= 0) return { text: `${head}: nothing cached yet: the next send warms it, and the pings start then.` }
     if (isCold(c, l, now)) return { text: `${head}: the cache is cold: the next send warms it, and the pings start then.` }
     const P = l.prompt > 0 ? l.prompt : c.contextTokens
-    return { text: `${head}: a cheap ping (≈${fmtUsd(topUpUsd(P, c.model))} at ${fmtTokens(P)} tokens) lands shortly before the ${fmtDuration(ttlMs())} cache would lapse, while the session is idle.` }
+    return { text: `${head}: a cheap ping (≈${fmtUsd(topUpUsd(P, c.model))} at ${fmtTokens(P)} tokens) lands shortly before the cache would lapse (${ttlLabel()}), while the session is idle.` }
   })
   on('command.run', { command: 'cache-tax' }, async $ => {
     const c = await read($, cache)
@@ -4098,10 +4133,10 @@ export const register: Register = (on, options) => {
     const rate = hitRate(l)
     const lines = [
       `${MEMBERS.bocchi.faces[isCold(c, l, now) ? 'panic' : 'anxious']} Cache Tax`,
-      `state      ${warmth(c, l, now)} (TTL ${fmtDuration(ttl)})`,
+      `state      ${warmth(c, l, now)} (${ttlLabel()})`,
       `context    ${fmtTokens(c.contextTokens)} tokens on ${c.model || 'the session model'}`,
       `cold send  ≈ ${fmtUsd(write)} to re-write the cache${isEnginePrice(c, l) ? " (the engine's own estimate)" : ''} · warm send ≈ ${fmtUsd(warm)}`,
-      `keepwarm   ${c.keepWarmUntil > now ? `on, ${fmtDuration(c.keepWarmUntil - now)} left` : 'off (/keepwarm to arm it)'} · ${l.pings.count} pings so far (≈${fmtUsd(pingsUsd(l, ttl))}${l.pings.misses > 0 ? `, ${l.pings.misses} found it cold` : ''})${c.lastPingNote ? ` · ${c.lastPingNote}` : ''}`,
+      `keepwarm   ${c.keepWarmUntil > now ? `on, ${minutesText(c.keepWarmUntil - now)} left` : 'off (/keepwarm to arm it)'} · ${l.pings.count} pings so far (≈${fmtUsd(pingsUsd(l, ttl))}${l.pings.misses > 0 ? `, ${l.pings.misses} found it cold` : ''})${c.lastPingNote ? ` · ${c.lastPingNote}` : ''}`,
       `saved      ${saved >= 0 ? `≈${fmtUsd(saved)}` : `cost ≈${fmtUsd(-saved)} more`} this conversation, against sending it all uncached${rate === null ? '' : ` · hit rate ${Math.round(rate * 100)}%`}`,
       `tax paid   ≈${fmtUsd(taxPaidUsd(l, ttl))} · ${l.tax.count} cold re-write${l.tax.count === 1 ? '' : 's'}${l.tax.silent > 0 ? `, ${l.tax.silent} silent` : ''}${l.tax.midTurn > 0 ? `, ${l.tax.midTurn} mid-turn` : ''}`,
     ]

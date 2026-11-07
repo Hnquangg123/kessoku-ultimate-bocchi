@@ -66,6 +66,7 @@ import {
   speechOf,
   stripWords,
   taxReason,
+  terminalRowsBelow,
   topUpUsd,
   ttlInForce,
   ttlMark,
@@ -87,7 +88,7 @@ const near = (got: number, want: number, digits = 6) => expect(Math.abs(got - wa
 
 const cacheAt = (ageMs: number, over: Partial<{ keepWarmUntil: number; contextTokens: number; model: string; heldAt: number }> = {}) => ({ lastWarmAt: ageMs < 0 ? 0 : NOW - ageMs, keepWarmUntil: 0, contextTokens: 168_000, model: OPUS, heldAt: 0, ...over })
 const HOTPOT: KessokuHotpot = { isOpen: true, inBand: false, isBillOpen: false, pick: 0, armed: null, moment: null, note: null, sample: null }
-const FLAGS = { noSnapshot: false, compacting: false, working: false, forkOut: false, compactOff: false, draftOff: false, paying: false, noCompact: false, noBox: false, promptBack: true }
+const FLAGS = { noSnapshot: false, compacting: false, working: false, forkOut: false, compactOff: false, draftOff: false, paying: false, noCompact: false, noBox: false, promptBack: true, clearInBox: false }
 
 /** A view of the pane: a cache warmed `ageMs` ago (-1: nothing cached), the ledger P at 168k, a one-hour TTL assumed. */
 function viewOf(ageMs: number, over: Partial<HotpotView> = {}, cacheOver: Parameters<typeof cacheAt>[1] = {}, flags: Parameters<typeof feastOf>[3] = {}): HotpotView {
@@ -157,9 +158,10 @@ test('the strip, the foot and the rail read their words off the phase, in whole 
     const fe = feastOf(c, NOW, HOUR, flags)
     return [stripWords(fe, c, NOW, flags.keepwarmHeld === true), railWords(fe, c, NOW, flags.keepwarmHeld === true)]
   }
-  expect(words(-1)).toEqual(['no cache yet', '○ no cache yet'])
-  expect(words(-1, { cleared: true })).toEqual(['no cache yet', '○ no cache yet'])
-  expect(words(-1, { cachingOff: true })).toEqual(['no cache here (caching off)', '○ caching off'])
+  // each read after `cache ` on the strips, the sign and the chalkboard's foot
+  expect(words(-1)).toEqual(['not warmed yet', '○ no cache yet'])
+  expect(words(-1, { cleared: true })).toEqual(['not warmed yet', '○ no cache yet'])
+  expect(words(-1, { cachingOff: true })).toEqual(['off (caching is off)', '○ caching off'])
   expect(words(12 * MIN)).toEqual(['warm, 48m left', '☀ warm 48m'])
   expect(words(12 * MIN, {}, NOW + 5 * HOUR + 12 * MIN)).toEqual(['kept warm, 5h 12m left', '● keepwarm 5h12m'])
   expect(words(57 * MIN)).toEqual(['last orders, cold in 3m', '☀ last orders 3m'])
@@ -191,8 +193,8 @@ test('the strip, the foot and the rail read their words off the phase, in whole 
   expect(words(72 * MIN, { held: true })).toEqual(['cold for 12m · a send is held', '❄ cold · held'])
   // a hold over a warm pot or none (only /bocchi tax's preview makes one) says so, never cold
   expect(words(12 * MIN, { held: true })).toEqual(['warm, 48m left · a send is held', '☀ warm · held'])
-  expect(words(-1, { held: true })).toEqual(['a send is held', '○ no cache · held'])
-  expect(words(12 * MIN, { compacting: true })).toEqual(['zosui (compacting)', '〆 zosui'])
+  expect(words(-1, { held: true })).toEqual(['not warmed yet · a send is held', '○ no cache · held'])
+  expect(words(12 * MIN, { compacting: true })).toEqual(['compacting (zosui)', '〆 zosui'])
   expect(minutesText(59_999)).toBe('under 1m')
   expect(minutesText(48 * MIN + 59_999)).toBe('48m')
   expect(minutesText(5 * HOUR)).toBe('5h')
@@ -520,7 +522,13 @@ test('the wooden board in every phase: the state in a word and its tail, then th
   expect(boardOf(viewOf(9 * MIN, { flags: { ...FLAGS, compacting: true } }, {}, { compacting: true })).line).toBe(`${figures} · keepwarm off · TTL 1h? · compacting`)
   expect(boardOf(viewOf(-1)).line).toBe(`${figures} · keepwarm off · TTL 1h? · nothing cached yet`)
   expect(boardOf(viewOf(-1, { ledger: { ...INITIAL_LEDGER, prompt: 168_000, canFork: false, cleared: true } }, {}, { cleared: true })).line).toBe(`${figures} · keepwarm off · TTL 1h? · the table was cleared`)
-  expect(boardOf(viewOf(-1, { ledger: { ...INITIAL_LEDGER, prompt: 168_000, canFork: true, steps: 3, cacheless: 3 } }, {}, { cachingOff: true })).line).toBe(`${figures} · keepwarm off · TTL 1h? · prompt caching is off`)
+  // caching off prices no pot and says so once, in the tail
+  expect(boardOf(viewOf(-1, { ledger: { ...INITIAL_LEDGER, prompt: 168_000, canFork: true, steps: 3, cacheless: 3 } }, {}, { cachingOff: true })).line).toBe('168k on the table · keepwarm off')
+  // nothing on the table yet (a new session, or one after /clear, before its first reply): no prices to name
+  expect(boardOf(viewOf(-1, {}, { contextTokens: 0 })).line).toBe('nothing on the table yet · prices after the first reply · keepwarm off · nothing cached yet')
+  // a hold whose Start fresh put /clear in the box says what Enter does now; an unfocused terminal hears how to give it the keys
+  expect(boardOf(viewOf(74 * MIN, { slip, flags: { ...FLAGS, clearInBox: true } }, {}, { held: true })).line).toBe('/clear is in the box: Enter starts fresh')
+  expect(boardOf(viewOf(74 * MIN, { slip, isTerminal: true, isFocused: false }, {}, { held: true })).line).toBe('your prompt is back in the box: Enter pays and sends it, Start fresh puts /clear in its place · ctrl+x tab for its keys')
   expect(hotpotLine(viewOf(9 * MIN))).toBe('♨ Hotpot · bubbling, 51m of feast left · 168k on the table · a re-order ≈$1.34 · a top-up ≈$0.03 · a day of keepwarm ≈$0.83 · keepwarm off · TTL 1h?')
   expect(hotpotAlt(viewOf(9 * MIN))).toBe("the band's hotpot · bubbling, 51m left")
   expect(hotpotAlt(viewOf(57 * MIN))).toBe("the band's hotpot · last orders, cold in 3m")
@@ -538,15 +546,15 @@ test('the buttons say their prices and what is armed, and a dim one names why, i
     'hotpot-pick-1h:1h',
     'hotpot-pick-2h:2h',
     'hotpot-pick-6h:6h',
-    'hotpot-topup:Top up now ≈$0.03 (≈$0.84 if the cache lives 5m)',
-    'hotpot-zosui:Zosui (compact) · the next send writes the smaller pot',
-    'hotpot-clear:Clear the table (/clear) · the next send writes a fresh pot',
+    'hotpot-topup:Top up now ≈$0.03',
+    'hotpot-zosui:Zosui (compact)',
+    'hotpot-clear:Clear the table (/clear)',
     'hotpot-bill:The bill',
     'hotpot-close:Close',
   ])
   expect(keys(viewOf(4 * MIN))[5]).toBe('hotpot-topup:Top up now ≈$0.03')
   expect(keys(viewOf(9 * MIN, {}, { keepWarmUntil: NOW + HOUR }))[0]).toBe('hotpot-keep:Let it cool (keepwarm off)')
-  expect(keys(viewOf(9 * MIN, {}, { keepWarmUntil: NOW + HOUR })).find(k => k.startsWith('hotpot-clear'))).toBe('hotpot-clear:Clear the table (/clear) · the next send writes a fresh pot · keepwarm stays on')
+  expect(keys(viewOf(9 * MIN, {}, { keepWarmUntil: NOW + HOUR })).find(k => k.startsWith('hotpot-clear'))).toBe('hotpot-clear:Clear the table (/clear)')
   expect(keys(viewOf(74 * MIN))[5]).toBe('hotpot-topup:Re-heat now ≈$1.34')
   expect(keys(viewOf(74 * MIN, { hotpot: { ...HOTPOT, armed: { action: 'reheat', at: NOW - 1000 } } }))[5]).toBe('hotpot-topup:Press again: re-write ≈$1.34')
   expect(keys(viewOf(9 * MIN, { hotpot: { ...HOTPOT, armed: { action: 'zosui', at: NOW - 1000 } } }))[6]).toBe('hotpot-zosui:Press again: compact 168k tokens · one summarizing request')
@@ -581,13 +589,44 @@ test('the buttons say their prices and what is armed, and a dim one names why, i
   expect(isNoBox({ isFilled: true })).toBe(false)
   expect(isNoBox(null)).toBe(false)
   // the hold's own words: the prompt back in the box, or, where the host is known to bind none, carried whole in them
-  expect(taxReason(60_000, 168_000, 1.34, 0.03)).toMatch(/CACHE TAX — the prompt cache went cold 1:00 ago! Sending this re-writes 168k tokens ≈ \$1\.34 \(a warm turn would have cost ≈ \$0\.03\)\. Your prompt is back in the box: press Enter again to pay it and send, or \/clear and start from a note\.$/)
+  expect(taxReason(60_000, 168_000, 1.34, 0.03)).toMatch(/CACHE TAX — the prompt cache went cold 1m ago! Sending this re-writes 168k tokens ≈ \$1\.34 \(a warm turn would have cost ≈ \$0\.03\)\. Your prompt is back in the box: press Enter again to pay it and send, or \/clear and start from a note\.$/)
   const long = `${'a long prompt '.repeat(12)}and its end`
   expect(taxReason(60_000, 168_000, 1.34, 0.03, long)).toMatch(/\(a warm turn would have cost ≈ \$0\.03\)\. This app keeps its own prompt box, so your prompt could not go back in it: your next send pays and sends, or type \/clear and start from a note\. It was: (a long prompt ){12}and its end$/)
   expect(taxReason(null, 168_000, 1.34, 0.03)).toMatch(/went cold \? ago!/)
+  expect(taxReason(61 * MIN, 168_000, 1.34, 0.03)).toMatch(/went cold 1h 1m ago!/)
+  // unpriced (nothing on the table yet, or caching off): no prices on the buttons
+  const unpriced = keys(viewOf(-1, {}, { contextTokens: 0 }))
+  expect(unpriced[0]).toBe('hotpot-keep:Keep the fire on · 2h')
+  expect(unpriced.find(k => k.startsWith('hotpot-topup'))).toBe('hotpot-topup:Top up now [nothing cached yet]')
+  expect(keys(viewOf(9 * MIN, { ledger: { ...INITIAL_LEDGER, prompt: 168_000, canFork: true, cacheless: 3 } }))[0]).toBe('hotpot-keep:Keep the fire on · 2h [prompt caching is off]')
+  // resting labels fit a docked terminal pane (about 52 cells inside it, the key and its colon included)
+  const slipped = { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 }
+  for (const v of [viewOf(9 * MIN), viewOf(9 * MIN, {}, { keepWarmUntil: NOW + HOUR }), viewOf(74 * MIN), viewOf(74 * MIN, { slip: slipped }, {}, { held: true }), viewOf(-1)])
+    for (const b of hotpotButtons(v)) expect([...b.label].length + 3).toBeLessThanOrEqual(52)
   // during a hold: the Cache Tax card's three, then the bill and close
   const held = viewOf(74 * MIN, { slip: { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 } }, {}, { held: true })
   expect(keys(held)).toEqual(['hotpot-tax-keep:Keep it warm after (2h) ≈$0.07', 'hotpot-tax-clear:Start fresh (/clear)', 'hotpot-tax-dismiss:Dismiss', 'hotpot-bill:The bill', 'hotpot-close:Close'])
+})
+
+test('the bill carries the top-up\'s five-minute hedge, and an unpriced pot (nothing on the table yet, caching off) prices nothing', async () => {
+  expect(billRows(viewOf(9 * MIN)).rows.find(r => r.label === 'A top-up now')).toEqual({ label: 'A top-up now', detail: '≈$0.84 if the cache lives 5m', figure: '$0.03' })
+  expect(billRows(viewOf(4 * MIN)).rows.find(r => r.label === 'A top-up now')).toBeUndefined()
+  for (const v of [viewOf(-1, {}, { contextTokens: 0 }), viewOf(9 * MIN, { ledger: { ...INITIAL_LEDGER, prompt: 168_000, canFork: true, cacheless: 3 } })]) {
+    const labels = billRows(v).rows.map(r => r.label)
+    expect(labels).not.toContain('If it goes cold')
+    expect(labels).not.toContain('A day of keepwarm')
+  }
+})
+
+test('a terminal pane\'s board and buttons take their rows as they wrap, the bill its own while open; an armed label never moves them', async () => {
+  const v = viewOf(9 * MIN, { isTerminal: true })
+  // 74 columns: the word and its tail on one row, the figures on two, the buttons on three (17 more for half blocks: 23)
+  expect(terminalRowsBelow(v, 74)).toBe(6)
+  expect(terminalRowsBelow(v, 54)).toBe(8)
+  expect(terminalRowsBelow({ ...v, hotpot: { ...HOTPOT, isBillOpen: true } }, 74)).toBe(15)
+  expect(terminalRowsBelow({ ...v, hotpot: { ...HOTPOT, armed: { action: 'zosui', at: NOW - 1000 } } }, 74)).toBe(6)
+  expect(terminalRowsBelow({ ...v, hotpot: { ...HOTPOT, note: { text: 'a long note '.repeat(12), until: NOW + 1 } } }, 74)).toBe(6)
+  expect(terminalRowsBelow(viewOf(74 * MIN, { isTerminal: true, slip: { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 } }, {}, { held: true }), 74)).toBe(5)
 })
 
 test('the bill: reads, writes and the tax among them, pings, re-heats, compaction, the saving, the hit rate by member, a re-order, a day of keepwarm', async () => {
@@ -620,6 +659,7 @@ test('the bill: reads, writes and the tax among them, pings, re-heats, compactio
     ['Hit rate', 'read ÷ everything the steps sent', '85%'],
     ['By member', 'Bocchi 88% · Nijika 71% · Kita 64%', ''],
     ['If it goes cold', 're-order 168k', '$1.34'],
+    ['A top-up now', '≈$0.84 if the cache lives 5m', '$0.03'],
     ['A day of keepwarm', '≈24 pings at a 1h TTL, assumed · ≈$12.2 if it lives 5m', '$0.83'],
   ])
   expect(bill.rows.find(r => r.label === 'Saved by the cache')?.tone).toBe('good')
