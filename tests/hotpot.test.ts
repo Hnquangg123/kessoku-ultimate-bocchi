@@ -168,6 +168,10 @@ test('the strip, the foot and the rail read their words off the phase, in whole 
   expect(words(57 * MIN, { keepwarmHeld: true }, NOW + HOUR)).toEqual(['last orders, cold in 3m · keepwarm waits', '☀ last orders 3m'])
   expect(feastOf(cacheAt(57 * MIN, { keepWarmUntil: NOW + HOUR }), NOW, HOUR, { keepwarmHeld: true }).phase).toBe('last')
   expect(feastOf(cacheAt(57 * MIN, { keepWarmUntil: NOW + HOUR }), NOW, HOUR).phase).toBe('tend')
+  // keepwarm that ends before its ping (the TTL less 90 s, 90 s on here) keeps nothing either: last orders
+  expect(feastOf(cacheAt(57 * MIN, { keepWarmUntil: NOW + 30_000 }), NOW, HOUR).phase).toBe('last')
+  expect(feastOf(cacheAt(57 * MIN, { keepWarmUntil: NOW + 2 * MIN }), NOW, HOUR).phase).toBe('tend')
+  expect(feastOf(cacheAt(59 * MIN, { keepWarmUntil: NOW + 30_000 }), NOW, HOUR).phase).toBe('tend')
   expect(words(72 * MIN, { keepwarmHeld: true }, NOW + HOUR)).toEqual(['cold for 12m · keepwarm on', '❄ cold · keepwarm on'])
   expect(words(72 * MIN, { held: true })).toEqual(['cold for 12m · a send is held', '❄ cold · held'])
   // a hold over a warm pot or none (only /bocchi tax's preview makes one) says so, never cold

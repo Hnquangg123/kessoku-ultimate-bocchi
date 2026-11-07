@@ -4436,7 +4436,7 @@ test('warmth is a step\'s: an answer\'s, an error\'s or an interrupt\'s turn.com
   expect((await stateOf(st, 'ledger')).prompt).toBe(120_000)
 })
 
-test('/cache-tax prints saved and tax paid; with no screen /hotpot answers in one line and /keepwarm says nothing will ping; cold, the pings start with the next send', async ($, on) => {
+test('/cache-tax prints saved and tax paid; with no screen /hotpot answers in one line and /keepwarm says nothing will ping, so the last minutes stay last orders', async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
   bottoms(on, clock, seen)
@@ -4450,6 +4450,35 @@ test('/cache-tax prints saved and tax paid; with no screen /hotpot answers in on
   expect((await $.command.run(cmd('hotpot'))).text).toBe('♨ Hotpot · bubbling, 59m of feast left · 304k on the table · a re-order ≈$1.21 · a top-up ≈$0.03 · a day of keepwarm ≈$0.74 · keepwarm off · TTL 1h?')
   expect(seen.opened).not.toContain(HOTPOT_ID)
   expect((await $.command.run(cmd('keepwarm', '2h'))).text).toBe('keepwarm on for 2h00m, but nothing will ping: keepwarm\'s minute timer runs only in a session with a screen.')
+  // with no minute tick, Nijika never has the pot
+  await clock.advance(57 * 60_000)
+  expect((await $.command.run(cmd('hotpot'))).text).toMatch(/^♨ Hotpot · last orders, cold in 2m · /)
+})
+
+test('keepwarm cannot ping through a running turn: in the pot\'s last minutes the board says Last orders!, the strip that keepwarm waits, and no fork goes', { timeoutMs: 20_000 }, async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await aTurn($, 't1')
+  await $.command.run(cmd('keepwarm', '6h'))
+  // a turn whose first step reads the cache, then waits (on a permission prompt, a long tool, a subagent)
+  await $.turn.start({ text: 'go', turnId: 't2' })
+  for await (const chunk of $.turn.step({ turnId: 't2', index: 0, model: 'claude-sonnet-5-5', messageCount: 1 })) void chunk
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  await clock.advance(50 * 60_000)
+  expect((await boardLines(pane))[0]).toMatch(/^♨ Bubbling|^Simmering|^Running low/)
+  await clock.advance(6 * 60_000)
+  expect((await boardLines(pane))[0]).toMatch(/^Last orders! {2}cold in 4m$/)
+  await pane.unmount()
+  // the terminal strip (the desktop band shows the turn's own line meanwhile)
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await band.find({ type: 'Text', text: /· cache last orders, cold in 4m · keepwarm waits$/ })).toBeDefined()
+  await band.unmount()
+  await clock.advance(5 * 60_000)
+  expect(seen.forks).toBe(0)
 })
 
 test('/keepwarm on a cold or empty cache still opens with its length and says the pings start with the next send', async ($, on) => {

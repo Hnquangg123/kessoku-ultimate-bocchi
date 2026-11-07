@@ -103,7 +103,8 @@ export function feastOf(cache: Pick<KessokuCache, 'lastWarmAt' | 'keepWarmUntil'
   if (flags.cachingOff === true) return at('off', 0)
   if (!warmed) return at(flags.cleared === true ? 'cleared' : 'none', 0)
   if (leftMs <= 0) return at('cold', 0)
-  if (leftMs <= lastWindow(ttlMs)) return at(cache.keepWarmUntil > now && flags.keepwarmHeld !== true ? 'tend' : 'last', 1)
+  // Nijika has the pot while keepwarm lasts until its ping (the TTL less 90 s) and can send it; else last orders
+  if (leftMs <= lastWindow(ttlMs)) return at(cache.keepWarmUntil > Math.max(now, cache.lastWarmAt + ttlMs - PING_LEAD_MS) && flags.keepwarmHeld !== true ? 'tend' : 'last', 1)
   const w = leftMs / ttlMs
   return w > 0.84 ? at('feast', 5) : w > 2 / 3 ? at('feast', 4) : w > 1 / 3 ? at('simmer', 3) : at('low', 2)
 }

@@ -150,6 +150,7 @@ import {
   isNoBox,
   isTtlDefault,
   keepwarmUsd,
+  lastWindow,
   lengthText,
   minutesText,
   newLedger,
@@ -449,18 +450,21 @@ async function writeLedger($: EngineInterface, fn: (l: KessokuLedger) => Kessoku
   return l
 }
 
-/** What decides the feast's phase beyond the warmth: a send held, a compaction running, a cleared table, caching off, keepwarm held back. */
-function feastFlags(c: KessokuCache, l: KessokuLedger, now: number): FeastFlags {
-  return { held: c.heldAt > 0 && now - c.heldAt < HELD_PROMPT_MS, compacting: isCompacting, cleared: l.cleared, cachingOff: cachingOff(l), keepwarmHeld: keepwarmHeld(c, l) }
+/** What decides the feast's phase beyond the warmth: a send held, a compaction running, a cleared table, caching off, keepwarm held back (`working`: a main-loop turn is running). */
+function feastFlags(c: KessokuCache, l: KessokuLedger, now: number, working = false): FeastFlags {
+  return { held: c.heldAt > 0 && now - c.heldAt < HELD_PROMPT_MS, compacting: isCompacting, cleared: l.cleared, cachingOff: cachingOff(l), keepwarmHeld: keepwarmHeld(c, l, now, working) }
 }
 
 /**
- * Keepwarm armed but no ping can go until something changes: the fork gate shut (before the first turn ends, after a
- * switch), the pings stopped by a second 429, no snapshot to fork, caching off, too little to keep. (A ping in flight
- * or a 429's retry still keeps it.)
+ * Keepwarm armed but no ping can go until something changes, as keepWarmTick's own guard has it: the fork gate shut
+ * (before the first turn ends, after a switch), the pings stopped by a second 429, no snapshot to fork, caching off,
+ * too little to keep, no minute tick to ping from (nothing can draw), or a main-loop turn running through the pot's
+ * last minutes (the tick waits for the turn; earlier, the turn's own steps keep the pot). (A ping in flight or a
+ * 429's retry still keeps it.)
  */
-function keepwarmHeld(c: KessokuCache, l: KessokuLedger): boolean {
-  return !l.canFork || noSnapshot || pingsStopped || cachingOff(l) || c.contextTokens < TOP_UP_MIN_TOKENS
+function keepwarmHeld(c: KessokuCache, l: KessokuLedger, now: number, working: boolean): boolean {
+  if (!l.canFork || noSnapshot || pingsStopped || cachingOff(l) || c.contextTokens < TOP_UP_MIN_TOKENS || keepWarmTimer === null) return true
+  return working && c.lastWarmAt > 0 && now - c.lastWarmAt >= ttlMs() - lastWindow(ttlMs())
 }
 
 /** Whether the cache has lapsed: cold by `feastOf` (a TTL or more since it was warmed; never while caching is off). */
@@ -1873,7 +1877,7 @@ async function hotpotViewOf($: EngineInterface, e: Site | null, now: number): Pr
   const h = await read($, hotpot)
   const b = await read($, band)
   const ttl = ttlNow()
-  const feast = feastOf(c, now, ttl.ms, feastFlags(c, l, now))
+  const feast = feastOf(c, now, ttl.ms, feastFlags(c, l, now, b.isWorking))
   const held = heldFigures(c, h, now)
   return {
     now,
@@ -4789,7 +4793,7 @@ export const register: Register = (on, options) => {
     const c = await read($, cache)
     const u = await read($, ui)
     beginSprites(e)
-    return drawPanel($, e, b, c, feastFlags(c, await read($, ledger), now), soloNow(u, now), now, false)
+    return drawPanel($, e, b, c, feastFlags(c, await read($, ledger), now, b.isWorking), soloNow(u, now), now, false)
   })
   on('ui.render', { component: 'Pane', requestId: TREE }, async ($, e) => {
     const now = await $.clock.now()
@@ -4845,7 +4849,7 @@ export const register: Register = (on, options) => {
       beginSprites(e)
       return drawCacheTax($, e, c, l, hp, now)
     }
-    const fl = feastFlags(c, l, now)
+    const fl = feastFlags(c, l, now, (await read($, band)).isWorking)
     const m = await read($, memo)
     if (m !== null && m.status !== 'skipped') {
       beginSprites(e)
