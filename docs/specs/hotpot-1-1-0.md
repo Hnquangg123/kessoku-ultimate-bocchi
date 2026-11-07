@@ -512,14 +512,15 @@ output tokens ≈ $0.0339, so a day of keepwarm is 24.4 × that ≈ $0.83, and a
     under half of it, or a fork that reads as much and writes under 0.1 × P. **Five minutes**: after 5.5 minutes to
     an hour less 20 s (`SIGHTING_MAX_GAP`: keepwarm's own pings at an assumed hour go out on the first tick of its
     minute beat from TTL − 90 s, 58:30 to 59:30 after a step's warmth and about 59 minutes after a ping's, so a miss
-    among them is a sighting) with no reload of the mod in it, a step on the model (`usage.model`) and effort of the
-    request that last warmed the pot, or a fork (which re-sends that request), that writes at least half of P and,
-    for a main-loop step, reads under 10 % of it (a fork is judged by its write, as The ledger judges it). A re-write
-    has other causes (a changed tool list or system prompt, a speed or effort change, a turn past the cache's
-    20-position lookback), so a first sighting only shows `TTL 5m?`, the TTL in force staying an hour, and a second
-    with no one-hour evidence between them sets five minutes. One-hour evidence clears a pending sighting and
-    replaces a learned five minutes; two sightings replace a learned hour, even one taught by a refresh the mod
-    cannot see (another plugin's `$.model.fork`).
+    among them is a sighting; one sent at once, as keepwarm is switched on or a main-loop turn ends past that time,
+    teaches nothing past this gap, as a request so late may reach an hour's lapsed cache too) with no reload of the
+    mod in it, a step on the model (`usage.model`) and effort of the request that last warmed the pot, or a fork (which
+    re-sends that request), that writes at least half of P and, for a main-loop step, reads under 10 % of it (a fork is
+    judged by its write, as The ledger judges it). A re-write has other causes (a changed tool list or system prompt, a
+    speed or effort change, a turn past the cache's 20-position lookback), so a first sighting only shows `TTL 5m?`, the
+    TTL in force staying an hour, and a second with no one-hour evidence between them sets five minutes. One-hour
+    evidence clears a pending sighting and replaces a learned five minutes; two sightings replace a learned hour, even
+    one taught by a refresh the mod cannot see (another plugin's `$.model.fork`).
 - **A model switch is a new pot.** A switch forfeits the entry (`prompt_cache_warm`: "likely still warm (a switch
   then forfeits it)"), so every `classic.PostModelSwitch` whose `source` is not `resume` and whose `to_model` differs
   from `from_model` sets `lastWarmAt` to 0 whatever that flag says, and no fork goes out until a main-loop turn on the
