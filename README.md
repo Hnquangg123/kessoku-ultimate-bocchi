@@ -545,8 +545,9 @@ or more, and 5 minutes left (or half the TTL, if that is shorter):
   (1 h 30 min), `1m30` (1 min 30 s), `1.5h`, or a bare `90` (minutes). `/keepwarm off` (or `stop`) ends it.
 - Each minute, while it is armed, the session idle and not compacting, with 1,000 context tokens or more and the
   cache in its last 90 s, it sends a tiny side request built on the conversation (a fork):
-  `Kessoku keep-warm ping. Reply with one word: ok`. One goes at a time, and none before a turn of the conversation
-  has run to its end (again after `/clear`, a compaction or a model switch).
+  `Kessoku keep-warm ping. Reply with one word: ok`. Switched on in those 90 s, or freed in them by a turn's end, it
+  sends one at once rather than wait for a minute that may come after the cache has lapsed. One goes at a time, and
+  none before a turn of the conversation has run to its end (again after `/clear`, a compaction or a model switch).
 - A cache that already lapsed is not pinged: the next send warms it, and `/keepwarm` says so. A ping that found the
   cache cold says so in a toast, with what the re-write cost. A rate-limited ping is tried once more 20 s later; a
   second refusal stops the pings until your next send. A host that keeps no snapshot to fork turns keepwarm off.
@@ -581,7 +582,7 @@ the chewing and a blink); at last orders and at the bill, at you. The same comma
 | less | the last few pieces |
 | the last 5 minutes (half the TTL, if that is shorter) | last orders: a LAST ORDER sign, a sputtering flame, one piece of meat left; all four look up at you, Ryo's chopsticks still on the last piece |
 | cold | an empty, frosted pot, no flame, blue light, snow; Bocchi in her box under a rain cloud, Ryo chewing a weed, Nijika and Kita slumped over the table, melting |
-| keepwarm on | Nijika in the nabe-bugyō headband, the stove's knob glowing; in the last minutes she has the pot, the flame steady (while a ping can go, on keepwarm's minute tick: held back, by a model switch or a resume until the next turn ends, a second rate limit or a turn still running in the last minutes, keepwarm waits, and the last minutes are last orders, as they are when keepwarm ends before the tick that would send its ping) |
+| keepwarm on | Nijika in the nabe-bugyō headband, the stove's knob glowing; in the last minutes she has the pot, the flame steady (while a ping can go, on keepwarm's minute tick: held back, by a model switch or a resume until the next turn ends, a second rate limit or a turn still running in the last minutes, keepwarm waits, and the last minutes are last orders, as they are when keepwarm ends before the tick that would send its ping, or that tick would come after the pot has gone cold) |
 | caching off | the lid stays on and the platter full, all four waiting as before the first order |
 | a top-up or a keepwarm ping warms the pot | Nijika pours broth in from her ladle (it spills over the lip and a ripple steps out on the broth); the food comes back |
 | a re-heat warms the pot | the flame and the food come back; Bocchi comes out of her box |
@@ -1095,8 +1096,9 @@ From `studio/`, after `npm install`:
 - `npm run check` checks the grids in a second (sizes, palette, the face region identical across poses, the portrait
   windows holding the face, the slimes on their canvas with Bocchi's two faces on one body, `seat` with stand's head
   inside the window down to the face's foot, every seat pose cutting nothing of stand's there and none of her hair
-  outside it (below the face, `seat` keeps her hair inside the window, above her waist's row and on her outer side,
-  and the arm poses keep `seat`'s), the waist where `seat.ts` puts it and only hair and chopsticks below it, the
+  outside it (below the face, `seat` keeps her hair inside the window, down to her waist's row and on her outer side,
+  but for two pixels of Bocchi's, and the arm poses keep `seat`'s), the waist where `seat.ts` puts it and only hair
+  and chopsticks below it, the
   pot-look faces moving only the eyes, the headband, the feast loops' lengths, their beats apart and the faces they
   play (at you at last orders and at the bill, on the pot while eating), the colours against the alphabet), then
   that `themes/*.json` still match the palette.

@@ -143,9 +143,9 @@ below gives what each state shows.
 | level 5 and 4 | a bubbling pot, steam, the platter as full as the context fills it; Bocchi eats shyly and Ryo fast, Nijika serves with her ladle, Kita leans in to photograph the pot (a flash, sparkles); Kita: `So photogenic!`, Ryo: `Seconds.` |
 | level 3 | simmering: half the food, slower chopsticks; Nijika: `Plenty left!` |
 | level 2 | the last few pieces; Bocchi: `It's going…` |
-| level 1, keepwarm off | last orders: a LAST ORDER sign goes up, the flame sputters, one piece of meat is left; all four look up at us, Ryo's chopsticks still at it: `That one's mine.`, Bocchi sweats |
+| level 1, keepwarm off (or armed but no ping coming: held back, ending first, or its tick past the lapse) | last orders: a LAST ORDER sign goes up, the flame sputters, one piece of meat is left; all four look up at us, Ryo's chopsticks still at it: `That one's mine.`, Bocchi sweats |
 | cold | an empty, frosted pot, no flame, blue light, snow, gloom lines; Bocchi in her box under a rain cloud, Ryo chewing a weed, Nijika and Kita slumped with melting faces; Nijika: `It went cold…`, Ryo: `…grass.` |
-| keepwarm on | Nijika wears the nabe-bugyō headband (switched on, it is on: `Nabe-bugyō, reporting!`) and the stove's knob glows; at level 1 she has the pot: `Leave the pot to me!`; cold, she slumps over the empty pot, the headband still on: `The next order warms it.` |
+| keepwarm on | Nijika wears the nabe-bugyō headband (switched on, it is on: `Nabe-bugyō, reporting!`) and the stove's knob glows; at level 1, while keepwarm outlasts the tick that sends its ping and that tick finds the pot warm, she has the pot: `Leave the pot to me!`; cold, she slumps over the empty pot, the headband still on: `The next order warms it.` |
 | caching off (`off`) | the lid stays on, the platter full (as the context fills it), all four waiting as before the first order; no line |
 | a ping warms the pot (keepwarm's or a top-up) | Nijika ladles broth in (broth spilling over her ladle cup's lip into the pot, a ripple stepping out where it lands): `Topping it up~`; the food comes back to level 5 |
 | a re-heat warms the pot | the flame and the food come back to level 5; Bocchi leaves her box: `I-it's warm again…` |
@@ -177,7 +177,8 @@ step books.
   all three), `moment: { kind: 'ping' | 'reheat' | 'keepon' | 'paid'; until } | null`, `note: { text; until } | null`
   (The actions' "What a press says") and `sample: { model; tokens; ageMs; heldAt } | null` (the `/bocchi tax`
   preview's model, size and age, stamped with its hold's `heldAt`; its age the cache's only once it has gone cold,
-  else two TTLs back, so the card reads as a real hold would; The cache's truth). A separate atom (as the
+  else two TTLs back, and running on from `heldAt`, so the card reads and counts as a real hold would; The cache's
+  truth). A separate atom (as the
   tour's), so no older value needs a filler. The `ui.close` hook sets `isOpen` and `inBand` false and clears `armed`,
   `moment` and `note`, keeping `pick`, `isBillOpen` and `sample`; `/clear` and an in-process `/resume` clear `armed`,
   `moment` and `note` and keep the rest; `startUi` reconciles it with `$.ui.panes()`.
@@ -196,8 +197,9 @@ step books.
    redraw is `$.ui.invalidate`, which redraws every drawing).
    - The state in a word (semibold, `heading` size) and its tail: `♨ Bubbling` `51m of feast left` (`Simmering` and
      `Running low` take the same tail); `Last orders!` `cold in 3m`; `Nijika has the pot` `she tops it up in 2m`
-     (counted to the minute tick that sends the ping, and only while keepwarm outlasts that tick and can ping: armed
-     but held back, or ending first, it keeps nothing, and the board says `Last orders!`);
+     (counted to the minute tick that sends the ping, and only while keepwarm outlasts that tick, the tick finds the
+     pot warm and it can ping: armed but held back, ending first, or with that tick past the lapse, it keeps nothing,
+     and the board says `Last orders!`);
      `❄ Gone cold` `14m ago: the next send re-orders everything`, and while a paid re-order's turn runs over the cold
      cache `♨ Re-ordering` `your prompt writes 304k tokens back into the pot`; `The bill came` `your prompt waits:
      re-ordering costs ≈$1.34`; `〆 Zosui` `compacting 168k tokens` (as it lands, the note `168k → 40.0k tokens`,
@@ -282,8 +284,9 @@ the pot's corners as the minis sit, and the pot between them as a text gauge of 
   left or since it went cold, keepwarm's time left, the next ping at its `pingAt`, as the phase function has it).
 - `drawPanel` and the strip's drawings hand `scheduleTail` `warmthDue` too, whether or not the Hotpot is open (one
   timer serves them all), so an idle session's counts stay fresh with the Hotpot closed. The Cache Tax card, which
-  takes the band's place during a hold, hands it `warmthDue` itself: its count of how long the cache has been cold
-  moves on each minute, and it goes at its hold's end.
+  takes the band's place during a hold, hands it `warmthDue` itself, and its count's next minute (a preview's runs
+  on its sample's): its count of how long the cache has been cold moves on each minute, and it goes at its hold's
+  end.
 - The strip (the desktop sign and both terminal strips, after `cache `), the chalkboard's foot and the rail read one
   phase function (below), so they never disagree: `ampOf` and the rail take their words from `feastOf`, and
   `panelView` takes its flags (false when left out). `amp.words` is the strip's words below, counted as `ampText`
@@ -307,17 +310,18 @@ the pot's corners as the minis sit, and the pot between them as a text gauge of 
 `feastOf(cache, now, ttlMs, flags: { held, compacting, cleared, cachingOff, keepwarmHeld, pingAt })` returns
 `{ phase, level, leftMs, ageMs }`. Its phases, first match wins: `zosui` while compacting, `held` while a send is held,
 `off` while caching is off, `none`/`cleared` with nothing cached, `cold` once lapsed, `last` or `tend` (keepwarm on,
-outlasting its ping by a second, and able to send it) in the cold notice's window, else `feast`/`simmer`/`low` by
-warmth. `pingAt` is when the ping goes: on the first tick of keepwarm's minute beat once the cache is TTL − 90 s old
-(`nextPingAt` from the beat's latest tick, which the module records, as each period drifts late), at the 429's retry
-while one waits, or now while a fork is out; the TTL less 90 s where not given. `keepwarmHeld` is keepwarm armed with no
-ping able to go, as keepWarmTick's own guard has it: the fork gate shut, the pings stopped after a second 429, no
-snapshot, caching off, `contextTokens` under 1,000, no minute tick (nothing can draw), or a main-loop turn running
-through the cold notice's window (one in flight or a 429's retry still keeps the pot); it keeps nothing, so last orders
-stay `last`. `level` is 5 for `zosui`; 0 for `held`, `off`, `none`, `cleared` and `cold`; 1 for `last` and `tend`. Cold
-means `now − lastWarmAt ≥ TTL` everywhere: `isColdRoom` (`≥`) and `warmth`, `ampOf` and `coldWatch`'s notice
-(`left ≤ 0`) have it, keepwarm (`age > ttl`), the rail, the hold and `/cache-tax`'s face (`>`) move to it, and all take
-it from `feastOf`. `hotpot.ts` is a leaf with no value imports from `stage.ts` (whose `ampOf` calls `feastOf`).
+outlasting its ping by a second, the ping finding the pot still warm, and able to send it) in the cold notice's window,
+else `feast`/`simmer`/`low` by warmth. `pingAt` is when the ping goes: on the first tick of keepwarm's minute beat once
+the cache is TTL − 90 s old (`nextPingAt` from the beat's latest tick, which the module records, as each period drifts
+late), at the 429's retry while one waits, or now while a fork is out; the TTL less 90 s where not given. `keepwarmHeld`
+is keepwarm armed with no ping able to go, as keepWarmTick's own guard has it: the fork gate shut, the pings stopped
+after a second 429, no snapshot, caching off, `contextTokens` under 1,000, no minute tick (nothing can draw), or a
+main-loop turn running through the cold notice's window (one in flight or a 429's retry still keeps the pot); it keeps
+nothing, so last orders stay `last`. `level` is 5 for `zosui`; 0 for `held`, `off`, `none`, `cleared` and `cold`; 1 for
+`last` and `tend`. Cold means `now − lastWarmAt ≥ TTL` everywhere: `isColdRoom` (`≥`) and `warmth`, `ampOf` and
+`coldWatch`'s notice (`left ≤ 0`) have it, keepwarm (`age > ttl`), the rail, the hold and `/cache-tax`'s face (`>`) move
+to it, and all take it from `feastOf`. `hotpot.ts` is a leaf with no value imports from `stage.ts` (whose `ampOf` calls
+`feastOf`).
 
 ### The ledger (`ledger: KessokuLedger`, `hooks/lib/hotpot.ts`)
 
@@ -406,7 +410,10 @@ Each button lists its dim reasons in order; the one said is the first that appli
 - **Keep the fire on / Let it cool**: write `keepWarmUntil` as `/keepwarm <pick>` and `/keepwarm off` do, from the
   clock read at the press (so do both `Keep it warm after` buttons, the card's and the pane's). On a cold cache it
   says `the cache is cold: the next send warms it, and the pings start then` (with nothing cached, `nothing cached
-  yet: …`), as `/keepwarm` now does after its `keepwarm on for <d>` in place of its promise of a ping. Dim: `this host
+  yet: …`), as `/keepwarm` now does after its `keepwarm on for <d>` in place of its promise of a ping. Armed over a
+  warm cache already TTL − 90 s old, keepwarm pings at once (keepWarmTick run now, with all its guards and never
+  with no minute timer) rather than wait for a tick that may come after the lapse; a main-loop turn's end does the
+  same, for a turn that held keepwarm through its tick. Dim: `this host
   keeps no snapshot to fork`, `prompt caching is off` (Let it cool never is).
 - **Top up now / Re-heat now**: keepWarmTick's ping, sent now rather than in its 90 s window, to a warm cache, or to a
   cold one after the second press. Dim: `this host keeps no snapshot to fork`, `prompt caching is off`, `compacting`,
@@ -563,7 +570,8 @@ output tokens ≈ $0.0339, so a day of keepwarm is 24.4 × that ≈ $0.83, and a
   `lastWarmAt`, two TTLs old, so an empty session draws a cold 330k pot and books its next real step as Cache Tax).
   The sample's model, size and age (the session's own where it has them, the age only once the cache has gone cold,
   else two TTLs back) go to the hotpot atom's `sample`, stamped
-  with the preview hold's `heldAt`, and the card and the pane draw from it while that hold stands; the preview still
+  with the preview hold's `heldAt`, and the card and the pane draw from it while that hold stands (its age running
+  on from `heldAt`); the preview still
   arms the hold in `cache` (`heldAt`, an empty `heldText`, `isArmed`, `heldUsd`, `warmUsd`), so the next send clears
   it.
 
@@ -623,9 +631,11 @@ are, and the four feast faces are the only new face art (`bite` is `idle` with i
   - **The checks** (`npm run check`): each seat pose's face region is stand's, checked as the `HEAD_POSES` are (so
     every face overlay and feast face fits), and `seat` keeps stand's whole head (the portrait window down to the
     face box's foot, hair and outline untouched); every seat pose keeps that head (inside the window nothing of
-    stand's cut down to the face box's foot, outside it none of her hair; below it `seat` keeps her hair inside the
-    window, above her waist's row and on her outer side from that row down, where the lap clip leaves her drawn,
-    and the poses built on `seat` keep its hair, or stand's behind what `seat` drew); each
+    stand's cut down to the face box's foot, outside it none of her hair; below it `seat` keeps her hair wherever
+    the table does not hide her, inside the window, down to her waist's row (which the lap clip draws over the
+    table) and on her outer side below it, but for `SEAT_WAIST_GAPS`, two pixels of Bocchi's where her turned body
+    ends before stand's hair did (58,56 and 59,56: an entry that is no gap is a problem), and the poses built on
+    `seat` keep its hair, or stand's behind what `seat` drew); each
     seat pose's waist ends at `waist` on her outer side, with only
     hair and chopsticks below it; the window holds the face, the hands and the bowl; a pot-look face differs from the
     face it comes from only inside the eyes, each iris toward the pot; the tips stay on the canvas; the headband
@@ -802,7 +812,8 @@ The seams, agreed before any test is written:
    misses the desktop's paint, the engine's real fork and a missing hook or call.
 3. **The studio**: `npm run check` with Art's feast checks (every seat pose held to stand's head: nothing of it
    erased inside the window down to the face's foot, none of her hair outside it, `seat` keeping her hair below it
-   where the lap clip leaves her drawn, and the arm poses keeping seat's hair and stand's behind it;
+   down to her waist's row and on her outer side, but for Bocchi's two `SEAT_WAIST_GAPS`, and the arm poses keeping
+   seat's hair and stand's behind it;
    the window holding the face, the hands and the bowl, the pot-look eyes, and the rest it lists), one loop length per
    state (`cold` and `serve` excepted), the four loops' beats apart, the faces each loop plays (reacting at us, eating
    on the pot) and the palette, `FEAST_FX_COLORS` included, against the 268-character
