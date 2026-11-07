@@ -353,8 +353,9 @@ let loadedAt = 0
 let forkOut = false
 /** Counts the fork gate's shutting: a fork that left before a shutting changes nothing when it lands. */
 let gateEpoch = 0
-/** Keepwarm's one retry after a 429, and the stop after a second, until a main-loop step warms the cache again. */
+/** Keepwarm's one retry after a 429 (and when it goes), and the stop after a second, until a main-loop step warms the cache again. */
 let retryTimer: Timer | null = null
+let retryAt = 0
 let pingsStopped = false
 /** The host keeps no snapshot a fork may share (a fork answered nothing-to-fork with the gate open): Keep the fire on, Top up and Re-heat stay dim. */
 let noSnapshot = false
@@ -376,6 +377,8 @@ let tickTimer: Timer | null = null
 let shimmerTimer: Timer | null = null
 let pruneTimer: Timer | null = null
 let keepWarmTimer: Timer | null = null
+/** Keepwarm's minute beat: its latest tick, or its start (each period is asked as the last one ends, so it drifts late). */
+let keepWarmBeatAt: number | null = null
 let moodTimer: Timer | null = null
 let memoTimer: Timer | null = null
 let pendingTracks: KessokuTrack[] = []
@@ -450,9 +453,14 @@ async function writeLedger($: EngineInterface, fn: (l: KessokuLedger) => Kessoku
   return l
 }
 
-/** What decides the feast's phase beyond the warmth: a send held, a compaction running, a cleared table, caching off, keepwarm held back (`working`: a main-loop turn is running). */
+/** What decides the feast's phase beyond the warmth: a send held, a compaction running, a cleared table, caching off, keepwarm held back (`working`: a main-loop turn is running), its next ping. */
 function feastFlags(c: KessokuCache, l: KessokuLedger, now: number, working = false): FeastFlags {
-  return { held: c.heldAt > 0 && now - c.heldAt < HELD_PROMPT_MS, compacting: isCompacting, cleared: l.cleared, cachingOff: cachingOff(l), keepwarmHeld: keepwarmHeld(c, l, now, working) }
+  return { held: c.heldAt > 0 && now - c.heldAt < HELD_PROMPT_MS, compacting: isCompacting, cleared: l.cleared, cachingOff: cachingOff(l), keepwarmHeld: keepwarmHeld(c, l, now, working), pingAt: pingGoesAt(c, now) }
+}
+
+/** When keepwarm's next ping goes, as its timers have it: now while a fork is out, at the 429's retry while one waits, else on the minute beat's first tick from the TTL less 90 s. */
+function pingGoesAt(c: KessokuCache, now: number): number {
+  return forkOut ? now : retryTimer !== null ? retryAt : nextPingAt(c, ttlMs(), keepWarmBeatAt)
 }
 
 /**
@@ -1050,6 +1058,7 @@ async function keepWarmPing($: EngineInterface, isRetry: boolean): Promise<void>
   }
   if (r.status === 429) {
     if (!isRetry) {
+      retryAt = (await $.clock.now()) + 20_000
       retryTimer = $.clock.after(20_000, () => {
         retryTimer = null
         void retryPing($).catch(() => undefined)
@@ -1888,6 +1897,7 @@ async function hotpotViewOf($: EngineInterface, e: Site | null, now: number): Pr
     ttl,
     pick: pickMs(h),
     slip: feast.phase === 'held' ? { writeUsd: c.heldUsd, warmUsd: c.warmUsd, tokens: held.tokens, ageMs: held.ageMs } : null,
+    pingAt: pingGoesAt(c, now),
     flags: { noSnapshot, compacting: isCompacting, working: b.isWorking, forkOut, compactOff: !features.compact, draftOff: !features.draft, paying, noCompact: hostNoCompact, noBox: hostNoBox, promptBack: promptIsBack(c, h) },
     isTerminal: e?.surface === 'terminal',
     isFocused: e !== null && 'isFocused' in e.props ? e.props.isFocused === true : false,
@@ -3404,7 +3414,7 @@ function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Dr
   const isTerminal = e.surface === 'terminal'
   const { phase, level } = drawnPhase(v)
   // Nothing redraws on a clock: the next minute a count shows, a level step, a moment's or a note's end.
-  scheduleTail($, hotpotDue(v.cache, v.hotpot, now, v.ttl.ms), now)
+  scheduleTail($, hotpotDue(v.cache, v.hotpot, now, v.ttl.ms, v.pingAt), now)
   let feast: Draw | null = null
   if (opts.characterArt === 'sprites' && !isTerminal && 'Svg' in table) {
     const { Svg } = table
@@ -3955,7 +3965,11 @@ async function startUi($: EngineInterface): Promise<void> {
   if (b.isWorking) ensureTick($)
 
   if (keepWarmTimer !== null) keepWarmTimer.cancel()
+  keepWarmBeatAt = await $.clock.now()
   keepWarmTimer = $.clock.every(60_000, () => {
+    void $.clock.now().then(t => {
+      keepWarmBeatAt = t
+    }, () => undefined)
     void coldWatch($).catch(() => undefined)
     void keepWarmTick($)
   })

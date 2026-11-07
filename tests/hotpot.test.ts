@@ -54,6 +54,7 @@ import {
   miniMoods,
   momentOf,
   newLedger,
+  nextPingAt,
   pingsADay,
   potGauge,
   railWords,
@@ -100,6 +101,7 @@ function viewOf(ageMs: number, over: Partial<HotpotView> = {}, cacheOver: Parame
     ttl,
     pick: 2 * HOUR,
     slip: null,
+    pingAt: flags.pingAt ?? nextPingAt(cache, ttl.ms),
     flags: FLAGS,
     isTerminal: false,
     isFocused: true,
@@ -172,6 +174,14 @@ test('the strip, the foot and the rail read their words off the phase, in whole 
   expect(feastOf(cacheAt(57 * MIN, { keepWarmUntil: NOW + 30_000 }), NOW, HOUR).phase).toBe('last')
   expect(feastOf(cacheAt(57 * MIN, { keepWarmUntil: NOW + 2 * MIN }), NOW, HOUR).phase).toBe('tend')
   expect(feastOf(cacheAt(59 * MIN, { keepWarmUntil: NOW + 30_000 }), NOW, HOUR).phase).toBe('tend')
+  // the ping goes on the minute tick that finds the cache TTL - 90 s old (FeastFlags.pingAt): keepwarm ending between the
+  // TTL less 90 s and that tick, or within a second of it, sends nothing; a ping out, or a 429's retry, is when it goes
+  const tick = NOW + 2 * MIN
+  expect(feastOf(cacheAt(57 * MIN, { keepWarmUntil: NOW + 105_000 }), NOW, HOUR, { pingAt: tick }).phase).toBe('last')
+  expect(feastOf(cacheAt(57 * MIN, { keepWarmUntil: tick + 500 }), NOW, HOUR, { pingAt: tick }).phase).toBe('last')
+  expect(feastOf(cacheAt(57 * MIN, { keepWarmUntil: tick + 1500 }), NOW, HOUR, { pingAt: tick }).phase).toBe('tend')
+  expect(feastOf(cacheAt(59 * MIN, { keepWarmUntil: NOW + 30_000 }), NOW, HOUR, { pingAt: NOW }).phase).toBe('tend')
+  expect(feastOf(cacheAt(59 * MIN, { keepWarmUntil: NOW + 30_000 }), NOW, HOUR, { pingAt: NOW + 40_000 }).phase).toBe('last')
   expect(words(72 * MIN, { keepwarmHeld: true }, NOW + HOUR)).toEqual(['cold for 12m · keepwarm on', '❄ cold · keepwarm on'])
   expect(words(72 * MIN, { held: true })).toEqual(['cold for 12m · a send is held', '❄ cold · held'])
   // a hold over a warm pot or none (only /bocchi tax's preview makes one) says so, never cold
@@ -222,6 +232,24 @@ test('warmthDue is the next minute of the count, a level step, last orders, cold
   // keepwarm on, warm: the next ping (at TTL - 90 s) and its count, 6m 20s off, dropping to 5m before the warmth's and keepwarm's counts move
   expect(hotpotDue(cacheAt(58 * MIN + 10_000, { keepWarmUntil: NOW + 2 * HOUR + 50_000 }), h({}), NOW, HOUR)).toBe(NOW + 20_000)
   expect(hotpotDue(cacheAt(52 * MIN + 10_000, { keepWarmUntil: NOW + 2 * HOUR + 50_000 }), h({}), NOW, HOUR)).toBe(NOW + 20_001)
+  // the ping as its tick sends it: 35 s off, so the board's count (and its 'any moment') redraws then
+  expect(hotpotDue(cacheAt(58 * MIN + 10_000, { keepWarmUntil: NOW + 2 * HOUR + 50_000 }), h({}), NOW, HOUR, NOW + 35_000)).toBe(NOW + 35_000)
+})
+
+test('keepwarm’s ping goes on the first tick of its minute beat once the cache is the TTL less 90 s old', async () => {
+  const c = cacheAt(0)
+  // no beat given: at the TTL less 90 s itself; nothing cached, never
+  expect(nextPingAt(c, HOUR)).toBe(NOW + 58 * MIN + 30_000)
+  expect(nextPingAt(cacheAt(-1), HOUR, NOW)).toBe(0)
+  // a beat 10 s behind the warmth ticks at :50: the first at or after 58:30 is 58:50
+  expect(nextPingAt(c, HOUR, NOW - 10_000)).toBe(NOW + 58 * MIN + 50_000)
+  // on the warmth's own minute it waits for 59:00; a tick at 58:30 itself sends it then
+  expect(nextPingAt(c, HOUR, NOW)).toBe(NOW + 59 * MIN)
+  expect(nextPingAt(c, HOUR, NOW + 30_000)).toBe(NOW + 58 * MIN + 30_000)
+  // a beat that ticked past it without a ping (a turn held it, a fork was out): the next tick
+  expect(nextPingAt(c, HOUR, NOW + 58 * MIN + 45_000)).toBe(NOW + 59 * MIN + 45_000)
+  // five minutes: 4:00 after a ping that landed on a tick
+  expect(nextPingAt(c, 5 * MIN, NOW)).toBe(NOW + 4 * MIN)
 })
 
 // ---- the TTL --------------------------------------------------------------------------------------------
@@ -456,6 +484,9 @@ test('the wooden board in every phase: the state in a word and its tail, then th
   expect(board(viewOf(45 * MIN))).toEqual(['Running low', '15m of feast left'])
   expect(board(viewOf(57 * MIN))).toEqual(['Last orders!', 'cold in 3m'])
   expect(board(viewOf(56 * MIN, {}, { keepWarmUntil: NOW + HOUR }))).toEqual(['Nijika has the pot', 'she tops it up in 2m'])
+  // counted to the tick that sends the ping, and any moment once it is out
+  expect(board(viewOf(56 * MIN, {}, { keepWarmUntil: NOW + HOUR }, { pingAt: NOW + 3 * MIN }))).toEqual(['Nijika has the pot', 'she tops it up in 3m'])
+  expect(board(viewOf(59 * MIN, {}, { keepWarmUntil: NOW + HOUR }, { pingAt: NOW }))).toEqual(['Nijika has the pot', 'she tops it up any moment'])
   expect(board(viewOf(74 * MIN))).toEqual(['❄ Gone cold', '14m ago: the next send re-orders everything'])
   expect(board(viewOf(74 * MIN, { slip: { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 14 * MIN } }, {}, { held: true }))).toEqual(['The bill came', 'your prompt waits: re-ordering costs ≈$1.34'])
   expect(board(viewOf(9 * MIN, {}, {}, { compacting: true }))).toEqual(['〆 Zosui', 'compacting 168k tokens'])

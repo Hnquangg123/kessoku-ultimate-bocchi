@@ -44,6 +44,8 @@ export const MOMENT_MS = 2400
 export const NOTE_MS = 6000
 /** Keepwarm pings once the cache is this close to its TTL (its minute tick finds it so). */
 export const PING_LEAD_MS = 90_000
+/** A tick may run this late: keepwarm outlasts its ping's tick by this much before Nijika is sure of sending it. */
+export const PING_SLACK_MS = 1000
 /**
  * The longest gap a five-minute sighting may span: inside the hour, so an hour's cache would still be warm and a
  * miss shows a shorter TTL (unless the request itself waited the 20 s spare); wide enough that keepwarm's own pings
@@ -80,8 +82,10 @@ export type FeastFlags = {
   compacting?: boolean
   cleared?: boolean
   cachingOff?: boolean
-  /** Keepwarm is armed but no ping can go now (the fork gate shut, stopped after a second 429, no snapshot, caching off, too little to keep): it keeps nothing, so last orders stay last orders. */
+  /** Keepwarm is armed but no ping can go now (the fork gate shut, stopped after a second 429, no snapshot, caching off, too little to keep, no minute tick, a main-loop turn running through the last minutes): it keeps nothing, so last orders stay last orders. */
   keepwarmHeld?: boolean
+  /** When keepwarm's next ping goes (`nextPingAt` on its minute beat, the 429's retry, or now while a fork is out): Nijika has the pot only while keepwarm outlasts it. The TTL less 90 s when not given. */
+  pingAt?: number
 }
 
 /** The last stretch of the TTL: the cold notice's window, which is last orders. */
@@ -103,8 +107,12 @@ export function feastOf(cache: Pick<KessokuCache, 'lastWarmAt' | 'keepWarmUntil'
   if (flags.cachingOff === true) return at('off', 0)
   if (!warmed) return at(flags.cleared === true ? 'cleared' : 'none', 0)
   if (leftMs <= 0) return at('cold', 0)
-  // Nijika has the pot while keepwarm lasts until its ping (the TTL less 90 s) and can send it; else last orders
-  if (leftMs <= lastWindow(ttlMs)) return at(cache.keepWarmUntil > Math.max(now, cache.lastWarmAt + ttlMs - PING_LEAD_MS) && flags.keepwarmHeld !== true ? 'tend' : 'last', 1)
+  // Nijika has the pot while keepwarm outlasts its ping (on the tick that sends it, the TTL less 90 s or later) and can
+  // send it; else last orders
+  if (leftMs <= lastWindow(ttlMs)) {
+    const pingAt = flags.pingAt ?? cache.lastWarmAt + ttlMs - PING_LEAD_MS
+    return at(cache.keepWarmUntil > Math.max(now, pingAt + PING_SLACK_MS) && flags.keepwarmHeld !== true ? 'tend' : 'last', 1)
+  }
   const w = leftMs / ttlMs
   return w > 0.84 ? at('feast', 5) : w > 2 / 3 ? at('feast', 4) : w > 1 / 3 ? at('simmer', 3) : at('low', 2)
 }
@@ -230,26 +238,28 @@ export function warmthDue(cache: Pick<KessokuCache, 'lastWarmAt' | 'keepWarmUnti
   return soonest(dues, now)
 }
 
-/** When keepwarm's next ping goes out: once the cache is TTL - 90 s old. */
-export function nextPingAt(cache: Pick<KessokuCache, 'lastWarmAt'>, ttlMs: number): number {
-  return cache.lastWarmAt > 0 ? cache.lastWarmAt + ttlMs - PING_LEAD_MS : 0
+/**
+ * When keepwarm's next ping goes out: on the first tick of its minute beat once the cache is TTL - 90 s old (`beatAt`,
+ * the beat's latest tick or its start, the next a minute on), else at TTL - 90 s itself. 0 with nothing cached.
+ */
+export function nextPingAt(cache: Pick<KessokuCache, 'lastWarmAt'>, ttlMs: number, beatAt: number | null = null): number {
+  if (cache.lastWarmAt <= 0) return 0
+  const due = cache.lastWarmAt + ttlMs - PING_LEAD_MS
+  return beatAt === null ? due : beatAt + Math.max(1, Math.ceil((due - beatAt) / MINUTE)) * MINUTE
 }
 
 /**
  * The next redraw an open Hotpot needs: `warmthDue` (keepwarm's end and a
  * hold's end among it), a moment's end, a note's end, an armed press's end,
  * and the next whole minute of each count on the wooden board (the next ping
- * too).
+ * too, at `pingAt`: FeastFlags.pingAt's).
  */
-export function hotpotDue(cache: Pick<KessokuCache, 'lastWarmAt' | 'keepWarmUntil' | 'heldAt'>, hotpot: Pick<KessokuHotpot, 'moment' | 'note' | 'armed'>, now: number, ttlMs: number): number {
+export function hotpotDue(cache: Pick<KessokuCache, 'lastWarmAt' | 'keepWarmUntil' | 'heldAt'>, hotpot: Pick<KessokuHotpot, 'moment' | 'note' | 'armed'>, now: number, ttlMs: number, pingAt = nextPingAt(cache, ttlMs)): number {
   const dues = [warmthDue(cache, now, ttlMs)]
   if (hotpot.moment !== null) dues.push(hotpot.moment.until)
   if (hotpot.note !== null) dues.push(hotpot.note.until)
   if (hotpot.armed !== null) dues.push(hotpot.armed.at + ARM_MS)
-  if (cache.keepWarmUntil > now) {
-    const ping = nextPingAt(cache, ttlMs)
-    if (ping > now) dues.push(ping, dropAt(ping - now, now))
-  }
+  if (cache.keepWarmUntil > now && pingAt > now) dues.push(pingAt, dropAt(pingAt - now, now))
   return soonest(dues, now)
 }
 
@@ -641,6 +651,8 @@ export type HotpotView = {
   pick: number
   /** The hold's figures while a send is held: the re-write's price, a warm turn's, the tokens (the /bocchi tax sample's while it stands). */
   slip: { writeUsd: number; warmUsd: number; tokens: number; ageMs: number } | null
+  /** When keepwarm's next ping goes (FeastFlags.pingAt's), for the wooden board's `she tops it up in …`. */
+  pingAt: number
   flags: HotpotFlags
   isTerminal: boolean
   isFocused: boolean
@@ -783,7 +795,7 @@ function stateWords(v: HotpotView): { word: string; short: string; tail: string;
     case 'last':
       return { word: 'Last orders!', short: 'last orders', tail: `cold in ${left}`, alt: `last orders, cold in ${left}` }
     case 'tend': {
-      const ping = nextPingAt(v.cache, v.ttl.ms) - v.now
+      const ping = v.pingAt - v.now
       const when = ping > 0 ? `in ${minutesText(ping)}` : 'any moment'
       return { word: 'Nijika has the pot', short: 'Nijika has the pot', tail: `she tops it up ${when}`, alt: `Nijika has the pot, cold in ${left}` }
     }
