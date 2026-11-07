@@ -65,6 +65,7 @@ import {
   seatStates,
   speechOf,
   stripWords,
+  taxReason,
   topUpUsd,
   ttlInForce,
   ttlMark,
@@ -575,6 +576,11 @@ test('the buttons say their prices and what is armed, and a dim one names why, i
   expect(isNoBox({ isFilled: false })).toBe(false)
   expect(isNoBox({ isFilled: true })).toBe(false)
   expect(isNoBox(null)).toBe(false)
+  // the hold's own words: the prompt back in the box, or, where the host is known to bind none, carried whole in them
+  expect(taxReason(60_000, 168_000, 1.34, 0.03)).toMatch(/CACHE TAX — the prompt cache went cold 1:00 ago! Sending this re-writes 168k tokens ≈ \$1\.34 \(a warm turn would have cost ≈ \$0\.03\)\. Your prompt is back in the box: press Enter again to pay it and send, or \/clear and start from a note\.$/)
+  const long = `${'a long prompt '.repeat(12)}and its end`
+  expect(taxReason(60_000, 168_000, 1.34, 0.03, long)).toMatch(/\(a warm turn would have cost ≈ \$0\.03\)\. This app keeps its own prompt box, so your prompt could not go back in it: your next send pays and sends, or type \/clear and start from a note\. It was: (a long prompt ){12}and its end$/)
+  expect(taxReason(null, 168_000, 1.34, 0.03)).toMatch(/went cold \? ago!/)
   // during a hold: the Cache Tax card's three, then the bill and close
   const held = viewOf(74 * MIN, { slip: { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 } }, {}, { held: true })
   expect(keys(held)).toEqual(['hotpot-tax-keep:Keep it warm after (2h) ≈$0.07', 'hotpot-tax-clear:Start fresh (/clear)', 'hotpot-tax-dismiss:Dismiss', 'hotpot-bill:The bill', 'hotpot-close:Close'])

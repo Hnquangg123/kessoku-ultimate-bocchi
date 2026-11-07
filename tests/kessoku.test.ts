@@ -743,7 +743,7 @@ test('Cache Tax holds a cold send once, puts the prompt back, and lets the secon
   expect(sent.text).toBe('where were we?')
 })
 
-test('the Cache Tax card gives way at its hold\'s end where it is the only drawing (no panel, the Hotpot closed)', { options: { openPanelOnStart: false }, timeoutMs: 20_000 }, async ($, on) => {
+test('the Cache Tax card counts on and gives way at its hold\'s end where it is the only drawing (no panel, the Hotpot closed)', { options: { openPanelOnStart: false }, timeoutMs: 20_000 }, async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
   bottoms(on, clock, seen)
@@ -754,9 +754,11 @@ test('the Cache Tax card gives way at its hold\'s end where it is the only drawi
   expect((await $.prompt.submit(typed('where were we?'))).drop).toMatch(/CACHE TAX/)
   const band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
   expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 1:00 ago!!$/ })).toBeDefined()
-  await clock.advance(14 * 60_000)
+  await clock.advance(61_000)
+  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 2:00 ago!!$/ })).toBeDefined()
+  await clock.advance(13 * 60_000)
   expect(await band.find({ type: 'Text', text: /CACHE TAX/ })).toBeDefined()
-  await clock.advance(60_000 + 1000)
+  await clock.advance(60_000)
   expect(await band.find({ type: 'Text', text: /CACHE TAX/ })).toBeUndefined()
   await band.unmount()
 })

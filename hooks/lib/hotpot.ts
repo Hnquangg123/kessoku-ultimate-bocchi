@@ -17,7 +17,7 @@
 // A leaf: no value imports from stage.ts (whose `ampOf` calls `feastOf`).
 
 import type { KessokuCache, KessokuCacheShare, KessokuFeastState, KessokuHotpot, KessokuLedger, KessokuMember, KessokuMood } from '../../types'
-import { fmtTokens, fmtUsd, priceInfo } from './band'
+import { fmtDuration, fmtTokens, fmtUsd, priceInfo } from './band'
 import { MEMBERS } from './palette'
 import { block, oval, pix, pixPaths, placedArt, pline, put, pxAt, rim, spliceAfter } from './pixart'
 import type { Pix } from './pixart'
@@ -690,6 +690,23 @@ export function isHostNoCompact(error: unknown): boolean {
 /** A fill the engine itself refused for want of a box (`no_composer`: the host draws its own composer, or has none). */
 export function isNoBox(filled: { isFilled: boolean; refusal?: string } | null): boolean {
   return filled !== null && !filled.isFilled && filled.refusal === 'no_composer'
+}
+
+/**
+ * The Cache Tax hold's words, the drop's reason: how long the cache has been cold (`coldMs`, since it lapsed, as the
+ * strip counts; null with nothing warmed), the re-write and its price, and where the prompt is: back in the box, or,
+ * where the host binds none to put it in (`lost`), here whole, so nothing of it is lost.
+ */
+export function taxReason(coldMs: number | null, tokens: number, heldUsd: number, warmUsd: number, lost: string | null = null): string {
+  const age = coldMs === null ? '?' : fmtDuration(Math.max(0, coldMs))
+  return (
+    `${MEMBERS.bocchi.faces.panic} CACHE TAX — the prompt cache went cold ${age} ago! ` +
+    `Sending this re-writes ${fmtTokens(tokens)} tokens ≈ ${fmtUsd(heldUsd)} ` +
+    `(a warm turn would have cost ≈ ${fmtUsd(warmUsd)}). ` +
+    (lost === null
+      ? 'Your prompt is back in the box: press Enter again to pay it and send, or /clear and start from a note.'
+      : `This app keeps its own prompt box, so your prompt could not go back in it: your next send pays and sends, or type /clear and start from a note. It was: ${lost}`)
+  )
 }
 
 /** One of the pane's buttons: its key, label and hotkey, and why it is dim (empty when it can act). */

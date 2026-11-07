@@ -162,6 +162,7 @@ import {
   savedUsd,
   stripWords,
   taxPaidUsd,
+  taxReason,
   topUpUsd,
   ttlInForce,
   warmthDue,
@@ -1121,15 +1122,9 @@ async function coldWatch($: EngineInterface): Promise<void> {
   if (!(await notify($, text))) toast($, `${MEMBERS.bocchi.faces.anxious} ${text}`)
 }
 
-/** The Cache Tax hold's words, as the drop's reason: how long the cache has been cold (since it lapsed, as the strip counts), the re-write and its price. */
-function cacheTaxReason(c: KessokuCache, now: number): string {
-  const age = c.lastWarmAt > 0 ? fmtDuration(Math.max(0, now - c.lastWarmAt - ttlMs())) : '?'
-  return (
-    `${MEMBERS.bocchi.faces.panic} CACHE TAX — the prompt cache went cold ${age} ago! ` +
-    `Sending this re-writes ${fmtTokens(c.contextTokens)} tokens ≈ ${fmtUsd(c.heldUsd)} ` +
-    `(a warm turn would have cost ≈ ${fmtUsd(c.warmUsd)}). ` +
-    `Your prompt is back in the box: press Enter again to pay it and send, or /clear and start from a note.`
-  )
+/** The Cache Tax hold's words, as the drop's reason (taxReason's), off the cache as the hold armed it; `lost`, the prompt where no box can take it back. */
+function cacheTaxReason(c: KessokuCache, now: number, lost: string | null): string {
+  return taxReason(c.lastWarmAt > 0 ? now - c.lastWarmAt - ttlMs() : null, c.contextTokens, c.heldUsd, c.warmUsd, lost)
 }
 
 // ---- Compaction --------------------------------------------------------------
@@ -3228,7 +3223,7 @@ function promptIsBack(c: KessokuCache, hp: KessokuHotpot): boolean {
   return c.heldText !== '' || (hp.sample !== null && hp.sample.heldAt === c.heldAt)
 }
 
-/** The hold let go: nothing held, Bocchi out of her panic (into her box while the cache is cold); the prompt stays in the box, and the next send is judged afresh. */
+/** The hold let go: nothing held, Bocchi out of her panic (into her box while the cache is cold); the box keeps what it has (the prompt, unless it could not go back), and the next send is judged afresh. */
 async function dismissHold($: EngineInterface): Promise<void> {
   await update($, cache, x => ({ ...x, isArmed: false, heldAt: 0, heldText: '' }))
   await revertMood($)
@@ -3238,8 +3233,9 @@ function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: Kess
   const { Box, Text, Button } = $.ui.resolve(e)
   const held = heldFigures(c, hp, now)
   const back = promptIsBack(c, hp)
-  // the card stands for the hold's 15 minutes: its end redraws the band, where no pane's tail may come
-  scheduleTail($, c.heldAt + HELD_PROMPT_MS, now)
+  // the card stands for the hold's 15 minutes and counts how long the cache has been cold: the count's next minute and
+  // the hold's end redraw the band, where no pane's tail may come
+  scheduleTail($, warmthDue(c, now, ttlMs()), now)
   // cold since it lapsed (the warmth's age less the TTL), as the strip and the chalkboard's foot count it
   const age = held.ageMs > 0 ? fmtDuration(Math.max(0, held.ageMs - ttlMs())) : '?'
   const { isExact } = priceInfo(held.model || 'default')
@@ -4535,8 +4531,12 @@ export const register: Register = (on, options) => {
       if (!canDraw()) return next(e)
       const heldUsd = coldWriteUsd(c, l)
       const warmUsd = (c.contextTokens * priceInfo(c.model || 'default').price.cacheRead) / 1_000_000
-      const next_ = await update($, cache, x => ({ ...x, isArmed: true, heldAt: now, heldText: text, heldUsd, warmUsd }))
+      // A host found to bind no box gets no put-back to refuse: the reason carries the prompt whole, and the next send
+      // passes as the paid one, whatever it says.
+      const noBox = hostNoBox
+      const next_ = await update($, cache, x => ({ ...x, isArmed: true, heldAt: now, heldText: noBox ? '' : text, heldUsd, warmUsd }))
       await setMood($, 'panic', `cache tax ≈${fmtUsd(heldUsd)}!!`)
+      if (noBox) return { drop: cacheTaxReason(next_, now, text) }
       $.clock.after(250, () => {
         void (async () => {
           const filled = await $.prompt.fill({ text, mode: 'replace' })
@@ -4549,7 +4549,7 @@ export const register: Register = (on, options) => {
           }
         })().catch(() => undefined)
       })
-      return { drop: cacheTaxReason(next_, now) }
+      return { drop: cacheTaxReason(next_, now, null) }
     }
     if (opts.reflect && looksLikeCorrection(text)) {
       $.clock.after(30, () => {
