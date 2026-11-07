@@ -28,6 +28,7 @@ import {
   billRows,
   boardOf,
   bookActStep,
+  buttonLayout,
   bookFork,
   bookMainStep,
   bookSummary,
@@ -71,6 +72,7 @@ import {
   ttlInForce,
   ttlMark,
   warmthDue,
+  wrappedRows,
   writeRate,
 } from '../hooks/lib/hotpot'
 import type { FeastPhase, HotpotView, MainStep, StepContext, StepUsage, TtlInForce } from '../hooks/lib/hotpot'
@@ -528,6 +530,8 @@ test('the wooden board in every phase: the state in a word and its tail, then th
   expect(boardOf(viewOf(-1, {}, { contextTokens: 0 })).line).toBe('nothing on the table yet · prices after the first reply · keepwarm off · nothing cached yet')
   // a hold whose Start fresh put /clear in the box says what Enter does now; an unfocused terminal hears how to give it the keys
   expect(boardOf(viewOf(74 * MIN, { slip, flags: { ...FLAGS, clearInBox: true } }, {}, { held: true })).line).toBe('/clear is in the box: Enter starts fresh')
+  // in a terminal the press left the keys with the pane, so Esc hands them back first
+  expect(boardOf(viewOf(74 * MIN, { slip, isTerminal: true, flags: { ...FLAGS, clearInBox: true } }, {}, { held: true })).line).toBe('/clear is in the box: Esc, then Enter starts fresh')
   expect(boardOf(viewOf(74 * MIN, { slip, isTerminal: true, isFocused: false }, {}, { held: true })).line).toBe('your prompt is back in the box: Enter pays and sends it, Start fresh puts /clear in its place · ctrl+x tab for its keys')
   expect(hotpotLine(viewOf(9 * MIN))).toBe('♨ Hotpot · bubbling, 51m of feast left · 168k on the table · a re-order ≈$1.34 · a top-up ≈$0.03 · a day of keepwarm ≈$0.83 · keepwarm off · TTL 1h?')
   expect(hotpotAlt(viewOf(9 * MIN))).toBe("the band's hotpot · bubbling, 51m left")
@@ -556,9 +560,20 @@ test('the buttons say their prices and what is armed, and a dim one names why, i
   expect(keys(viewOf(9 * MIN, {}, { keepWarmUntil: NOW + HOUR }))[0]).toBe('hotpot-keep:Let it cool (keepwarm off)')
   expect(keys(viewOf(9 * MIN, {}, { keepWarmUntil: NOW + HOUR })).find(k => k.startsWith('hotpot-clear'))).toBe('hotpot-clear:Clear the table (/clear)')
   expect(keys(viewOf(74 * MIN))[5]).toBe('hotpot-topup:Re-heat now ≈$1.34')
-  expect(keys(viewOf(74 * MIN, { hotpot: { ...HOTPOT, armed: { action: 'reheat', at: NOW - 1000 } } }))[5]).toBe('hotpot-topup:Press again: re-write ≈$1.34')
-  expect(keys(viewOf(9 * MIN, { hotpot: { ...HOTPOT, armed: { action: 'zosui', at: NOW - 1000 } } }))[6]).toBe('hotpot-zosui:Press again: compact 168k tokens · one summarizing request')
-  expect(keys(viewOf(9 * MIN, { hotpot: { ...HOTPOT, armed: { action: 'clear', at: NOW - 1000 } } }))[7]).toBe('hotpot-clear:Press again: your draft gives way to /clear')
+  // armed, a button says Press again at its resting label's width (no-break spaces), and the board's tail says what
+  // the second press does
+  const armedView = (age: number, action: 'reheat' | 'zosui' | 'clear') => viewOf(age, { hotpot: { ...HOTPOT, armed: { action, at: NOW - 1000 } } })
+  expect(keys(armedView(74 * MIN, 'reheat'))[5]).toBe(`hotpot-topup:${'Press again'.padEnd(18, '\u00a0')}`)
+  expect(keys(armedView(9 * MIN, 'zosui'))[6]).toBe(`hotpot-zosui:${'Press again'.padEnd(15, '\u00a0')}`)
+  expect(keys(armedView(9 * MIN, 'clear'))[7]).toBe(`hotpot-clear:${'Press again'.padEnd(24, '\u00a0')}`)
+  expect(boardOf(armedView(74 * MIN, 'reheat')).tail).toBe('press again within 10 s to re-write 168k tokens ≈$1.34')
+  expect(boardOf(armedView(9 * MIN, 'zosui')).tail).toBe('press again within 10 s to compact 168k tokens in one summarizing request')
+  expect(boardOf({ ...armedView(9 * MIN, 'clear'), hotpot: { ...HOTPOT, armed: { action: 'clear', at: NOW - 1000 }, note: { text: 'a note', until: NOW + 1000 } } }).tail).toBe('press again within 10 s: your draft gives way to /clear')
+  // so arming moves nothing in the row: not the pressed button, not the buttons after it, warm, kept or cold, in a
+  // fullscreen pane's 72 cells or a dock's 52
+  for (const v of [viewOf(9 * MIN), viewOf(9 * MIN, {}, { keepWarmUntil: NOW + HOUR }), viewOf(74 * MIN)])
+    for (const width of [72, 52])
+      for (const action of ['reheat', 'zosui', 'clear'] as const) expect(buttonLayout(hotpotButtons({ ...v, hotpot: { ...HOTPOT, armed: { action, at: NOW - 1000 } } }), width)).toEqual(buttonLayout(hotpotButtons(v), width))
   // the armed window is ten seconds
   expect(keys(viewOf(74 * MIN, { hotpot: { ...HOTPOT, armed: { action: 'reheat', at: NOW - 10_000 } } }))[5]).toBe('hotpot-topup:Re-heat now ≈$1.34')
   const reason = (v: HotpotView) => hotpotButtons(v).find(b => b.key === 'hotpot-topup')?.reason
@@ -611,6 +626,9 @@ test('the buttons say their prices and what is armed, and a dim one names why, i
 test('the bill carries the top-up\'s five-minute hedge, and an unpriced pot (nothing on the table yet, caching off) prices nothing', async () => {
   expect(billRows(viewOf(9 * MIN)).rows.find(r => r.label === 'A top-up now')).toEqual({ label: 'A top-up now', detail: '≈$0.84 if the cache lives 5m', figure: '$0.03' })
   expect(billRows(viewOf(4 * MIN)).rows.find(r => r.label === 'A top-up now')).toBeUndefined()
+  // cold, or held, the press is a re-heat: no top-up to hedge
+  expect(billRows(viewOf(74 * MIN)).rows.find(r => r.label === 'A top-up now')).toBeUndefined()
+  expect(billRows(viewOf(74 * MIN, { slip: { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 } }, {}, { held: true })).rows.find(r => r.label === 'A top-up now')).toBeUndefined()
   for (const v of [viewOf(-1, {}, { contextTokens: 0 }), viewOf(9 * MIN, { ledger: { ...INITIAL_LEDGER, prompt: 168_000, canFork: true, cacheless: 3 } })]) {
     const labels = billRows(v).rows.map(r => r.label)
     expect(labels).not.toContain('If it goes cold')
@@ -618,15 +636,21 @@ test('the bill carries the top-up\'s five-minute hedge, and an unpriced pot (not
   }
 })
 
-test('a terminal pane\'s board and buttons take their rows as they wrap, the bill its own while open; an armed label never moves them', async () => {
+test('a terminal pane\'s board and buttons take their rows as they wrap, the bill its own while open; what comes and goes never moves them', async () => {
   const v = viewOf(9 * MIN, { isTerminal: true })
-  // 74 columns: the word and its tail on one row, the figures on two, the buttons on three (17 more for half blocks: 23)
-  expect(terminalRowsBelow(v, 74)).toBe(6)
-  expect(terminalRowsBelow(v, 54)).toBe(8)
-  expect(terminalRowsBelow({ ...v, hotpot: { ...HOTPOT, isBillOpen: true } }, 74)).toBe(15)
-  expect(terminalRowsBelow({ ...v, hotpot: { ...HOTPOT, armed: { action: 'zosui', at: NOW - 1000 } } }, 74)).toBe(6)
-  expect(terminalRowsBelow({ ...v, hotpot: { ...HOTPOT, note: { text: 'a long note '.repeat(12), until: NOW + 1 } } }, 74)).toBe(6)
-  expect(terminalRowsBelow(viewOf(74 * MIN, { isTerminal: true, slip: { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 } }, {}, { held: true }), 74)).toBe(5)
+  // 74 columns: the word and its tail on one row, the figures on three (the keys hint and a passing reason's room
+  // counted), the buttons on three (17 more for half blocks: 24)
+  expect(terminalRowsBelow(v, 74)).toBe(7)
+  expect(terminalRowsBelow(v, 54)).toBe(9)
+  // the bill: its title, its eight rows, its foot
+  expect(terminalRowsBelow({ ...v, hotpot: { ...HOTPOT, isBillOpen: true } }, 74)).toBe(17)
+  expect(terminalRowsBelow(viewOf(74 * MIN, { isTerminal: true, slip: { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 } }, {}, { held: true }), 74)).toBe(6)
+  // an armed press, a note, a turn, a fork out, the focus: the same rows, so the picture's tier holds
+  for (const w of [{ hotpot: { ...HOTPOT, armed: { action: 'zosui' as const, at: NOW - 1000 } } }, { hotpot: { ...HOTPOT, note: { text: 'a long note '.repeat(12), until: NOW + 1 } } }, { flags: { ...FLAGS, working: true } }, { flags: { ...FLAGS, forkOut: true } }, { isFocused: false }])
+    expect(terminalRowsBelow({ ...v, ...w }, 74)).toBe(7)
+  // lines wrap at spaces, as a terminal wraps them: a line just under two widths can take three
+  expect(wrappedRows('aaaaaaa bbbbbbb ccc', 10)).toBe(3)
+  expect(wrappedRows('a'.repeat(25), 10)).toBe(3)
 })
 
 test('the bill: reads, writes and the tax among them, pings, re-heats, compaction, the saving, the hit rate by member, a re-order, a day of keepwarm', async () => {

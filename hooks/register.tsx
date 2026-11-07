@@ -373,8 +373,6 @@ let hostNoCompact = false
  * client, as `-p`: the desktop app takes fills into its own box): Clear the table and Start fresh are dim then.
  */
 let hostNoBox = false
-/** The hold (its `heldAt`) whose Start fresh put /clear in the box: the card and the board say what Enter does now. */
-let freshFor = 0
 /** A paid re-order's turn is under way: the Hotpot keeps the feast drawn until its first step books it warm (or the turn ends). */
 let paying = false
 const badSleepers = new Set<string>()
@@ -581,6 +579,7 @@ function ttlLabel(): string {
 
 /** A typed keepwarm length as the pane names lengths (`30m`, `1h30m`), with its seconds where it has them (`1m30s`). */
 function keepLengthText(ms: number): string {
+  if (ms < 1000) return 'under 1s'
   const sec = Math.floor((ms % 60_000) / 1000)
   return sec === 0 ? lengthText(ms) : ms < 60_000 ? `${sec}s` : `${lengthText(ms - (ms % 60_000))}${sec}s`
 }
@@ -1909,7 +1908,7 @@ async function hotpotViewOf($: EngineInterface, e: Site | null, now: number): Pr
     pick: pickMs(h),
     slip: feast.phase === 'held' ? { writeUsd: c.heldUsd, warmUsd: c.warmUsd, tokens: held.tokens, ageMs: held.ageMs } : null,
     pingAt: pingGoesAt(c, now),
-    flags: { noSnapshot, compacting: isCompacting, working: b.isWorking, forkOut, compactOff: !features.compact, draftOff: !features.draft, paying, noCompact: hostNoCompact, noBox: hostNoBox, promptBack: promptIsBack(c, h), clearInBox: freshFor === c.heldAt && c.heldAt > 0 },
+    flags: { noSnapshot, compacting: isCompacting, working: b.isWorking, forkOut, compactOff: !features.compact, draftOff: !features.draft, paying, noCompact: hostNoCompact, noBox: hostNoBox, promptBack: promptIsBack(c, h), clearInBox: h.freshAt === c.heldAt && c.heldAt > 0 },
     isTerminal: e?.surface === 'terminal',
     isFocused: e !== null && 'isFocused' in e.props ? e.props.isFocused === true : false,
   }
@@ -2091,7 +2090,8 @@ async function pressStartFresh($: EngineInterface): Promise<void> {
   const c = await read($, cache)
   const filled = await $.prompt.fill({ text: '/clear', mode: 'replace' }).catch(() => null)
   if (isNoBox(filled)) hostNoBox = true
-  if (filled !== null && filled.isFilled) freshFor = c.heldAt
+  // kept with the hold in $.state (a reload keeps both): the card and the board say what Enter does now
+  if (filled !== null && filled.isFilled) await update($, hotpot, h => ({ ...h, freshAt: c.heldAt }))
   await noteHotpot($, filled !== null && filled.isFilled ? '/clear is in the box: Esc, then Enter starts fresh' : hostNoBox ? 'this app keeps its own prompt box: type /clear' : 'the box could not take /clear: type it')
 }
 
@@ -3267,7 +3267,7 @@ function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: Kess
   const { Box, Text, Button } = $.ui.resolve(e)
   const held = heldFigures(c, hp, now)
   const back = promptIsBack(c, hp)
-  const fresh = freshFor === c.heldAt && c.heldAt > 0
+  const fresh = hp.freshAt === c.heldAt && c.heldAt > 0
   // cold since it lapsed (the warmth's age less the TTL), in the whole minutes the strip and the board count
   const coldMs = Math.max(0, held.ageMs - ttlMs())
   const age = held.ageMs > 0 ? minutesText(coldMs) : '?'
@@ -3294,7 +3294,7 @@ function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: Kess
           <Text bold color="error">{fmtUsd(c.heldUsd)}</Text>
           <Text dimColor>
             {` (a warm turn: ≈${fmtUsd(c.warmUsd)}). `}
-            {fresh ? '/clear is in the box: press Enter to start fresh.' : back ? 'Your prompt is back in the box: press Enter to pay and send.' : 'Your prompt could not go back in the box: your next send pays and sends.'}
+            {fresh ? (e.surface === 'terminal' ? '/clear is in the box: Esc, then Enter starts fresh.' : '/clear is in the box: press Enter to start fresh.') : back ? 'Your prompt is back in the box: press Enter to pay and send.' : 'Your prompt could not go back in the box: your next send pays and sends.'}
             {hostNoBox ? ' Type /clear to start fresh.' : ''}
           </Text>
         </Text>

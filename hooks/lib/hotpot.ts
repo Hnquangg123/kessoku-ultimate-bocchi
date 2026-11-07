@@ -726,6 +726,14 @@ export type HotpotButton = { key: string; label: string; hotkey?: string; reason
 
 const ARMED = (v: HotpotView, action: 'reheat' | 'zosui' | 'clear') => v.hotpot.armed !== null && v.hotpot.armed.action === action && v.now - v.hotpot.armed.at < ARM_MS
 
+/** An armed two-press button's label; the board's tail says what the second press does. */
+export const PRESS_AGAIN = 'Press again'
+
+/** An armed label at its resting label's width (no-break spaces after `Press again`), so arming moves nothing in the row. */
+function armedAs(resting: string): string {
+  return PRESS_AGAIN + '\u00a0'.repeat(Math.max(0, [...resting].length - PRESS_AGAIN.length))
+}
+
 /** The fork gate's words while it is shut. */
 function gateReason(l: KessokuLedger): string {
   if (l.cleared) return 'the table was cleared'
@@ -786,18 +794,18 @@ export function hotpotButtons(v: HotpotView): HotpotButton[] {
                   : ''
   // (the five-minute hedge on a top-up's price is the bill's, beside a day of keepwarm's)
   const topup: HotpotButton = cold
-    ? { key: 'hotpot-topup', label: ARMED(v, 'reheat') && forkReason === '' ? `Press again: re-write${price(pr.reheat)}` : `Re-heat now${price(pr.reheat)}`, hotkey: 't', reason: forkReason }
+    ? { key: 'hotpot-topup', label: ARMED(v, 'reheat') && forkReason === '' ? armedAs(`Re-heat now${price(pr.reheat)}`) : `Re-heat now${price(pr.reheat)}`, hotkey: 't', reason: forkReason }
     : { key: 'hotpot-topup', label: `Top up now${price(pr.topUp)}`, hotkey: 't', reason: forkReason }
   const zosuiReason = fl.compactOff ? 'needs a newer Claude Code' : fl.noCompact ? 'this app compacts only from a typed /compact' : fl.compacting ? 'compacting' : fl.working ? 'a turn is running' : ''
   const zosui: HotpotButton = {
     key: 'hotpot-zosui',
-    label: ARMED(v, 'zosui') && zosuiReason === '' ? `Press again: compact ${fmtTokens(v.cache.contextTokens)} tokens · one summarizing request` : 'Zosui (compact)',
+    label: ARMED(v, 'zosui') && zosuiReason === '' ? armedAs('Zosui (compact)') : 'Zosui (compact)',
     hotkey: 'z',
     reason: zosuiReason,
   }
   const clear: HotpotButton = {
     key: 'hotpot-clear',
-    label: ARMED(v, 'clear') && clearReason === '' ? 'Press again: your draft gives way to /clear' : 'Clear the table (/clear)',
+    label: ARMED(v, 'clear') && clearReason === '' ? armedAs('Clear the table (/clear)') : 'Clear the table (/clear)',
     hotkey: 'f',
     reason: clearReason,
   }
@@ -875,14 +883,17 @@ function figuresLine(v: HotpotView): string[] {
  */
 export function boardOf(v: HotpotView): { word: string; tail: string; line: string } {
   const s = stateWords(v)
-  const note = v.hotpot.note !== null && v.now < v.hotpot.note.until ? v.hotpot.note.text : ''
+  // what an armed button's second press does, before a note: the decision waits on it
+  const note = armedTail(v) || (v.hotpot.note !== null && v.now < v.hotpot.note.until ? v.hotpot.note.text : '')
   const keys = v.isTerminal && !v.isFocused ? ['ctrl+x tab for its keys'] : []
   if (v.feast.phase === 'held') {
     // how to pay (the prompt back in the box, or, the box could not take it, the next send) and how to start fresh;
     // once Start fresh has put /clear in the box, what Enter does now
     const pay = v.flags.promptBack ? 'your prompt is back in the box: Enter pays and sends it' : 'your prompt could not go back in the box: your next send pays and sends it'
     const fresh = v.flags.noBox ? 'type /clear to start fresh' : v.flags.promptBack ? 'Start fresh puts /clear in its place' : 'Start fresh puts /clear in the box'
-    return { word: s.word, tail: note || s.tail, line: [v.flags.clearInBox ? '/clear is in the box: Enter starts fresh' : `${pay}, ${fresh}`, ...keys].join(' · ') }
+    // (in a terminal the press left the keys with the pane or the band, so Esc hands them back first)
+    const cleared = v.isTerminal ? '/clear is in the box: Esc, then Enter starts fresh' : '/clear is in the box: Enter starts fresh'
+    return { word: s.word, tail: note || s.tail, line: [v.flags.clearInBox ? cleared : `${pay}, ${fresh}`, ...keys].join(' · ') }
   }
   // a dim button's reason, unless the tail already says it (caching off)
   const reason = dimReason(hotpotButtons(v))
@@ -890,26 +901,73 @@ export function boardOf(v: HotpotView): { word: string; tail: string; line: stri
   return { word: s.word, tail: note || s.tail, line: parts.join(' · ') }
 }
 
+/** While a two-press button is armed (it says only `Press again`), what its second press does, for the board's tail. */
+function armedTail(v: HotpotView): string {
+  const pressed = hotpotButtons(v).find(b => b.label.startsWith(PRESS_AGAIN))
+  if (pressed === undefined) return ''
+  if (pressed.key === 'hotpot-topup') return `press again within 10 s to re-write ${fmtTokens(promptOf(v))} tokens${isPriced(v) ? ` ≈${fmtUsd(pricesOf(v).reheat)}` : ''}`
+  if (pressed.key === 'hotpot-zosui') return `press again within 10 s to compact ${fmtTokens(v.cache.contextTokens)} tokens in one summarizing request`
+  return 'press again within 10 s: your draft gives way to /clear'
+}
+
+/** A button's cells in a terminal row: a plain one `k: label`, a length chip `[ label ]`. */
+function buttonCells(b: HotpotButton): number {
+  return [...b.label].length + (b.hotkey !== undefined ? 3 : 4)
+}
+
+/** The buttons as a terminal row of `width` cells wraps them, two cells apart: each one's row and first cell, and the rows they take. */
+export function buttonLayout(buttons: readonly HotpotButton[], width: number): { at: { key: string; row: number; x: number }[]; rows: number } {
+  const at: { key: string; row: number; x: number }[] = []
+  let row = 0
+  let x = 0
+  for (const b of buttons) {
+    const w = buttonCells(b)
+    if (x > 0 && x + 2 + w > width) {
+      row += 1
+      x = 0
+    } else if (x > 0) x += 2
+    at.push({ key: b.key, row, x })
+    x += w
+  }
+  return { at, rows: buttons.length === 0 ? 0 : row + 1 }
+}
+
+/** The rows a terminal draws `text` in at `width`, wrapping at spaces and cutting a word wider than the row. */
+export function wrappedRows(text: string, width: number): number {
+  let rows = 1
+  let x = 0
+  for (const word of text.split(' ')) {
+    let w = [...word].length
+    if (x > 0 && x + 1 + w > width) {
+      rows += 1
+      x = 0
+    } else if (x > 0) x += 1
+    while (x + w > width) {
+      w -= width - x
+      rows += 1
+      x = 0
+    }
+    x += w
+  }
+  return rows
+}
+
+/** The longest dim reason that comes and goes (a fork out; a turn running and compacting are shorter): room is kept for it. */
+const PASSING_REASON = 'a top-up is on its way'
+
 /**
- * The rows a terminal pane's board and buttons take at `columns` (inside its one-cell padding: a plain button is
- * `k: label`, a length chip `[ label ]`, two cells apart, wrapped as the row wraps), and the bill's while it is open:
- * what is left decides the picture's tier. Resting labels and no note, so arming a press or a note never flips it.
+ * The rows a terminal pane's board and buttons take at `columns` (inside its one-cell padding: the board's two lines
+ * wrapped at spaces, the buttons as `buttonLayout` packs them), and the bill's while it is open (its title, its rows,
+ * its foot): what is left decides the picture's tier. Counted on a fixed worst case of what comes and goes (resting
+ * labels, no note, the keys hint in, room for a passing dim reason), so a press, a note, a turn, a fork out or the
+ * focus never flips the tier: only the pane's size, the bill and the state's own words move it.
  */
 export function terminalRowsBelow(v: HotpotView, columns: number): number {
   const width = Math.max(1, columns - 2)
-  const lines = (text: string) => Math.max(1, Math.ceil([...text].length / width))
-  const rest: HotpotView = { ...v, hotpot: { ...v.hotpot, armed: null, note: null } }
+  const rest: HotpotView = { ...v, isFocused: false, hotpot: { ...v.hotpot, armed: null, note: null }, flags: { ...v.flags, working: false, forkOut: false, compacting: false } }
   const b = boardOf(rest)
-  let row = 1
-  let x = 0
-  for (const btn of hotpotButtons(rest)) {
-    const w = [...btn.label].length + (btn.hotkey !== undefined ? 3 : 4)
-    if (x > 0 && x + 2 + w > width) {
-      row += 1
-      x = w
-    } else x += (x > 0 ? 2 : 0) + w
-  }
-  return lines(`${b.word}  ${b.tail}`) + lines(b.line) + row + (v.hotpot.isBillOpen ? billRows(rest).rows.length + 1 : 0)
+  const bill = v.hotpot.isBillOpen ? billRows(rest).rows.length + 2 : 0
+  return wrappedRows(`${b.word}  ${b.tail}`, width) + wrappedRows(`${b.line} · ${PASSING_REASON}`, width) + buttonLayout(hotpotButtons(rest), width).rows + bill
 }
 
 /** `/hotpot` where nothing can draw: the wooden board as one line. */
@@ -963,8 +1021,9 @@ export function billRows(v: HotpotView): { title: string; rows: BillRow[]; foot:
     rows.push({ label: 'If it goes cold', detail: `re-order ${fmtTokens(v.cache.contextTokens)}`, figure: fmtUsd(pr.reorder), tone: 'bad' })
     const n = Math.round(pingsADay(ttl))
     const assumed = v.ttl.how === 'assumed'
-    // a top-up past five minutes under an hour assumed would re-write the pot if it lives five minutes
-    if (assumed && v.cache.lastWarmAt > 0 && v.now - v.cache.lastWarmAt > 5 * MINUTE) rows.push({ label: 'A top-up now', detail: `≈${fmtUsd(pr.topUp5m)} if the cache lives 5m`, figure: fmtUsd(pr.topUp) })
+    // a top-up past five minutes under an hour assumed would re-write the pot if it lives five minutes: while warm,
+    // where Top up is the button (cold, or held, the press is a re-heat)
+    if (isWarmPhase(v.feast.phase) && assumed && v.cache.lastWarmAt > 0 && v.now - v.cache.lastWarmAt > 5 * MINUTE) rows.push({ label: 'A top-up now', detail: `≈${fmtUsd(pr.topUp5m)} if the cache lives 5m`, figure: fmtUsd(pr.topUp) })
     rows.push({ label: 'A day of keepwarm', detail: `≈${n} pings at a ${lengthText(ttl)} TTL${assumed ? `, assumed · ≈${fmtUsd(pingsADay(5 * MINUTE) * pr.topUp)} if it lives 5m` : ''}`, figure: fmtUsd(pr.day) })
   }
   return { title: "お会計 · this conversation's cache", rows, foot: 'cost ≈ list prices × tokens, not your bill' }

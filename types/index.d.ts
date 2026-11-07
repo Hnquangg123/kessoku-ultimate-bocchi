@@ -257,6 +257,8 @@ export type KessokuHotpot = {
   note: { text: string; until: number } | null
   /** The /bocchi tax preview's model, size and age, stamped with its hold's `heldAt`. */
   sample: { model: string; tokens: number; ageMs: number; heldAt: number } | null
+  /** The hold (its `heldAt`) whose Start fresh put /clear in the box; absent from values an older version wrote. */
+  freshAt?: number
 }
 
 /** One member's share of the prompt cache over this conversation's steps: tokens read from it, written to it, sent uncached. */
