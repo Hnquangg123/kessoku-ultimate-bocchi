@@ -3191,10 +3191,10 @@ function drawBlast($: EngineInterface, e: Site, s: KessokuBlast, now: number): D
   )
 }
 
-/** The /bocchi tax preview's sample while its hold stands, else the session's own model, size and age. */
+/** The /bocchi tax preview's sample while its hold stands (its age running on from the hold), else the session's own model, size and age. */
 function heldFigures(c: KessokuCache, h: KessokuHotpot, now: number): { model: string; tokens: number; ageMs: number } {
   const s = h.sample
-  if (s !== null && s.heldAt === c.heldAt && c.heldAt > 0) return { model: s.model, tokens: s.tokens, ageMs: s.ageMs }
+  if (s !== null && s.heldAt === c.heldAt && c.heldAt > 0) return { model: s.model, tokens: s.tokens, ageMs: s.ageMs + Math.max(0, now - s.heldAt) }
   return { model: c.model, tokens: c.contextTokens, ageMs: c.lastWarmAt > 0 ? now - c.lastWarmAt : 0 }
 }
 
@@ -3237,11 +3237,13 @@ function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: Kess
   const { Box, Text, Button } = $.ui.resolve(e)
   const held = heldFigures(c, hp, now)
   const back = promptIsBack(c, hp)
-  // the card stands for the hold's 15 minutes and counts how long the cache has been cold: the count's next minute and
-  // the hold's end redraw the band, where no pane's tail may come
-  scheduleTail($, warmthDue(c, now, ttlMs()), now)
   // cold since it lapsed (the warmth's age less the TTL), as the strip and the chalkboard's foot count it
-  const age = held.ageMs > 0 ? fmtDuration(Math.max(0, held.ageMs - ttlMs())) : '?'
+  const coldMs = Math.max(0, held.ageMs - ttlMs())
+  const age = held.ageMs > 0 ? fmtDuration(coldMs) : '?'
+  // the card stands for the hold's 15 minutes and counts on: the count's next minute (a preview's runs on its sample's,
+  // which the warmth's need not share) and the hold's end redraw the band, where no pane's tail may come
+  scheduleTail($, warmthDue(c, now, ttlMs()), now)
+  if (held.ageMs > 0) scheduleTail($, now + 60_000 - (coldMs % 60_000), now)
   const { isExact } = priceInfo(held.model || 'default')
   const rate = writePerToken(held.model, l.engine, ttlMs()) * 1e6
   const rateWords = isEnginePrice({ ...c, model: held.model }, l) ? "the engine's rate" : `${isExact ? '' : '~'}$${Number(rate.toFixed(2))}/MTok`
@@ -3810,8 +3812,9 @@ async function demoMemo($: EngineInterface, proposed: boolean): Promise<string> 
  * as tax): the sample's model, size and age, the session's own where it has
  * them (its age only once the cache has gone cold: over a warm one or none, two
  * TTLs back, so the card reads as a real hold would), go to the Hotpot's
- * `sample` under the hold's time, which the card and the pane draw from while
- * it stands; the hold itself is armed, so the next send clears it.
+ * `sample` under the hold's time, which the card (its age running on from
+ * there) and the pane draw from while it stands; the hold itself is armed, so
+ * the next send clears it.
  */
 async function demoTax($: EngineInterface): Promise<string> {
   const now = await $.clock.now()

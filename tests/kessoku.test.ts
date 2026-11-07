@@ -4614,6 +4614,31 @@ test('a top-up in flight over the last tick before the lapse, failing, leaves la
   await pane.unmount()
 })
 
+test('the /bocchi tax preview\'s card counts on from its sample, as a real hold\'s does', { options: { openPanelOnStart: false }, timeoutMs: 20_000 }, async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // nothing cached: the sample is two TTLs back, its minutes its own
+  await $.command.run(cmd('bocchi', 'tax'))
+  let band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 1h00m ago!!$/ })).toBeDefined()
+  await clock.advance(61_000)
+  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 1h01m ago!!$/ })).toBeDefined()
+  await band.unmount()
+  // over a cache cold five minutes: the session's own age
+  await clock.advance(15 * 60_000)
+  await aTurn($, 't1')
+  await clock.advance(65 * 60_000)
+  await $.command.run(cmd('bocchi', 'tax'))
+  band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 5:00 ago!!$/ })).toBeDefined()
+  await clock.advance(61_000)
+  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 6:00 ago!!$/ })).toBeDefined()
+  await band.unmount()
+})
+
 test('keepwarm\'s ping in flight, or its 429\'s retry waiting, keeps the pot Nijika\'s while keepwarm lasts to it, though not to the next tick', { timeoutMs: 20_000 }, async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
