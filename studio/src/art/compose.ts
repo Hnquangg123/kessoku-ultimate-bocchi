@@ -972,9 +972,10 @@ function checkFeast(
     // And every pose keeps that head. Above the face box's foot: inside the portrait window it may draw over stand's
     // pixels (a hand raised beside her face) but never cut one, and outside it never cut her hair (HEAD_HAIR: an ahoge's
     // tip, a side tail). Below the face box her hair stays where her base draws it, drawn over or kept: `seat` keeps
-    // stand's inside the window and wherever the table does not hide her (above her waist's row, and on her outer side
-    // below it: the lap clip takes only the table nearer than her waist), and the poses patched on `seat` keep its hair
-    // anywhere on the canvas (the flips on her shoulders, a side tail, hair hanging past her waist).
+    // stand's inside the window, above her waist's row, and on her outer side from that row down (beside the table;
+    // inward of her waist, her waist row is her turned body's, as the waist check has it, and below it the table), and
+    // the poses patched on `seat` keep its hair anywhere on the canvas (the flips on her shoulders, a side tail, hair
+    // hanging past her waist).
     const hair = new Set([...HEAD_HAIR[art.id]])
     const below = art.face.y + fh
     const inWindow = (x: number, y: number) => y >= art.head.y && y < art.head.y + PH && x >= art.head.x && x < art.head.x + PW
