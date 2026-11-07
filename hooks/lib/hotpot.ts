@@ -51,7 +51,8 @@ export const PING_SLACK_MS = 1000
  * miss shows a shorter TTL (unless the request itself waited the 20 s spare); wide enough that keepwarm's own pings
  * at an assumed hour teach a five-minute TTL. They go out on the first tick of the minute beat from the TTL less 90 s:
  * 58:30 to 59:30 after a step's warmth (the beat runs from the session's start, not from the step), about 59:00
- * after a ping's, plus the timer's lateness.
+ * after a ping's, plus the timer's lateness (or at once, when keepwarm is switched on or a turn ends past that time;
+ * past this gap, such a ping teaches nothing).
  */
 export const SIGHTING_MAX_GAP = HOUR - 20_000
 /** A ping's own tokens: its few words in, its word out. */
@@ -84,7 +85,7 @@ export type FeastFlags = {
   cachingOff?: boolean
   /** Keepwarm is armed but no ping can go now (the fork gate shut, stopped after a second 429, no snapshot, caching off, too little to keep, no minute tick, a main-loop turn running through the last minutes): it keeps nothing, so last orders stay last orders. */
   keepwarmHeld?: boolean
-  /** When keepwarm's next ping goes (`nextPingAt` on its minute beat, the 429's retry, or now while a fork is out): Nijika has the pot only while keepwarm outlasts it. The TTL less 90 s when not given. */
+  /** When keepwarm's next ping goes (`nextPingAt` on its minute beat, the 429's retry, or now while a fork is out): Nijika has the pot only while keepwarm outlasts it and it finds the pot warm. The TTL less 90 s when not given. */
   pingAt?: number
 }
 
@@ -107,11 +108,11 @@ export function feastOf(cache: Pick<KessokuCache, 'lastWarmAt' | 'keepWarmUntil'
   if (flags.cachingOff === true) return at('off', 0)
   if (!warmed) return at(flags.cleared === true ? 'cleared' : 'none', 0)
   if (leftMs <= 0) return at('cold', 0)
-  // Nijika has the pot while keepwarm outlasts its ping (on the tick that sends it, the TTL less 90 s or later) and can
-  // send it; else last orders
+  // Nijika has the pot while keepwarm outlasts its ping (on the tick that sends it, the TTL less 90 s or later, with a
+  // second to spare), the ping finds the pot still warm, and it can go; else last orders
   if (leftMs <= lastWindow(ttlMs)) {
-    const pingAt = flags.pingAt ?? cache.lastWarmAt + ttlMs - PING_LEAD_MS
-    return at(cache.keepWarmUntil > Math.max(now, pingAt + PING_SLACK_MS) && flags.keepwarmHeld !== true ? 'tend' : 'last', 1)
+    const goesAt = Math.max(now, flags.pingAt ?? cache.lastWarmAt + ttlMs - PING_LEAD_MS) + PING_SLACK_MS
+    return at(cache.keepWarmUntil > goesAt && goesAt < cache.lastWarmAt + ttlMs && flags.keepwarmHeld !== true ? 'tend' : 'last', 1)
   }
   const w = leftMs / ttlMs
   return w > 0.84 ? at('feast', 5) : w > 2 / 3 ? at('feast', 4) : w > 1 / 3 ? at('simmer', 3) : at('low', 2)

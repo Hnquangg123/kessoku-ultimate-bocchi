@@ -3805,8 +3805,10 @@ test('top up forks once and books a ping; while it is out no second press or min
   await aTurn($, 't1')
   await $.command.run(cmd('hotpot'))
   const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
-  await clock.advance(58 * 60_000 + 36_000)
+  // keepwarm armed before its ping's time (past it, it would ping at once), the top-up pressed in its window
+  await clock.advance(58 * 60_000)
   await $.command.run(cmd('keepwarm', '2h'))
+  await clock.advance(36_000)
   const calledAt = clock.now()
   await pane.press({ key: 'hotpot-topup' })
   await clock.settle()
@@ -4474,6 +4476,11 @@ test('/cache-tax prints saved and tax paid; with no screen /hotpot answers in on
   // with no minute tick, Nijika never has the pot
   await clock.advance(57 * 60_000)
   expect((await $.command.run(cmd('hotpot'))).text).toMatch(/^♨ Hotpot · last orders, cold in 2m · /)
+  // and keepwarm switched on past its ping's time sends nothing either
+  await clock.advance(90_000)
+  await $.command.run(cmd('keepwarm', '2h'))
+  await clock.settle()
+  expect(seen.forks).toBe(0)
 })
 
 test('keepwarm cannot ping through a running turn: in the pot\'s last minutes the board says Last orders!, the strip that keepwarm waits, and no fork goes', { timeoutMs: 20_000 }, async ($, on) => {
@@ -4550,6 +4557,60 @@ test('the wooden board counts keepwarm\'s ping down on its tick\'s own minutes, 
   // 56:10 on the beat: the count dropped to 2m at its 56:00, between the warmth's minutes
   await clock.advance(55 * 60_000 + 50_000)
   expect((await boardLines(pane))[0]).toMatch(/^Nijika has the pot {2}she tops it up in 2m$/)
+  await pane.unmount()
+})
+
+test('keepwarm switched on past its ping\'s time pings at once, as a turn that held it through its tick does once it ends, so the pot does not lapse waiting for a later tick', { timeoutMs: 20_000 }, async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // warmed 45 s after a tick: cold at 60:45, its ping due at 59:15, and the 60:00 tick goes by with keepwarm off
+  await clock.advance(45_000)
+  await aTurn($, 't1')
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  await clock.advance(59 * 60_000 + 25_000)
+  expect((await boardLines(pane))[0]).toMatch(/^Last orders! {2}cold in under 1m$/)
+  await $.command.run(cmd('keepwarm', '2h'))
+  await clock.settle()
+  expect(seen.forks).toBe(1)
+  expect((await boardLines(pane))[0]).toMatch(/^♨ Bubbling/)
+  await pane.unmount()
+  // warm from that ping at 60:10, cold at 120:10: a turn from 118:50 holds the 119:00 and 120:00 ticks and ends at
+  // 120:05 with no step, before the lapse; the tick after it would come too late
+  await clock.advance(58 * 60_000 + 40_000)
+  await $.turn.start({ text: 'go', turnId: 't2' })
+  await clock.advance(75_000)
+  expect(seen.forks).toBe(1)
+  await $.turn.complete({ turnId: 't2', answer: '', durationMs: 75_000, isAborted: true, reason: 'aborted' })
+  await clock.settle()
+  expect(seen.forks).toBe(2)
+})
+
+test('a top-up in flight over the last tick before the lapse, failing, leaves last orders: the next tick comes after the pot is cold', { timeoutMs: 20_000 }, async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const knobs: Answers = {}
+  bottoms(on, clock, seen, knobs)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  // warmed 45 s after a tick, keepwarm on: cold at 60:45, the ping's tick at 60:00
+  await clock.advance(45_000)
+  await aTurn($, 't1')
+  await $.command.run(cmd('keepwarm', '6h'))
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  await clock.advance(59 * 60_000 + 14_000)
+  // a top-up pressed at 59:59, out five seconds over the 60:00 tick, comes back failed and reads nothing
+  Object.assign(knobs, { forkMs: 5000, forkReason: 'api-error', forkStatus: 500, forkCacheRead: 0, forkCacheWrite: 0 })
+  await pane.press({ key: 'hotpot-topup' })
+  await clock.advance(21_000)
+  expect(seen.forks).toBe(1)
+  expect((await boardLines(pane))[0]).toMatch(/^Last orders! {2}cold in under 1m$/)
+  await clock.advance(60_000)
+  expect(seen.forks).toBe(1)
   await pane.unmount()
 })
 

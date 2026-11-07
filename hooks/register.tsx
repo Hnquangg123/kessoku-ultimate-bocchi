@@ -459,7 +459,7 @@ function feastFlags(c: KessokuCache, l: KessokuLedger, now: number, working = fa
   return { held: c.heldAt > 0 && now - c.heldAt < HELD_PROMPT_MS, compacting: isCompacting, cleared: l.cleared, cachingOff: cachingOff(l), keepwarmHeld: keepwarmHeld(c, l, now, working), pingAt: pingGoesAt(c, now) }
 }
 
-/** When keepwarm's next ping goes, as its timers have it: now while a fork is out, at the 429's retry while one waits, else on the minute beat's first tick from the TTL less 90 s. */
+/** When keepwarm's next ping goes, as its timers have it: now while a fork is out, at the 429's retry while one waits, else on the minute beat's first tick from the TTL less 90 s (feastOf asks that it find the pot warm). */
 function pingGoesAt(c: KessokuCache, now: number): number {
   return forkOut ? now : retryTimer !== null ? retryAt : nextPingAt(c, ttlMs(), keepWarmBeatAt)
 }
@@ -1029,13 +1029,16 @@ async function playMoment($: EngineInterface, kind: NonNullable<KessokuHotpot['m
  * keepwarm is armed, the session idle and nothing holds a ping back (a fork
  * out, the gate shut, a retry waiting, a second 429's stop). A cache that
  * already lapsed is not pinged: the next send warms it, the pings start then.
+ * It runs at once too where keepwarm comes free between ticks (switched on, a
+ * main-loop turn ended), so a ping past its time goes before the lapse; never
+ * with no minute timer (no screen).
  */
 async function keepWarmTick($: EngineInterface): Promise<void> {
   const c = await read($, cache)
   const b = await read($, band)
   const l = await read($, ledger)
   const now = await $.clock.now()
-  if (c.keepWarmUntil <= now || b.isWorking || isCompacting || c.lastWarmAt === 0 || c.contextTokens < TOP_UP_MIN_TOKENS) return
+  if (keepWarmTimer === null || c.keepWarmUntil <= now || b.isWorking || isCompacting || c.lastWarmAt === 0 || c.contextTokens < TOP_UP_MIN_TOKENS) return
   // With caching off there is no pot to keep: a ping would re-send the context uncached, minute after minute.
   if (forkOut || !l.canFork || noSnapshot || pingsStopped || retryTimer !== null || cachingOff(l)) return
   if (now - c.lastWarmAt < ttlMs() - 90_000 || isCold(c, l, now)) return
@@ -3210,12 +3213,13 @@ function keepAfterLabel(c: KessokuCache, l: KessokuLedger, h: KessokuHotpot, now
   return c.keepWarmUntil > now ? 'Keep warm: on' : `Keep it warm after (${lengthText(pickMs(h))}) ≈${fmtUsd(keepPriceOf(c, l, pickMs(h)))}`
 }
 
-/** Keepwarm armed for a length from the clock read at the press (Nijika ties her headband on), or switched off. */
+/** Keepwarm armed for a length from the clock read at the press (Nijika ties her headband on), or switched off; armed past its ping's time, it pings now. */
 async function setKeepwarm($: EngineInterface, ms: number): Promise<void> {
   const now = await $.clock.now()
   const was = (await read($, cache)).keepWarmUntil > now
   await update($, cache, x => ({ ...x, keepWarmUntil: ms > 0 ? now + ms : 0 }))
   if (ms > 0 && !was) await playMoment($, 'keepon')
+  if (ms > 0) void keepWarmTick($).catch(() => undefined)
 }
 
 /** The held prompt is back in the box: its put-back fill landed (a refused one empties `heldText`), or the hold is `/bocchi tax`'s preview. */
@@ -4264,6 +4268,8 @@ export const register: Register = (on, options) => {
     // A turn that had a step with usage ran to its end: the session holds a snapshot a fork may share (the fork gate).
     // Its warmth is its steps' own: a turn that ended on an error or an interrupt warmed nothing more.
     await writeLedger($, l => (l.turnSteps > 0 ? { ...l, canFork: true } : l))
+    // Keepwarm, held by the turn through its ping's tick, pings now if the pot is still warm.
+    void keepWarmTick($).catch(() => undefined)
     // A long set may have played to an empty room (an interrupted one had the person there): its end is announced,
     // and Nijika's recap of it stands above the prompt for whoever is at a screen; toasts none keeps both quiet.
     const isLong = e.durationMs >= SET_AWAY_MS && e.reason !== 'aborted'

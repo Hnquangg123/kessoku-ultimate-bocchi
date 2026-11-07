@@ -183,6 +183,10 @@ test('the strip, the foot and the rail read their words off the phase, in whole 
   expect(feastOf(cacheAt(57 * MIN, { keepWarmUntil: tick + 1500 }), NOW, HOUR, { pingAt: tick }).phase).toBe('tend')
   expect(feastOf(cacheAt(59 * MIN, { keepWarmUntil: NOW + 30_000 }), NOW, HOUR, { pingAt: NOW }).phase).toBe('tend')
   expect(feastOf(cacheAt(59 * MIN, { keepWarmUntil: NOW + 30_000 }), NOW, HOUR, { pingAt: NOW + 40_000 }).phase).toBe('last')
+  // nor does a ping whose tick comes once the pot has lapsed (cold 30 s on here), the second's slack inside it
+  expect(feastOf(cacheAt(59.5 * MIN, { keepWarmUntil: NOW + HOUR }), NOW, HOUR, { pingAt: NOW + 30_000 }).phase).toBe('last')
+  expect(feastOf(cacheAt(59.5 * MIN, { keepWarmUntil: NOW + HOUR }), NOW, HOUR, { pingAt: NOW + 29_000 }).phase).toBe('last')
+  expect(feastOf(cacheAt(59.5 * MIN, { keepWarmUntil: NOW + HOUR }), NOW, HOUR, { pingAt: NOW + 28_000 }).phase).toBe('tend')
   expect(words(72 * MIN, { keepwarmHeld: true }, NOW + HOUR)).toEqual(['cold for 12m · keepwarm on', '❄ cold · keepwarm on'])
   expect(words(72 * MIN, { held: true })).toEqual(['cold for 12m · a send is held', '❄ cold · held'])
   // a hold over a warm pot or none (only /bocchi tax's preview makes one) says so, never cold
