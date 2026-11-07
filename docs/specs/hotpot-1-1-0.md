@@ -176,7 +176,8 @@ step books.
   the **Keepwarm default** option), `armed: { action: 'reheat' | 'zosui' | 'clear'; at } | null` (one 10 s window for
   all three), `moment: { kind: 'ping' | 'reheat' | 'keepon' | 'paid'; until } | null`, `note: { text; until } | null`
   (The actions' "What a press says") and `sample: { model; tokens; ageMs; heldAt } | null` (the `/bocchi tax`
-  preview's model, size and age, stamped with its hold's `heldAt`; The cache's truth). A separate atom (as the
+  preview's model, size and age, stamped with its hold's `heldAt`; its age the cache's only once it has gone cold,
+  else two TTLs back, so the card reads as a real hold would; The cache's truth). A separate atom (as the
   tour's), so no older value needs a filler. The `ui.close` hook sets `isOpen` and `inBand` false and clears `armed`,
   `moment` and `note`, keeping `pick`, `isBillOpen` and `sample`; `/clear` and an in-process `/resume` clear `armed`,
   `moment` and `note` and keep the rest; `startUi` reconciles it with `$.ui.panes()`.
@@ -208,7 +209,9 @@ step books.
      after a first five-minute sighting; then a dim button's reason (the reasons are The actions'); then, in the
      terminal until the pane holds the keys (`isFocused` false), `ctrl+x tab for its keys`. The TTL in force and a
      day of keepwarm at five minutes are on the bill's `A day of keepwarm` row. During a Cache Tax hold the line is
-     instead `your prompt is back in the box: Enter pays and sends it, Start fresh puts /clear in its place`.
+     instead `your prompt is back in the box: Enter pays and sends it, Start fresh puts /clear in its place`; where
+     the box could not take the prompt back, `your prompt could not go back in the box: your next send pays and sends
+     it, Start fresh puts /clear in the box`, ending `type /clear to start fresh` once no box is bound.
 3. The buttons: native Buttons, letter hotkeys only, each under a fixed key that the focus ring, a second press and
    the tests follow while its label changes (live prices, armed words):
    - `Keep the fire on · <pick> ≈<price>` (`w`, `hotpot-keep`; `Keep the fire on · 2h ≈$0.07`: priced as a day of
@@ -259,7 +262,7 @@ the prompt, as above.
 **Kaomoji**: the terminal's layout with no Raster or Svg, on every surface: each member's own face for the mood her
 mini would show (`MEMBERS[m].faces[mood]`; Bocchi's are `(≧▽≦)`, `( •_•)♪`, `` (;´Д`) ``, `[(._.)]`, `(ﾟДﾟ;)`), at
 the pot's corners as the minis sit, and the pot between them as a text gauge of its level (`♨ ▰▰▰▱▱`; cold
-`❄ ▱▱▱▱▱`).
+`❄ ▱▱▱▱▱`, in the theme's red in a terminal and a fixed one on the other surfaces' near-black wall).
 
 ### Redraws
 
@@ -277,7 +280,8 @@ the pot's corners as the minis sit, and the pot between them as a text gauge of 
   10 s, so `Press again: …` goes back on time) and the next whole minute of each count on the wooden board (the time
   left or since it went cold, keepwarm's time left, the next ping).
 - `drawPanel` and the strip's drawings hand `scheduleTail` `warmthDue` too, whether or not the Hotpot is open (one
-  timer serves them all), so an idle session's counts stay fresh with the Hotpot closed.
+  timer serves them all), so an idle session's counts stay fresh with the Hotpot closed. The Cache Tax card, which
+  takes the band's place during a hold, hands it its hold's end itself.
 - The strip (the desktop sign and both terminal strips, after `cache `), the chalkboard's foot and the rail read one
   phase function (below), so they never disagree: `ampOf` and the rail take their words from `feastOf`, and
   `panelView` takes its flags (false when left out). `amp.words` is the strip's words below, counted as `ampText`
@@ -301,11 +305,12 @@ the pot's corners as the minis sit, and the pot between them as a text gauge of 
 `feastOf(cache, now, ttlMs, flags: { held, compacting, cleared, cachingOff, keepwarmHeld })` returns
 `{ phase, level, leftMs, ageMs }`. Its phases, first match wins: `zosui` while compacting, `held` while a send is
 held, `off` while caching is off, `none`/`cleared` with nothing cached, `cold` once lapsed, `last` or `tend` (keepwarm
-on and able to ping) in the cold notice's window, else `feast`/`simmer`/`low` by warmth. `keepwarmHeld` is keepwarm
-armed with no ping able to go: the fork gate shut, the pings stopped after a second 429, no snapshot, caching off or
-`contextTokens` under 1,000 (one in flight or a 429's retry still keeps the pot); it keeps nothing, so last orders
-stay `last`. `level` is 5 for `zosui`; 0 for `held`,
-`off`, `none`, `cleared` and `cold`; 1 for `last` and `tend`. Cold means `now − lastWarmAt ≥ TTL` everywhere:
+on, lasting until its ping at TTL − 90 s, and able to send it) in the cold notice's window, else
+`feast`/`simmer`/`low` by warmth. `keepwarmHeld` is keepwarm armed with no ping able to go, as keepWarmTick's own
+guard has it: the fork gate shut, the pings stopped after a second 429, no snapshot, caching off, `contextTokens` under
+1,000, no minute tick (nothing can draw), or a main-loop turn running through the cold notice's window (one in flight
+or a 429's retry still keeps the pot); it keeps nothing, so last orders stay `last`. `level` is 5 for `zosui`; 0 for
+`held`, `off`, `none`, `cleared` and `cold`; 1 for `last` and `tend`. Cold means `now − lastWarmAt ≥ TTL` everywhere:
 `isColdRoom` (`≥`) and `warmth`, `ampOf` and `coldWatch`'s notice (`left ≤ 0`) have it, keepwarm (`age > ttl`),
 the rail, the hold and `/cache-tax`'s face (`>`) move to it, and all take it from `feastOf`. `hotpot.ts` is a leaf
 with no value imports from `stage.ts` (whose `ampOf` calls `feastOf`).
@@ -435,10 +440,11 @@ Each button lists its dim reasons in order; the one said is the first that appli
 - **Clear the table**: `$.prompt.fill({ text: '/clear', mode: 'replace' })`, for the person to send. Over a draft
   (`$.prompt.read()`; exactly `/clear` is not one) the first press arms (`Press again: your draft gives way to /clear`)
   and a second within 10 s fills. A fill that lands says `/clear is in the box: Esc, then Enter` (while the Hotpot
-  holds the keys Enter presses its focus ring, and that Esc closes it: `closeOnEscape`); `isFilled: false` (a dialog
-  holds the keys, or no box is bound) says `the box could not take /clear: type it` and disarms. Dim, with
-  `this app keeps its own prompt box: type /clear`, outside the REPL: the desktop app draws its own composer, so a
-  fill answers `no_composer` (known from `isInteractive`, and from that answer itself, which also says so).
+  holds the keys Enter presses its focus ring, and that Esc closes it: `closeOnEscape`); `isFilled: false` from a
+  dialog holding the keys (or a hook's refusal with no cause) says `the box could not take /clear: type it` and
+  disarms. A `no_composer` answer (no box bound: a host with no client that takes fills, as `-p`; the desktop app
+  takes them into its own box) says `this app keeps its own prompt box: type /clear` and dims Clear the table and
+  Start fresh, the pane's and the card's, from then on (module state, learned from that answer alone).
 - **The bill** toggles `isBillOpen`; **Close** closes the pane.
 - **What a press says**: an action's outcome, and a keepwarm ping's while the pane is open, is the hotpot atom's
   `note`: 6 s in place of the tail of the wooden board's first line, whatever the **Toasts** option (toasts go out
@@ -610,11 +616,15 @@ are, and the four feast faces are the only new face art (`bite` is `idle` with i
     copies of her loops).
   - **The checks** (`npm run check`): each seat pose's face region is stand's, checked as the `HEAD_POSES` are (so
     every face overlay and feast face fits), and `seat` keeps stand's whole head (the portrait window down to the
-    face box's foot, hair and outline untouched); each seat pose's waist ends at `waist` on her outer side, with only
+    face box's foot, hair and outline untouched); every seat pose keeps that head (inside the window nothing of
+    stand's cut down to the face box's foot, outside it none of her hair; below it `seat` keeps her hair wherever the
+    table does not hide her, and the poses built on `seat` keep its hair, or stand's behind what `seat` drew); each
+    seat pose's waist ends at `waist` on her outer side, with only
     hair and chopsticks below it; the window holds the face, the hands and the bowl; a pot-look face differs from the
     face it comes from only inside the eyes, each iris toward the pot; the tips stay on the canvas; the headband
-    covers only pixels that every seat pose of Nijika's has the same (as the sway is checked); the loops' lengths; and
-    the faces each loop plays: in `worry` and `shock` no pot look and no `glance`, in `eat`, `calm` and `serve` only a
+    covers only pixels that every seat pose of Nijika's has the same (as the sway is checked); the loops' lengths; the
+    four loops' beats apart (no two members blink, bite or look round on the same frame); and the faces each loop
+    plays: in `worry` and `shock` no pot look and no `glance`, in `eat`, `calm` and `serve` only a
     pot look, `bite`, `happy`, a blink with its half lids beside it and at most one `glance`.
 - **Loops move arms, shoulders and faces only**, by changing pose and face: the head and the waist never move (no dx,
   dy or squash), so each figure stays near 10k to 16k characters at level 0 (the prototype's largest is 14.4k) and the
@@ -699,10 +709,11 @@ are, and the four feast faces are the only new face art (`bite` is `idle` with i
   `ledger: KessokuLedger` (what The ledger keeps), each with an initial value that stands in for a value an older
   version never wrote. `KessokuCache` and `KessokuAgent` gain nothing, so the tests' literals of both stand.
 - Module state, which a reload forgets (keepwarm may then ping once more): the fork in flight, the 429 retry's
-  timer, the stop after a second 429, a host found to keep no snapshot, a host that cannot compact or fill its box
-  (outside the REPL, or found so by a refusal), when the module loaded (for the five-minute evidence's "no reload"),
-  and a paid re-order's turn under way (`paying`, set once the held prompt has entered: the feast stays drawn and the
-  board says `♨ Re-ordering` until its first step books, or the turn ends).
+  timer, the stop after a second 429, a host found to keep no snapshot, a host that cannot compact (outside the
+  REPL, or found so by its refusal) or fill its box (found so by a `no_composer` answer), when the module loaded
+  (for the five-minute evidence's "no reload"), and a paid re-order's turn under way (`paying`, set once the held
+  prompt has entered: the feast stays drawn and the board says `♨ Re-ordering` until its first step books, or the
+  turn ends).
 
 ## Testing Decisions
 
@@ -736,8 +747,11 @@ The seams, agreed before any test is written:
    ping, and while it is out no second press or minute tick sends another; re-heat and zosui need two presses (a
    re-heat warms the pot, from the clock read before the call, only when its read and write reach 0.9 × P, a written
    prefix or a live entry read; zosui's second press calls `$.session.compact` and settles it itself, a slow one drawn
-   until it resolves and a vetoed one saying so); outside the REPL (the desktop app's start) Zosui and Clear are dim
-   with their reasons; clear fills `/clear`, on the second press over a draft, and arms nothing on `isFilled: false`;
+   until it resolves and a vetoed one saying so); outside the REPL (the desktop app's start) Zosui is dim with its
+   reason and Clear fills the app's box; clear fills `/clear`, on the second press over a draft, and arms nothing on
+   `isFilled: false`; a held prompt the box cannot take back keeps its hold, the next send passing as the paid one;
+   with no pane open the Cache Tax card gives way at its hold's end; keepwarm through a running turn's last minutes
+   is last orders, no fork going, and with no screen it never has the pot;
    a Hotpot closed by its own `Close` lets its sprites go; the bill (`b`) shows the figures nothing else in the pane
    does, on the board's paint; a paid held send books the tax and keeps the feast drawn, the board saying
    `♨ Re-ordering`, until its first step books it warm, a held send re-sent and refused beneath plays nothing, a send
@@ -813,8 +827,10 @@ calls they cannot vouch for are gated (`compact`, `draft`).
   `claude plugin validate` names it, the README's note on such installs counts five hooks and says so), a resumed
   session reads as nothing cached until its first step.
 - The desktop app runs the engine as an SDK host (`--input-format stream-json`): there `$.session.compact` is
-  refused ("not available in a headless (-p / SDK) session yet") and `$.prompt.fill` finds no composer, so Zosui and
-  Clear the table are dim there with their reasons (found by the review on 2026-11-02, after this spec was written).
+  refused ("not available in a headless (-p / SDK) session yet"), so Zosui is dim there with its reason (found by the
+  review on 2026-11-02, after this spec was written). `$.prompt.fill` reaches the app: the engine sends it on as a
+  `ui_prompt_fill` request to an attached client that takes fills, which the app's is, and answers `no_composer` only
+  where none is attached (seen live on 2.1.309 by the second review, 2026-11-07).
 - Several sessions with keepwarm on are several pots pinged: each pane says only its own session's.
 - The pane writes numbers, times and model ids, never prompt text. In the README, what the mod touches gains the
   top-up and the re-heat (one request each, through the session's own fork); "Five features switch themselves off"

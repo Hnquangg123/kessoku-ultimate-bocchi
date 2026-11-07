@@ -506,7 +506,8 @@ you pay.
 - `CACHE TAX · the cache went cold 12:04 ago!!`, the tokens it would re-write, the rate, the cost, and what a warm
   turn would have cost
 - your prompt is back in the box: Enter sends it (the same prompt sent again within 15 minutes passes, and the
-  re-write is booked as Cache Tax paid)
+  re-write is booked as Cache Tax paid); where the box cannot take it back, the card says so and your next send
+  passes, whatever it says
 - `Keep it warm after (6h) ≈$0.19` (`w`) arms keepwarm for the Hotpot's chosen length, from the moment you press it;
   `Start fresh (/clear)` (`f`) puts `/clear` in the box; `Dismiss` (`d`) lets the hold go and brings Bocchi out of
   her panic (your prompt stays in the box, and the next send is judged afresh)
@@ -521,9 +522,9 @@ cache, 1.25× for five minutes). A `~` before the rate means only the model fami
 **The TTL.** The **Cache TTL** option when it is set to anything but 60. At 60, 0 or empty it is left to Claude Code
 (the TTL it reports on every model switch, and on a resume) or, while Claude Code has said nothing, to what the
 requests show: a request that reads the cache more than 5.5 minutes after the last one means an hour; one that
-re-writes it 5.5 to 59 minutes after, on the same model and effort, is a first sighting of five minutes (the Hotpot
-shows `TTL 5m?`), and a second settles five minutes. Until then an hour is assumed (`TTL 1h?`). What was learned is
-kept for the session, through `/clear` and a reload.
+re-writes it from 5.5 minutes to 20 seconds short of an hour after, on the same model and effort (a keepwarm ping
+also counts), is a first sighting of five minutes (the Hotpot shows `TTL 5m?`), and a second settles five minutes.
+Until then an hour is assumed (`TTL 1h?`). What was learned is kept for the session, through `/clear` and a reload.
 
 **The warmth.** The cache warms from the start of each request of the main loop (the TTL runs from when a request is
 processed), never from a turn's end, so an interrupted or failed turn warms nothing more than its requests did. A
@@ -578,7 +579,7 @@ the chewing and a blink); at last orders and at the bill, at you. The same comma
 | less | the last few pieces |
 | the last 5 minutes (half the TTL, if that is shorter) | last orders: a LAST ORDER sign, a sputtering flame, one piece of meat left; all four look up at you, Ryo's chopsticks still on the last piece |
 | cold | an empty, frosted pot, no flame, blue light, snow; Bocchi in her box under a rain cloud, Ryo chewing a weed, Nijika and Kita slumped over the table, melting |
-| keepwarm on | Nijika in the nabe-bugyō headband, the stove's knob glowing; in the last minutes she has the pot, the flame steady (while a ping can go: held back, by a model switch until the next turn ends or by a second rate limit, keepwarm waits, and the last minutes are last orders) |
+| keepwarm on | Nijika in the nabe-bugyō headband, the stove's knob glowing; in the last minutes she has the pot, the flame steady (while a ping can go: held back, by a model switch or a resume until the next turn ends, a second rate limit, a turn still running in the last minutes or keepwarm ending before its ping, keepwarm waits, and the last minutes are last orders) |
 | caching off | the lid stays on and the platter full, all four waiting as before the first order |
 | a top-up or a keepwarm ping warms the pot | Nijika pours broth in from her ladle (it spills over the lip and a ripple steps out on the broth); the food comes back |
 | a re-heat warms the pot | the flame and the food come back; Bocchi comes out of her box |
@@ -607,8 +608,7 @@ keepwarm off`), the TTL's mark while it is unsettled, and why a button is dim.
   summarizing request`); the next send writes the smaller pot. In the desktop app, where a plugin cannot compact, it
   is dim: type `/compact`.
 - `Clear the table (/clear)` (`f`): puts `/clear` in the box for you to send (over a draft, a second press first);
-  the next send writes a fresh pot, and keepwarm stays on if it was. The desktop app keeps its own prompt box, so
-  there it is dim: type `/clear`.
+  the next send writes a fresh pot, and keepwarm stays on if it was.
 - `The bill` (`b`) and `Close` (`c`). During a Cache Tax hold the row is the card's (`Keep it warm after`, `Start
   fresh`, `Dismiss`), then the bill and close.
 
@@ -1150,8 +1150,8 @@ From `studio/`, after `npm install`:
   resets Cache Tax (a Zosui press in the Hotpot still settles the cache from its own call); the cache figures Claude
   Code reports after a model switch go unread (a step on another model still reads as one); a resumed session reads
   as nothing cached until its first request; and a subagent the mod missed at spawn is picked up only by the 2 s poll.
-- **The desktop app** runs Claude Code as an SDK host, where a plugin can neither compact nor fill the prompt box:
-  the Hotpot's Zosui and Clear the table are dim there and say to type `/compact` or `/clear`.
+- **The desktop app** runs Claude Code as an SDK host, where a plugin cannot compact: the Hotpot's Zosui is dim
+  there and says to type `/compact`. Clear the table and Start fresh fill the app's own prompt box.
 - **Several sessions** with keepwarm on are several pots pinged: each Hotpot says only its own session's.
 - **Older versions of Claude Code.** The mod expects Claude Code 2.1.287 or newer, and `/bocchi help` flags an older
   one. 1.1.0 was checked on 2.1.309 (validate, tests, type check; the type check on 2.1.308 too); 1.0.1 on 2.1.299,
