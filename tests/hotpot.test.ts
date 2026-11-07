@@ -560,20 +560,38 @@ test('the buttons say their prices and what is armed, and a dim one names why, i
   expect(keys(viewOf(9 * MIN, {}, { keepWarmUntil: NOW + HOUR }))[0]).toBe('hotpot-keep:Let it cool (keepwarm off)')
   expect(keys(viewOf(9 * MIN, {}, { keepWarmUntil: NOW + HOUR })).find(k => k.startsWith('hotpot-clear'))).toBe('hotpot-clear:Clear the table (/clear)')
   expect(keys(viewOf(74 * MIN))[5]).toBe('hotpot-topup:Re-heat now ≈$1.34')
-  // armed, a button says Press again at its resting label's width (no-break spaces), and the board's tail says what
-  // the second press does
-  const armedView = (age: number, action: 'reheat' | 'zosui' | 'clear') => viewOf(age, { hotpot: { ...HOTPOT, armed: { action, at: NOW - 1000 } } })
-  expect(keys(armedView(74 * MIN, 'reheat'))[5]).toBe(`hotpot-topup:${'Press again'.padEnd(18, '\u00a0')}`)
-  expect(keys(armedView(9 * MIN, 'zosui'))[6]).toBe(`hotpot-zosui:${'Press again'.padEnd(15, '\u00a0')}`)
-  expect(keys(armedView(9 * MIN, 'clear'))[7]).toBe(`hotpot-clear:${'Press again'.padEnd(24, '\u00a0')}`)
-  expect(boardOf(armedView(74 * MIN, 'reheat')).tail).toBe('press again within 10 s to re-write 168k tokens ≈$1.34')
-  expect(boardOf(armedView(9 * MIN, 'zosui')).tail).toBe('press again within 10 s to compact 168k tokens in one summarizing request')
-  expect(boardOf({ ...armedView(9 * MIN, 'clear'), hotpot: { ...HOTPOT, armed: { action: 'clear', at: NOW - 1000 }, note: { text: 'a note', until: NOW + 1000 } } }).tail).toBe('press again within 10 s: your draft gives way to /clear')
-  // so arming moves nothing in the row: not the pressed button, not the buttons after it, warm, kept or cold, in a
-  // fullscreen pane's 72 cells or a dock's 52
-  for (const v of [viewOf(9 * MIN), viewOf(9 * MIN, {}, { keepWarmUntil: NOW + HOUR }), viewOf(74 * MIN)])
-    for (const width of [72, 52])
-      for (const action of ['reheat', 'zosui', 'clear'] as const) expect(buttonLayout(hotpotButtons({ ...v, hotpot: { ...HOTPOT, armed: { action, at: NOW - 1000 } } }), width)).toEqual(buttonLayout(hotpotButtons(v), width))
+  // armed, a button says Press again in a terminal, at its resting label's width (no-break spaces, a cell each);
+  // elsewhere it keeps its label, armed (drawn as the primary button); the board says what the second press does
+  const armedView = (age: number, action: 'reheat' | 'zosui' | 'clear', over: Partial<HotpotView> = {}) => viewOf(age, { hotpot: { ...HOTPOT, armed: { action, at: NOW - 1000 } }, ...over })
+  const term = { isTerminal: true }
+  expect(keys(armedView(74 * MIN, 'reheat', term))[5]).toBe(`hotpot-topup:${'Press again'.padEnd(18, ' ')}`)
+  expect(keys(armedView(9 * MIN, 'zosui', term))[6]).toBe(`hotpot-zosui:${'Press again'.padEnd(15, ' ')}`)
+  expect(keys(armedView(9 * MIN, 'clear', term))[7]).toBe(`hotpot-clear:${'Press again'.padEnd(24, ' ')}`)
+  const armedOf = (v: HotpotView) => hotpotButtons(v).flatMap(b => (b.isArmed === true ? [`${b.key}:${b.label}`] : []))
+  expect(armedOf(armedView(74 * MIN, 'reheat'))).toEqual(['hotpot-topup:Re-heat now ≈$1.34'])
+  expect(armedOf(armedView(9 * MIN, 'zosui'))).toEqual(['hotpot-zosui:Zosui (compact)'])
+  expect(armedOf(armedView(9 * MIN, 'clear'))).toEqual(['hotpot-clear:Clear the table (/clear)'])
+  // warm, Top up takes one press; a dim button never arms
+  expect(armedOf(armedView(9 * MIN, 'reheat'))).toEqual([])
+  expect(armedOf(armedView(9 * MIN, 'zosui', { flags: { ...FLAGS, working: true } }))).toEqual([])
+  expect(boardOf(armedView(74 * MIN, 'reheat')).armed).toBe('press again within 10 s to re-write 168k tokens ≈$1.34')
+  expect(boardOf(armedView(9 * MIN, 'zosui')).armed).toBe('press again within 10 s to compact 168k tokens in one summarizing request')
+  expect(boardOf(armedView(9 * MIN, 'clear')).armed).toBe('press again within 10 s: your draft gives way to /clear')
+  expect(boardOf(viewOf(9 * MIN)).armed).toBe('')
+  // beneath the arm's words the board keeps what it showed as the button armed: a note up then stays past its 6 s, a
+  // note that came after (a ping's) waits for the arm to end
+  const note = (at: number) => ({ text: 'keepwarm on for 2h: Nijika tops it up before each lapse', until: at + 6000 })
+  expect(boardOf(viewOf(9 * MIN, { hotpot: { ...HOTPOT, armed: { action: 'zosui', at: NOW - 3000 }, note: note(NOW - 8000) } })).tail).toBe('keepwarm on for 2h: Nijika tops it up before each lapse')
+  expect(boardOf(viewOf(9 * MIN, { hotpot: { ...HOTPOT, armed: { action: 'zosui', at: NOW - 3000 }, note: note(NOW - 1000) } })).tail).toBe('51m of feast left')
+  expect(boardOf(viewOf(9 * MIN, { hotpot: { ...HOTPOT, armed: { action: 'zosui', at: NOW - 11_000 }, note: note(NOW - 1000) } })).tail).toBe('keepwarm on for 2h: Nijika tops it up before each lapse')
+  // so arming moves nothing: on every surface the board beneath the arm's words keeps its words, and in a terminal no
+  // button moves in the row, warm, kept or cold, in a fullscreen pane's 72 cells or a dock's 52
+  for (const v of [viewOf(9 * MIN, term), viewOf(9 * MIN, term, { keepWarmUntil: NOW + HOUR }), viewOf(74 * MIN, term), viewOf(9 * MIN), viewOf(74 * MIN)])
+    for (const action of ['reheat', 'zosui', 'clear'] as const) {
+      const armed = { ...v, hotpot: { ...v.hotpot, armed: { action, at: NOW - 1000 } } }
+      expect({ ...boardOf(armed), armed: '' }).toEqual(boardOf(v))
+      for (const width of [72, 52]) expect(buttonLayout(hotpotButtons(armed), width)).toEqual(buttonLayout(hotpotButtons(v), width))
+    }
   // the armed window is ten seconds
   expect(keys(viewOf(74 * MIN, { hotpot: { ...HOTPOT, armed: { action: 'reheat', at: NOW - 10_000 } } }))[5]).toBe('hotpot-topup:Re-heat now ≈$1.34')
   const reason = (v: HotpotView) => hotpotButtons(v).find(b => b.key === 'hotpot-topup')?.reason
@@ -636,21 +654,79 @@ test('the bill carries the top-up\'s five-minute hedge, and an unpriced pot (not
   }
 })
 
-test('a terminal pane\'s board and buttons take their rows as they wrap, the bill its own while open; what comes and goes never moves them', async () => {
+test('a terminal pane\'s board and buttons take their rows as they wrap, the bill its own while open; what a press, a turn, a fork out or the focus changes never moves them', { timeoutMs: 30_000 }, async () => {
   const v = viewOf(9 * MIN, { isTerminal: true })
-  // 74 columns: the word and its tail on one row, the figures on three (the keys hint and a passing reason's room
-  // counted), the buttons on three (17 more for half blocks: 24)
+  // 74 columns: the word and its tail on one row, the figures on three (the keys hint and a passing reason counted),
+  // the buttons on three (17 more for half blocks: 24)
   expect(terminalRowsBelow(v, 74)).toBe(7)
   expect(terminalRowsBelow(v, 54)).toBe(9)
   // the bill: its title, its eight rows, its foot
   expect(terminalRowsBelow({ ...v, hotpot: { ...HOTPOT, isBillOpen: true } }, 74)).toBe(17)
-  expect(terminalRowsBelow(viewOf(74 * MIN, { isTerminal: true, slip: { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 } }, {}, { held: true }), 74)).toBe(6)
-  // an armed press, a note, a turn, a fork out, the focus: the same rows, so the picture's tier holds
-  for (const w of [{ hotpot: { ...HOTPOT, armed: { action: 'zosui' as const, at: NOW - 1000 } } }, { hotpot: { ...HOTPOT, note: { text: 'a long note '.repeat(12), until: NOW + 1 } } }, { flags: { ...FLAGS, working: true } }, { flags: { ...FLAGS, forkOut: true } }, { isFocused: false }])
-    expect(terminalRowsBelow({ ...v, ...w }, 74)).toBe(7)
-  // lines wrap at spaces, as a terminal wraps them: a line just under two widths can take three
+  const slip = { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 }
+  // a hold: its word and tail, its two lines of how to pay or start fresh (no dim reason comes there), its buttons on two
+  expect(terminalRowsBelow(viewOf(74 * MIN, { isTerminal: true, slip }, {}, { held: true }), 74)).toBe(5)
+  // the same rows wherever the tier is read (74 columns and wider) before and after: arming, a note, a turn, a fork out,
+  // a compaction's start, the focus, keepwarm on (at its longest words, under a minute left) or at another length, a
+  // top-up's warmth under the open bill (its top-up row goes for 5 minutes), Start fresh and keepwarm during a hold
+  const pairs: [string, HotpotView, HotpotView][] = []
+  for (const t of [168_000, 40_000])
+    for (const isBillOpen of [false, true]) {
+      const at = (age: number, over: Partial<HotpotView> = {}, cacheOver: Parameters<typeof cacheAt>[1] = {}, flags: Parameters<typeof feastOf>[3] = {}) =>
+        viewOf(age, { isTerminal: true, hotpot: { ...HOTPOT, isBillOpen }, ledger: { ...INITIAL_LEDGER, prompt: t, canFork: true, steps: 3 }, ...over }, { contextTokens: t, ...cacheOver }, flags)
+      for (const age of [9 * MIN, 57 * MIN, 74 * MIN]) {
+        const rest = at(age)
+        const name = `${t} ${isBillOpen ? 'bill ' : ''}${age / MIN}m`
+        pairs.push([`${name} armed`, rest, { ...rest, hotpot: { ...rest.hotpot, armed: { action: age > HOUR ? 'reheat' : 'zosui', at: NOW - 1000 } } }])
+        pairs.push([`${name} note`, rest, { ...rest, hotpot: { ...rest.hotpot, note: { text: 'a long note '.repeat(12), until: NOW + 1 } } }])
+        for (const f of ['working', 'forkOut', 'compacting'] as const) pairs.push([`${name} ${f}`, rest, { ...rest, flags: { ...FLAGS, [f]: true } }])
+        pairs.push([`${name} unfocused`, rest, { ...rest, isFocused: false }])
+        pairs.push([`${name} 30m`, rest, at(age, { pick: 30 * MIN })])
+        pairs.push([`${name} a chip over the option's 1h30m`, at(age, { pick: 90 * MIN, keepOption: 90 * MIN }), at(age, { keepOption: 90 * MIN })])
+        pairs.push([`${name} keep on`, rest, at(age, {}, { keepWarmUntil: NOW + 2 * HOUR })])
+        pairs.push([`${name} keep on, under 1m left`, rest, at(age, {}, { keepWarmUntil: NOW + 30_000 })])
+      }
+      pairs.push([`${t} ${isBillOpen ? 'bill ' : ''}top-up`, at(9 * MIN), at(0)])
+      const held = at(74 * MIN, { slip }, {}, { held: true })
+      pairs.push([`${t} ${isBillOpen ? 'bill ' : ''}held Start fresh`, held, { ...held, flags: { ...FLAGS, clearInBox: true } }])
+      pairs.push([`${t} ${isBillOpen ? 'bill ' : ''}held keep`, held, at(74 * MIN, { slip }, { keepWarmUntil: NOW + 2 * HOUR }, { held: true })])
+    }
+  for (const [name, a, b] of pairs) for (const cols of [74, 84, 88, 90, 104, 120]) expect(`${name} @${cols}: ${terminalRowsBelow(b, cols)}`).toBe(`${name} @${cols}: ${terminalRowsBelow(a, cols)}`)
+  // a chip's pick where its label takes a row more (30m a cell longer, or the option's 1h30m): with the TTL settled at
+  // 88 to 90 columns, during a hold at 95 to 97
+  const targeted: [HotpotView, number[]][] = [
+    [viewOf(9 * MIN, { isTerminal: true, ttl: { ms: HOUR, how: 'engine', sighting: 0 } }), [88, 89, 90]],
+    [viewOf(74 * MIN, { isTerminal: true, slip }, {}, { held: true }), [95, 96, 97]],
+  ]
+  for (const [x, widths] of targeted)
+    for (const cols of widths) {
+      expect(terminalRowsBelow({ ...x, pick: 30 * MIN }, cols)).toBe(terminalRowsBelow(x, cols))
+      expect(terminalRowsBelow({ ...x, keepOption: 90 * MIN }, cols)).toBe(terminalRowsBelow({ ...x, pick: 90 * MIN, keepOption: 90 * MIN }, cols))
+    }
+  // and never fewer than the board and the buttons draw in any of those states, with the keys hint and a turn, a fork
+  // out or a compaction on top (keepwarm on with a ping out takes a row more than keepwarm off at 89 to 94 columns; a
+  // note aside: it stands in the tail for its 6 s), at each width from 74 columns to 110
+  const drawn = (x: HotpotView, cols: number) => {
+    const b = boardOf(x)
+    return wrappedRows(`${b.word}  ${b.tail}`, cols - 2) + wrappedRows(b.line, cols - 2) + buttonLayout(hotpotButtons(x), cols - 2).rows + (x.hotpot.isBillOpen ? billRows(x).rows.length + 2 : 0)
+  }
+  const passing = [{}, { working: true }, { forkOut: true }, { compacting: true }]
+  for (const [name, , b] of pairs)
+    if (b.hotpot.note === null)
+      for (let cols = 74; cols <= 110; cols += 1) {
+        const most = Math.max(...passing.map(p => drawn({ ...b, isFocused: false, flags: { ...b.flags, ...p } }, cols)))
+        expect(`${name} @${cols}: ${terminalRowsBelow(b, cols) >= most}`).toBe(`${name} @${cols}: true`)
+      }
+  // lines wrap as a terminal wraps them (wrap-ansi's, its spaces kept): a line just under two widths can take three,
+  // a space after a word that fills its row opens the next, a word wider than the row is cut across rows
   expect(wrappedRows('aaaaaaa bbbbbbb ccc', 10)).toBe(3)
+  expect(wrappedRows('hello world', 5)).toBe(3)
+  expect(wrappedRows('aaaaaaaaaa bbbbbbbbb', 10)).toBe(2)
+  expect(wrappedRows('aaaaaaaaaa bbbbbbbbbb', 10)).toBe(3)
   expect(wrappedRows('a'.repeat(25), 10)).toBe(3)
+  expect(wrappedRows(`ab ${'c'.repeat(12)}`, 10)).toBe(2)
+  expect(wrappedRows(`abcdefgh ${'c'.repeat(12)}`, 10)).toBe(3)
+  // in cells: a wide glyph takes two
+  expect(wrappedRows('〆〆〆', 5)).toBe(2)
 })
 
 test('the bill: reads, writes and the tax among them, pings, re-heats, compaction, the saving, the hit rate by member, a re-order, a day of keepwarm', async () => {

@@ -3567,10 +3567,16 @@ async function aTurn($: Engine, turnId: string, steps = 1, reason: 'answer' | 'e
   await $.turn.complete({ turnId, answer: reason === 'answer' ? 'ok' : '', durationMs: 900, isAborted: reason === 'aborted', reason, ...who })
 }
 
-/** The Hotpot's wooden board as a pane draws it: its two lines. */
+/** The Hotpot's wooden board as a pane draws it: its two lines (and, while a button is armed, the arm's words over them). */
 async function boardLines(pane: Drawn): Promise<string[]> {
   const box = await pane.find({ type: 'Box', key: 'hotpot-board' })
   return leaves(box)
+}
+
+/** What an armed button's second press does, as the pane draws it over the wooden board; undefined with nothing armed. */
+async function armedWords(pane: Drawn): Promise<string | undefined> {
+  const box = await pane.find({ type: 'Box', key: 'hotpot-armed' })
+  return box === undefined ? undefined : leaves(box)[0]
 }
 
 /** The mod's own state as it last wrote it, watched beneath its writes (the kit's `$` reads no plugin's state). */
@@ -3769,11 +3775,14 @@ test('Start fresh puts /clear in the held prompt\'s place, and the card and the 
   await $.command.run(cmd('hotpot'))
   const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
   expect((await boardLines(pane))[1]).toBe('/clear is in the box: Enter starts fresh')
+  // the card's press noted it in the desktop's words, as the line says it
+  expect((await boardLines(pane))[0]).toMatch(/ {2}\/clear is in the box: Enter starts fresh$/)
   await pane.unmount()
 })
 
-test('Start fresh from the pane says so too; a fill the box refuses keeps the pay words; the next hold reads as any; in a terminal the card asks for Esc first', { timeoutMs: 20_000 }, async ($, on) => {
+test('Start fresh from the pane says so too, in the surface\'s words, kept with its hold; a fill the box refuses keeps the pay words; the next hold reads as any, on the board and the card; in a terminal the card and the note ask for Esc first', { timeoutMs: 20_000 }, async ($, on) => {
   const seen = fresh()
+  const st = watchState(on)
   const clock = mock.clock(on, { now: 1_000_000 })
   const knobs: Answers = {}
   bottoms(on, clock, seen, knobs)
@@ -3796,20 +3805,65 @@ test('Start fresh from the pane says so too; a fill the box refuses keeps the pa
   await clock.settle()
   expect(seen.filled.at(-1)).toBe('/clear')
   expect((await boardLines(pane))[1]).toBe('/clear is in the box: Enter starts fresh')
-  // the next hold reads as any: the pay words, not the last hold's /clear
+  // the note in the line's words for this surface; the hold it belongs to kept in the atom ($.state, so a reload keeps
+  // it with the hold)
+  expect((await boardLines(pane))[0]).toMatch(/ {2}\/clear is in the box: Enter starts fresh$/)
+  expect(stateOf(st, 'hotpot').freshAt).toBe(stateOf(st, 'cache').heldAt)
+  // the next hold reads as any: the pay words, not the last hold's /clear, on the board and on the card
   await clock.advance(16 * 60_000)
   await aTurn($, 't2')
   await clock.advance(61 * 60_000)
   expect((await $.prompt.submit(typed('and now?'))).drop).toMatch(/CACHE TAX/)
   await clock.advance(1000)
   expect((await boardLines(pane))[1]).toMatch(/^your prompt is back in the box: Enter pays and sends it/)
+  const card = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await card.find({ type: 'Text', text: /Your prompt is back in the box: press Enter to pay and send\./ })).toBeDefined()
+  expect(await card.find({ type: 'Text', text: /\/clear is in the box/ })).toBeUndefined()
+  await card.unmount()
   await pane.press({ key: 'hotpot-tax-clear' })
   await clock.settle()
   await pane.unmount()
   // (the terminal band last: its sprites tick every 100 ms from here on)
   const band = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
   expect(await band.find({ type: 'Text', text: /\/clear is in the box: Esc, then Enter starts fresh\./ })).toBeDefined()
+  // its Start fresh notes in the terminal's words: the press left the keys with the band
+  await band.press({ key: 'tax-clear' })
+  await clock.settle()
+  expect(stateOf(st, 'hotpot').note?.text).toBe('/clear is in the box: Esc, then Enter starts fresh')
   await band.unmount()
+})
+
+test('a press on another button lets an arm go: the armed button rests again, its words leave the board, and that press\'s note shows', async ($, on) => {
+  const seen = fresh()
+  const st = watchState(on)
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await aTurn($, 't1')
+  await clock.advance(9 * 60_000)
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  await pane.press({ key: 'hotpot-zosui' })
+  await clock.settle()
+  expect(await armedWords(pane)).toMatch(/ {2}press again within 10 s to compact /)
+  await clock.advance(2000)
+  await pane.press({ key: 'hotpot-keep' })
+  await clock.settle()
+  expect(stateOf(st, 'hotpot').armed).toBeNull()
+  expect(await armedWords(pane)).toBeUndefined()
+  expect(await pane.find({ type: 'Button', key: 'hotpot-zosui' })).toMatchObject({ props: { label: 'Zosui (compact)' } })
+  expect(await pane.find({ type: 'Button', key: 'hotpot-zosui' })).not.toMatchObject({ props: { variant: 'primary' } })
+  expect((await boardLines(pane))[0]).toMatch(/ {2}keepwarm on for 6h: Nijika tops it up before each lapse$/)
+  // the bill's press lets one go too; the armed button's own second press is its own (the zosui test presses it)
+  await pane.press({ key: 'hotpot-zosui' })
+  await clock.settle()
+  expect(await armedWords(pane)).toBeDefined()
+  await pane.press({ key: 'hotpot-bill' })
+  await clock.settle()
+  expect(stateOf(st, 'hotpot').armed).toBeNull()
+  expect(await armedWords(pane)).toBeUndefined()
+  await pane.unmount()
 })
 
 test('the slash replies count time as the pane does: whole minutes, a length as its buttons name it, the TTL marked while assumed', async ($, on) => {
@@ -3842,6 +3896,38 @@ test('a terminal pane keeps half blocks while the board and the buttons leave th
   await pane.press({ key: 'hotpot-bill' })
   await clock.settle()
   expect(await pane.find({ type: 'Raster', key: 'hotpot-scene' })).toMatchObject({ props: { columns: 35, rows: 9 } })
+  await pane.unmount()
+})
+
+test('a terminal pane keeps its tier through an arm and Keep the fire on: Zosui armed says Press again at its width, its words over the board; Clear asks for Esc first', async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await aTurn($, 't1')
+  await clock.advance(9 * 60_000)
+  await $.command.run(cmd('hotpot'))
+  // 23 rows at 74 columns: a row short of half blocks with keepwarm off, and still with it on (the rows count the worse)
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: HOTPOT_ID, props: { ...PANE_PROPS, isFocused: true, bodyColumns: 74, scroll: { offset: 0, bodyRows: 23 } } })
+  expect(await pane.find({ type: 'Raster', key: 'hotpot-scene' })).toMatchObject({ props: { columns: 35, rows: 9 } })
+  const rest = await boardLines(pane)
+  await pane.press({ key: 'hotpot-zosui' })
+  await clock.settle()
+  expect(await pane.find({ type: 'Button', key: 'hotpot-zosui' })).toMatchObject({ props: { label: 'Press again'.padEnd(15, '\u00a0') } })
+  expect(await armedWords(pane)).toMatch(/ {2}press again within 10 s to compact \d+k tokens in one summarizing request$/)
+  expect((await boardLines(pane)).slice(0, 2)).toEqual(rest)
+  expect(await pane.find({ type: 'Raster', key: 'hotpot-scene' })).toMatchObject({ props: { columns: 35, rows: 9 } })
+  await pane.press({ key: 'hotpot-keep' })
+  await clock.settle()
+  expect(await armedWords(pane)).toBeUndefined()
+  expect(await pane.find({ type: 'Button', key: 'hotpot-zosui' })).toMatchObject({ props: { label: 'Zosui (compact)' } })
+  expect(await pane.find({ type: 'Raster', key: 'hotpot-scene' })).toMatchObject({ props: { columns: 35, rows: 9 } })
+  // nothing drafted: /clear in the box at once, and the keys go back with Esc first
+  await pane.press({ key: 'hotpot-clear' })
+  await clock.settle()
+  expect(seen.filled.at(-1)).toBe('/clear')
+  expect((await boardLines(pane))[0]).toMatch(/ {2}\/clear is in the box: Esc, then Enter, and the next send writes a fresh pot \(keepwarm stays on\)$/)
   await pane.unmount()
 })
 
@@ -3980,15 +4066,20 @@ test('re-heat and zosui take two presses; a re-heat warms, from the clock read b
   await $.command.run(cmd('hotpot'))
   const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
   expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).toMatchObject({ props: { label: 'Re-heat now ≈$1.21' } })
+  const cold = await boardLines(pane)
   await pane.press({ key: 'hotpot-topup' })
   await clock.settle()
   expect(seen.forks).toBe(0)
-  expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).toMatchObject({ props: { label: 'Press again'.padEnd(18, '\u00a0') } })
-  expect((await boardLines(pane))[0]).toMatch(/ {2}press again within 10 s to re-write \d+k tokens ≈\$1\.21$/)
+  // armed, on a desktop: the button keeps its label, drawn as the primary one; over the board, what the second press
+  // does; beneath, the board keeps its words, so nothing moves under the second press
+  expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).toMatchObject({ props: { label: 'Re-heat now ≈$1.21', variant: 'primary' } })
+  expect(await armedWords(pane)).toMatch(/ {2}press again within 10 s to re-write \d+k tokens ≈\$1\.21$/)
+  expect((await boardLines(pane)).slice(0, 2)).toEqual(cold)
   // A fork that wrote too little did not re-heat: booked, nothing warmed.
   await pane.press({ key: 'hotpot-topup' })
   await clock.advance(30_000)
   expect(seen.forks).toBe(1)
+  expect(await armedWords(pane)).toBeUndefined()
   expect((await boardLines(pane))[0]).toMatch(/^❄ Gone cold {2}could not re-heat; it cost \$0\.00$/)
   // One that re-wrote the prefix did, from the clock read before the call: half a minute before it landed.
   knobs.forkCacheWrite = 300_000
@@ -4015,8 +4106,8 @@ test('re-heat and zosui take two presses; a re-heat warms, from the clock read b
   await pane.press({ key: 'hotpot-zosui' })
   await clock.settle()
   expect(seen.compacts).toBe(0)
-  expect(await pane.find({ type: 'Button', key: 'hotpot-zosui' })).toMatchObject({ props: { label: 'Press again'.padEnd(15, '\u00a0') } })
-  expect((await boardLines(pane))[0]).toMatch(/ {2}press again within 10 s to compact 304k tokens in one summarizing request$/)
+  expect(await pane.find({ type: 'Button', key: 'hotpot-zosui' })).toMatchObject({ props: { label: 'Zosui (compact)', variant: 'primary' } })
+  expect(await armedWords(pane)).toMatch(/ {2}press again within 10 s to compact 304k tokens in one summarizing request$/)
   await pane.press({ key: 'hotpot-zosui' })
   await clock.settle()
   expect(seen.compacts).toBe(1)
@@ -4067,13 +4158,13 @@ test('clear the table fills /clear, on a second press over a draft; a box that c
   await pane.press({ key: 'hotpot-clear' })
   await clock.settle()
   expect(seen.filled).toEqual(['/clear'])
-  expect((await boardLines(pane))[0]).toMatch(/ {2}\/clear is in the box: Esc, then Enter, and the next send writes a fresh pot( \(keepwarm stays on\))?$/)
+  expect((await boardLines(pane))[0]).toMatch(/ {2}\/clear is in the box: press Enter, and the next send writes a fresh pot( \(keepwarm stays on\))?$/)
   knobs.draft = 'half a thought'
   await pane.press({ key: 'hotpot-clear' })
   await clock.settle()
   expect(seen.filled).toEqual(['/clear'])
-  expect(await pane.find({ type: 'Button', key: 'hotpot-clear' })).toMatchObject({ props: { label: 'Press again'.padEnd(24, '\u00a0') } })
-  expect((await boardLines(pane))[0]).toMatch(/ {2}press again within 10 s: your draft gives way to \/clear$/)
+  expect(await pane.find({ type: 'Button', key: 'hotpot-clear' })).toMatchObject({ props: { label: 'Clear the table (/clear)', variant: 'primary' } })
+  expect(await armedWords(pane)).toMatch(/ {2}press again within 10 s: your draft gives way to \/clear$/)
   await pane.press({ key: 'hotpot-clear' })
   await clock.settle()
   expect(seen.filled).toEqual(['/clear', '/clear'])
@@ -4108,7 +4199,7 @@ test('in the desktop app (an SDK session, no REPL) Zosui is dim and says why, wh
   await pane.press({ key: 'hotpot-clear' })
   await clock.settle()
   expect(seen.filled).toEqual(['/clear'])
-  expect((await boardLines(pane))[0]).toMatch(/ {2}\/clear is in the box: Esc, then Enter, and the next send writes a fresh pot( \(keepwarm stays on\))?$/)
+  expect((await boardLines(pane))[0]).toMatch(/ {2}\/clear is in the box: press Enter, and the next send writes a fresh pot( \(keepwarm stays on\))?$/)
   await pane.unmount()
 })
 

@@ -119,6 +119,7 @@ import { offLine, versionLine } from './lib/engine'
 import type { FeatureKey } from './lib/engine'
 import { MEMO_QUEUE_MAX, MEMO_TOOL, MEMO_TOOL_SPEC, appendRule, checkRule, cleanRule, looksLikeCorrection, memoAnswer, rulePrompt } from './lib/reflect'
 import {
+  ARMED_KEY,
   ARM_MS,
   CELLS_H,
   CELLS_W,
@@ -1906,6 +1907,7 @@ async function hotpotViewOf($: EngineInterface, e: Site | null, now: number): Pr
     hotpot: h,
     ttl,
     pick: pickMs(h),
+    keepOption: opts.keepWarmMs,
     slip: feast.phase === 'held' ? { writeUsd: c.heldUsd, warmUsd: c.warmUsd, tokens: held.tokens, ageMs: held.ageMs } : null,
     pingAt: pingGoesAt(c, now),
     flags: { noSnapshot, compacting: isCompacting, working: b.isWorking, forkOut, compactOff: !features.compact, draftOff: !features.draft, paying, noCompact: hostNoCompact, noBox: hostNoBox, promptBack: promptIsBack(c, h), clearInBox: h.freshAt === c.heldAt && c.heldAt > 0 },
@@ -1961,6 +1963,12 @@ async function secondPress($: EngineInterface, action: 'reheat' | 'zosui' | 'cle
   }
   await update($, hotpot, h => ({ ...h, armed: { action, at: now } }))
   return false
+}
+
+/** Another button's press lets an arm go: the armed button rests again, and that press's note shows. */
+async function disarm($: EngineInterface, key: string): Promise<void> {
+  const armed = (await read($, hotpot)).armed
+  if (armed !== null && ARMED_KEY[armed.action] !== key) await update($, hotpot, h => ({ ...h, armed: null }))
 }
 
 /** Keep the fire on for the pick, or let it cool; on a cold or empty cache the pings start with the next send. */
@@ -2063,7 +2071,7 @@ async function pressZosui($: EngineInterface): Promise<void> {
 }
 
 /** Clear the table: /clear put in the box for the person to send; over a draft, a second press first. */
-async function pressClear($: EngineInterface): Promise<void> {
+async function pressClear($: EngineInterface, isTerminal: boolean): Promise<void> {
   const now = await $.clock.now()
   if ((await liveButton($, 'hotpot-clear', now)) === null) return
   let isDraft = true
@@ -2081,18 +2089,22 @@ async function pressClear($: EngineInterface): Promise<void> {
   // No box to fill on this host (it draws its own composer): Clear the table is dim from now on.
   if (isNoBox(filled)) hostNoBox = true
   const kept = (await read($, cache)).keepWarmUntil > now ? ' (keepwarm stays on)' : ''
-  await noteHotpot($, filled !== null && filled.isFilled ? `/clear is in the box: Esc, then Enter, and the next send writes a fresh pot${kept}` : hostNoBox ? 'this app keeps its own prompt box: type /clear' : 'the box could not take /clear: type it')
+  // (in a terminal the press left the keys with the pane, so Esc hands them back first)
+  const enter = isTerminal ? 'Esc, then Enter' : 'press Enter'
+  await noteHotpot($, filled !== null && filled.isFilled ? `/clear is in the box: ${enter}, and the next send writes a fresh pot${kept}` : hostNoBox ? 'this app keeps its own prompt box: type /clear' : 'the box could not take /clear: type it')
 }
 
 /** Start fresh, the Cache Tax card's and the pane's during a hold: /clear in the box in place of the held prompt, and the card and the board say Enter now starts fresh. */
-async function pressStartFresh($: EngineInterface): Promise<void> {
+async function pressStartFresh($: EngineInterface, isTerminal: boolean): Promise<void> {
   if (hostNoBox) return
   const c = await read($, cache)
   const filled = await $.prompt.fill({ text: '/clear', mode: 'replace' }).catch(() => null)
   if (isNoBox(filled)) hostNoBox = true
   // kept with the hold in $.state (a reload keeps both): the card and the board say what Enter does now
   if (filled !== null && filled.isFilled) await update($, hotpot, h => ({ ...h, freshAt: c.heldAt }))
-  await noteHotpot($, filled !== null && filled.isFilled ? '/clear is in the box: Esc, then Enter starts fresh' : hostNoBox ? 'this app keeps its own prompt box: type /clear' : 'the box could not take /clear: type it')
+  // in the board's words for the surface pressed on (a terminal's press left the keys with the band or the pane)
+  const fresh = isTerminal ? '/clear is in the box: Esc, then Enter starts fresh' : '/clear is in the box: Enter starts fresh'
+  await noteHotpot($, filled !== null && filled.isFilled ? fresh : hostNoBox ? 'this app keeps its own prompt box: type /clear' : 'the box could not take /clear: type it')
 }
 
 // ---- The panel ---------------------------------------------------------------
@@ -3300,7 +3312,7 @@ function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: Kess
         </Text>
         <Box flexDirection="row" flexWrap="wrap" columnGap={2} marginTop={1}>
           <Button key="tax-keepwarm" label={keepAfterLabel(c, l, hp, now)} hotkey="w" plain onPress={() => void setKeepwarm($, pickMs(hp))} />
-          <Button key="tax-clear" label="Start fresh (/clear)" hotkey="f" plain dimColor={hostNoBox} onPress={() => void pressStartFresh($)} />
+          <Button key="tax-clear" label="Start fresh (/clear)" hotkey="f" plain dimColor={hostNoBox} onPress={() => void pressStartFresh($, e.surface === 'terminal')} />
           <Button key="tax-dismiss" label="Dismiss" hotkey="d" plain dimColor onPress={() => void dismissHold($)} />
         </Box>
       </Box>
@@ -3490,17 +3502,19 @@ function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Dr
     )
   }
   const board = boardOf(v)
-  const presses: Readonly<Record<string, () => void>> = {
-    'hotpot-keep': () => void pressKeep($),
-    'hotpot-topup': () => void pressTopUp($),
-    'hotpot-zosui': () => void pressZosui($),
-    'hotpot-clear': () => void pressClear($),
-    'hotpot-bill': () => void update($, hotpot, h => ({ ...h, isBillOpen: !h.isBillOpen })),
-    'hotpot-close': () => void closeHotpot($),
-    'hotpot-tax-keep': () => void setKeepwarm($, v.pick),
-    'hotpot-tax-clear': () => void pressStartFresh($),
-    'hotpot-tax-dismiss': () => void dismissHold($),
+  const presses: Readonly<Record<string, () => Promise<unknown>>> = {
+    'hotpot-keep': () => pressKeep($),
+    'hotpot-topup': () => pressTopUp($),
+    'hotpot-zosui': () => pressZosui($),
+    'hotpot-clear': () => pressClear($, isTerminal),
+    'hotpot-bill': () => update($, hotpot, h => ({ ...h, isBillOpen: !h.isBillOpen })),
+    'hotpot-close': () => closeHotpot($),
+    'hotpot-tax-keep': () => setKeepwarm($, v.pick),
+    'hotpot-tax-clear': () => pressStartFresh($, isTerminal),
+    'hotpot-tax-dismiss': () => dismissHold($),
   }
+  // a press lets another button's arm go first (an armed button's own second press reads it)
+  const pressOf = (key: string, run: (() => Promise<unknown>) | undefined) => () => void disarm($, key).then(run)
   const bill = v.hotpot.isBillOpen ? billRows(v) : null
   return (
     <Box flexDirection="column" backgroundColor={isTerminal ? bg() : SCENE_COLORS.wall}>
@@ -3515,18 +3529,30 @@ function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Dr
         <Text color={WOOD.line} size="footnote" tabular wrap="wrap">
           {board.line}
         </Text>
+        {board.armed === '' ? null : (
+          // What the armed button's second press does, over the board on its paint: out of the flow, so nothing moves
+          // under the second press (the board beneath keeps its rows).
+          <Box key="hotpot-armed" position="absolute" top={0} bottom={0} left={0} right={0} flexDirection="column" paddingX={1} backgroundColor={WOOD.board} overflow="hidden">
+            <Text wrap="wrap">
+              <Text color={WOOD.word} weight="semibold" size="heading">
+                {board.word}
+              </Text>
+              <Text color={WOOD.tail}>{`  ${board.armed}`}</Text>
+            </Text>
+          </Box>
+        )}
       </Box>
       <Box key="hotpot-buttons" flexDirection="row" flexWrap="wrap" columnGap={2} paddingX={1}>
         {hotpotButtons(v).map(b => {
           if (b.pick !== undefined) {
             const ms = b.pick
-            return <Button key={b.key} label={b.label} variant={b.isOn === true ? 'primary' : undefined} onPress={() => void update($, hotpot, h => ({ ...h, pick: ms }))} />
+            return <Button key={b.key} label={b.label} variant={b.isOn === true ? 'primary' : undefined} onPress={pressOf(b.key, () => update($, hotpot, h => ({ ...h, pick: ms })))} />
           }
           // A button that cannot act now is dim, and its press spends and arms nothing (the board says why). Plain, so a
           // terminal draws its key before its label (`w: Keep the fire on`), as the board's `ctrl+x tab for its keys`
-          // promises; a desktop draws its native button either way.
+          // promises; a desktop draws its native button either way, an armed one as its primary.
           if (b.reason !== '') return <Button key={b.key} label={b.label} hotkey={b.hotkey} plain dimColor onPress={() => undefined} />
-          return <Button key={b.key} label={b.label} hotkey={b.hotkey} plain onPress={presses[b.key] ?? (() => undefined)} />
+          return <Button key={b.key} label={b.label} hotkey={b.hotkey} plain variant={b.isArmed === true ? 'primary' : undefined} onPress={pressOf(b.key, presses[b.key])} />
         })}
       </Box>
       {bill === null ? null : (
