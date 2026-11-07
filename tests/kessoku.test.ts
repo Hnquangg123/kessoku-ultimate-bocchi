@@ -743,6 +743,24 @@ test('Cache Tax holds a cold send once, puts the prompt back, and lets the secon
   expect(sent.text).toBe('where were we?')
 })
 
+test('the Cache Tax card gives way at its hold\'s end where it is the only drawing (no panel, the Hotpot closed)', { options: { openPanelOnStart: false }, timeoutMs: 20_000 }, async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  bottoms(on, clock, seen)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await aTurn($, 't1')
+  await clock.advance(61 * 60_000)
+  expect((await $.prompt.submit(typed('where were we?'))).drop).toMatch(/CACHE TAX/)
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 1:00 ago!!$/ })).toBeDefined()
+  await clock.advance(14 * 60_000)
+  expect(await band.find({ type: 'Text', text: /CACHE TAX/ })).toBeDefined()
+  await clock.advance(60_000 + 1000)
+  expect(await band.find({ type: 'Text', text: /CACHE TAX/ })).toBeUndefined()
+  await band.unmount()
+})
+
 test('a held prompt the box cannot take back keeps its hold: the next send passes as the paid one, and the card and the board say so', async ($, on) => {
   const seen = fresh()
   const st = watchState(on)
@@ -3714,7 +3732,8 @@ test('kaomoji: the Hotpot draws faces round a text gauge, the wooden board\'s tw
     const pane = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
     expect(await pane.find({ type: 'Raster' })).toBeUndefined()
     expect(await pane.find({ type: 'Svg' })).toBeUndefined()
-    expect(await pane.find({ type: 'Text', text: /^❄ ▱▱▱▱▱$/ })).toBeDefined()
+    // the theme's red in a terminal; on the desktop's near-black wall a fixed one, readable on a light theme too
+    expect(await pane.find({ type: 'Text', text: /^❄ ▱▱▱▱▱$/ })).toMatchObject({ props: { color: surface === 'terminal' ? 'error' : '#ff5d73' } })
     expect(await pane.find({ type: 'Text', text: /^\[\(\._\.\)\]$/ })).toBeDefined()
     const [first, second] = await boardLines(pane)
     expect(first).toBe('❄ Gone cold  1m ago: the next send re-orders everything')
@@ -4534,6 +4553,10 @@ test('a send after /bocchi tax plays no …paid.: the preview held nothing, befo
   // and over a warm cache
   await clock.advance(60_000)
   await $.command.run(cmd('bocchi', 'tax'))
+  // the sample is a cold one, two TTLs back, never a warm pot's "went cold 0:00 ago"
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await band.find({ type: 'Text', text: /CACHE TAX · the cache went cold 1h00m ago!!$/ })).toBeDefined()
+  await band.unmount()
   expect((await $.prompt.submit(typed('and a warm one'))).drop).toBeUndefined()
   expect((await stateOf(st, 'hotpot')).moment).toBeNull()
 })

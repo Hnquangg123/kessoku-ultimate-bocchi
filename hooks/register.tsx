@@ -3228,6 +3228,8 @@ function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: Kess
   const { Box, Text, Button } = $.ui.resolve(e)
   const held = heldFigures(c, hp, now)
   const back = promptIsBack(c, hp)
+  // the card stands for the hold's 15 minutes: its end redraws the band, where no pane's tail may come
+  scheduleTail($, c.heldAt + HELD_PROMPT_MS, now)
   // cold since it lapsed (the warmth's age less the TTL), as the strip and the chalkboard's foot count it
   const age = held.ageMs > 0 ? fmtDuration(Math.max(0, held.ageMs - ttlMs())) : '?'
   const { isExact } = priceInfo(held.model || 'default')
@@ -3432,7 +3434,8 @@ function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Dr
           {face('ryo')}
         </Box>
         <Box flexDirection="row" paddingX={4}>
-          <Text color={phase === 'cold' || phase === 'held' ? 'error' : PALETTE.peach}>{potGauge(phase, level)}</Text>
+          {/* off the terminal the wall is near-black on every theme: a fixed red, as the bill keeps fixed inks */}
+          <Text color={phase === 'cold' || phase === 'held' ? (isTerminal ? 'error' : PALETTE.red) : PALETTE.peach}>{potGauge(phase, level)}</Text>
         </Box>
         <Box flexDirection="row" gap={6}>
           {face('nijika')}
@@ -3795,9 +3798,10 @@ async function demoMemo($: EngineInterface, proposed: boolean): Promise<string> 
  * `/bocchi tax`: a sample hold. The cache's figures and the ledger stay as
  * they are (an empty session is not drawn a cold pot, nor its next step booked
  * as tax): the sample's model, size and age, the session's own where it has
- * them, go to the Hotpot's `sample` under the hold's time, which the card and
- * the pane draw from while it stands; the hold itself is armed, so the next
- * send clears it.
+ * them (its age only once the cache has gone cold: over a warm one or none, two
+ * TTLs back, so the card reads as a real hold would), go to the Hotpot's
+ * `sample` under the hold's time, which the card and the pane draw from while
+ * it stands; the hold itself is armed, so the next send clears it.
  */
 async function demoTax($: EngineInterface): Promise<string> {
   const now = await $.clock.now()
@@ -3805,7 +3809,7 @@ async function demoTax($: EngineInterface): Promise<string> {
   const l = await read($, ledger)
   const model = c.model || 'claude-sonnet-5-5'
   const tokens = c.contextTokens || 330_316
-  const ageMs = c.lastWarmAt > 0 ? now - c.lastWarmAt : 2 * ttlMs()
+  const ageMs = c.lastWarmAt > 0 && now - c.lastWarmAt >= ttlMs() ? now - c.lastWarmAt : 2 * ttlMs()
   await update($, hotpot, h => ({ ...h, sample: { model, tokens, ageMs, heldAt: now } }))
   await update($, cache, x => ({
     ...x,
