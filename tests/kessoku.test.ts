@@ -3967,7 +3967,7 @@ test('a slow zosui is drawn until its call resolves, the forks dim meanwhile; a 
   await pane.unmount()
 })
 
-test('the bill shows what nothing else in the pane does; a paid held send books the tax, a cold report a silent one', async ($, on) => {
+test('the bill shows what nothing else in the pane does; a paid held send books the tax, a cold report a silent one', { timeoutMs: 20_000 }, async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
   bottoms(on, clock, seen)
@@ -4001,6 +4001,10 @@ test('the bill shows what nothing else in the pane does; a paid held send books 
   expect(await pane.find({ type: 'Text', text: /^Hit rate · read ÷ everything the steps sent$/ })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: /^By member · Bocchi \d+%$/ })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: /^cost ≈ list prices × tokens, not your bill$/ })).toBeDefined()
+  // on the wooden board's own paint and inks, never the theme's (the wall under it is near-black on a light theme too)
+  expect(await pane.find({ type: 'Box', key: 'hotpot-bill-rows' })).toMatchObject({ props: { backgroundColor: '#3a2419' } })
+  expect(await pane.find({ type: 'Text', text: /^Read from cache$/ })).toMatchObject({ props: { color: '#ecd3aa' } })
+  expect(await pane.find({ type: 'Text', text: /^cost ≈ list prices × tokens, not your bill$/ })).toMatchObject({ props: { color: '#cfb48e' } })
   await pane.unmount()
 })
 

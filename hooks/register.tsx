@@ -3369,8 +3369,8 @@ function drawRecap($: EngineInterface, e: RenderInput<'AbovePrompt'>, r: Kessoku
   )
 }
 
-/** The wooden board's paint and its cream inks: its own colours, which a light theme does not darken. */
-const WOOD = { board: '#3a2419', word: '#ffe7bf', tail: '#ecd3aa', line: '#cfb48e' } as const
+/** The wooden board's paint and its cream inks (and the bill's, on the same paint): its own colours, which a light theme does not darken. */
+const WOOD = { board: '#3a2419', word: '#ffe7bf', tail: '#ecd3aa', line: '#cfb48e', good: '#a8e6a1', bad: '#ffa8a0' } as const
 
 /**
  * The ♨ Hotpot: the feast (one Svg where the surface draws them; in a
@@ -3463,22 +3463,24 @@ function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Dr
         })}
       </Box>
       {bill === null ? null : (
-        <Box key="hotpot-bill-rows" flexDirection="column" paddingX={1}>
+        // On the board's own paint with its own inks: the pane's wall is near-black on every theme, so theme colours
+        // would vanish on a light one.
+        <Box key="hotpot-bill-rows" flexDirection="column" paddingX={1} backgroundColor={WOOD.board}>
           <Text color={WOOD.word} weight="semibold">
             {bill.title}
           </Text>
           {bill.rows.map(r => (
             <Box key={`bill-${r.label}`} flexDirection="row" justifyContent="space-between" gap={2}>
               <Text wrap="truncate-end">
-                <Text color="text">{r.label}</Text>
-                <Text dimColor>{r.detail === '' ? '' : ` · ${r.detail}`}</Text>
+                <Text color={WOOD.tail}>{r.label}</Text>
+                <Text color={WOOD.line}>{r.detail === '' ? '' : ` · ${r.detail}`}</Text>
               </Text>
-              <Text tabular color={r.tone === 'good' ? 'success' : r.tone === 'bad' ? 'error' : 'text'}>
+              <Text tabular color={r.tone === 'good' ? WOOD.good : r.tone === 'bad' ? WOOD.bad : WOOD.word}>
                 {r.figure}
               </Text>
             </Box>
           ))}
-          <Text dimColor size="caption">
+          <Text color={WOOD.line} size="caption">
             {bill.foot}
           </Text>
         </Box>
