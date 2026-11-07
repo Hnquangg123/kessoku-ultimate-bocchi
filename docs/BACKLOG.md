@@ -19,6 +19,7 @@ was, and the page's guess at the effort (S a day or two, M a week).
 | A memo tool the model can call | v0.6.0 · `docs/specs/band-routing-0-6.md` (`mcp__kessoku-ultimate-bocchi__memo`) |
 | Live Stage: the panel as a stage, a two-column mixer, solo, encore, tracks (prototype variant A) | v0.7.0 · `docs/specs/live-stage-0-7.md` |
 | Tour stats, with a recap card when a long set ends (the 1.0.1 prototype's variant B, "On tour") | v1.0.1 · `docs/specs/tour-1-0-1.md` (`/bocchi stats [all]`; nights, not sessions; Copy as text left for Copy and quote) |
+| Hotpot Night: the prompt cache as the band's after-show hotpot, the feast as its gauge, a ledger of every request's cache tokens, the cache's truth (the 1.1.0 prototype's variant A, "Nabe Night") | v1.1.0 · `docs/specs/hotpot-1-1-0.md` (`/hotpot`, ♨ Hotpot on the strip and the board; B's tablet not taken: its hit rate, saving and tax paid are on the bill, its re-order price on the wooden board) |
 
 ## Open
 
@@ -35,4 +36,6 @@ was, and the page's guess at the effort (S a day or two, M a week).
 | Polish | Press a slime | A click on a slime in the pit solos its act directly. | The slime is the thing you watch; it should be the thing you press. | Today the act's number under the pit stands in: `Svg` and `Raster` take no `onPress` on 2.1.299. | S |
 | Polish | Setlist Timeline (prototype variant B) | The set so far as a gantt of tool calls and acts with their cost; finished sets collapsed to a line. | "What happened, what is running, what did it cost" in one view. | Not chosen for v0.7.0; the tracks it needs are counted now (`trackNumbers`), not kept. | M |
 | Polish | Dressing Room (prototype variant C) | A hero of gauges, four tiles with big numbers, a backstage feed of the last toasts. | A glanceable dashboard; a missed toast stays. | Not chosen for v0.7.0. | S |
+| Feature | Hotpot conveyor (1.1.0 prototype variant B, "Kaiten Counter") | The cache as a kaitenzushi counter: each request a plate passing the band on a conveyor (read plates, written plates, a cold re-order's stack), its timeline as the TTL runs. | The cache's history at a glance, not only its state now. | Not chosen for v1.1.0 (variant A's feast is the gauge); drawn on the prototype branch's first commit, `771438d`. The ledger books totals, not a request-by-request history it would need. | M |
+| Feature | Pot clock (1.1.0 prototype variant C) | The donabe seen from above as a clock face, the TTL its hand, the four portraits round the rim. | A compact gauge for a narrow dock. | Not chosen for v1.1.0; drawn on `771438d`. | S |
 | Maybe | Band voice, sound | An opt-in `prompt.compose` section that lets Claude sign off tool-free replies with a ♪; a guitar sting on commit via `$.audio.play`. | Fun, nothing more. | Both off by default; audio plays on macOS only (Windows has no player). | S |

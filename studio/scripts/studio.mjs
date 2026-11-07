@@ -27,11 +27,13 @@ export async function loadStudio() {
 export { ART } from ${src('src', 'art', 'members', 'index.ts')}
 export * from ${src('src', 'art', 'compose.ts')}
 export { memberPalette, paletteClashes } from ${src('src', 'art', 'parts.ts')}
-export { FX, FX_MINI, FX_INKS, FONT, fxSize } from ${src('src', 'art', 'fx.ts')}
-export { W, H, PW, PH, MINI, SLIME_W, SLIME_H } from ${src('src', 'art', 'types.ts')}
+export { FX, FX_MINI, FX_INKS, FONT, fxSize, MORSEL_COLORS, FLASH_COLOR, WEED_COLOR } from ${src('src', 'art', 'fx.ts')}
+export { W, H, PW, PH, MINI, SLIME_W, SLIME_H, FEAST_Y, FEAST_H } from ${src('src', 'art', 'types.ts')}
 export { drawScene, drawMood, windowOf, miniMove, GROUND } from ${src('src', 'anim', 'scene.ts')}
 export { sceneAt, tagFor, expand, framesOf, FPS } from ${src('src', 'anim', 'moods.ts')}
 export { SLIME_STATES, drawSlime, drawSlimeScene, slimeSceneAt, slimeTag, slimeFramesOf } from ${src('src', 'anim', 'slimes.ts')}
+export { FEAST_STATES, FEAST_STATES_OF, FEAST_LENGTH, FEAST_FX_COLORS, feastLength, feastTag, feastFramesOf, feastSceneAt, drawFeast, drawFeastHeadband, feastFxColors, checkFeastTimelines } from ${src('src', 'anim', 'feast.ts')}
+export { allColors } from ${src('src', 'colors.ts')}
 export { drawCrash, drawCrashMini, CRASH_FRAMES } from ${src('src', 'anim', 'crash.ts')}
 export { REF_GRID, REF_STAND, REF_PALETTE } from ${src('reference', 'bocchi-reference.grid.ts')}
 `)

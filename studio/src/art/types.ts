@@ -76,6 +76,46 @@ export type SlimeFace = 'content' | 'awake'
  */
 export type PoseName = 'stand' | 'playA' | 'playB' | 'crouch' | 'cheer' | 'panic' | 'box'
 
+/**
+ * The band at the hotpot table (the Hotpot's feast): seated from the waist up
+ * at the table's edge, the torso turned about 35 degrees toward the pot, the
+ * face (stand's head, untouched) to us. Each member's are in her `feast`
+ * (MemberArt.feast): `seat` patched on stand, the rest patched on seat, arms
+ * and what they hold only:
+ *
+ *   seat       both hands resting on the table, the instrument gone
+ *   seatPot    her torizara (a small plate) in the near hand, the chopsticks in the far hand in the pot
+ *   seatBowl   the chopsticks at the torizara
+ *   seatUp     the chopsticks at her mouth
+ *   seatPanic  Bocchi's: both hands up (the bill came)
+ *   seatPoint  Ryo's: the chopsticks pointing at the last piece in the pot
+ *   seatLadle  Nijika's: the ladle in the pot
+ *   seatPhone  Kita's: the phone held out over the pot in both hands, her shoulders leaning in
+ *   seatSlump  Nijika's and Kita's: shoulders and arms dropped on the table, the head where seat has it
+ */
+export type SeatPose = 'seat' | 'seatPot' | 'seatBowl' | 'seatUp' | 'seatPanic' | 'seatPoint' | 'seatLadle' | 'seatPhone' | 'seatSlump'
+
+/** Every pose a member can be drawn in: the stage's and the table's. */
+export type AnyPose = PoseName | SeatPose
+
+/**
+ * What a member plays at the hotpot table, by the cache's state (the feast
+ * timelines): `wait` nothing cached yet, `eat` a feast (and the zosui), `calm`
+ * simmering, running low or Nijika tending the pot, `worry` last orders, `cold`
+ * once it lapsed, `shock` a send held by Cache Tax, and Nijika's `serve` (she
+ * ladles broth in at a ping).
+ */
+export type FeastState = 'eat' | 'calm' | 'worry' | 'wait' | 'cold' | 'shock' | 'serve'
+
+/**
+ * The feast's own faces, laid at the face box like the others: `idlePot`,
+ * `halfPot` and `focusPot` are idle, half and focus with each iris moved
+ * inside its eye toward the pot (our right for the left edge's two, our left
+ * for the right edge's), for eating; `bite` the mouth open as the chopsticks
+ * reach it, the eyes at us (the chewing after it is `happy`).
+ */
+export type FeastFace = 'idlePot' | 'halfPot' | 'focusPot' | 'bite'
+
 /** Expressions laid over the head of every pose but the box (see ART-BRIEF.md, "The faces"). */
 export type FaceName = 'idle' | 'half' | 'blink' | 'glance' | 'focus' | 'happy' | 'panic' | 'melt'
 
@@ -103,6 +143,48 @@ export type HeadOffset = { dx: number; dy: number }
 
 /** A pixel on the canvas. */
 export type Point = { x: number; y: number }
+
+/** A rectangle on the canvas: its top-left and size, in pixels. */
+export type Box = { x: number; y: number; w: number; h: number }
+
+/**
+ * The feast view: the rows of the 96x96 canvas a seated member shows, at the
+ * canvas's full width (96x64, rows 6-69): her head to the ends of her hair
+ * (Bocchi's falls past her waist), and room beside her for the near two's
+ * reach into the pot.
+ */
+export const FEAST_Y = 6
+export const FEAST_H = 64
+
+/** A seat pose: another pose (stand for `seat`, a seat pose for the rest) with patches laid over it in order. */
+export type SeatPoseDef = { from: AnyPose; patches: readonly Patch[] }
+
+/**
+ * A member at the hotpot table (see SeatPose and FeastFace). The mod seats her
+ * by `waist`: it lays that pixel on the table's side edge at her row and clips
+ * the table nearer than her waist out of her figure, so below her waist only
+ * her hair is drawn.
+ */
+export type FeastArt = {
+  /** Her edge of the table: `left` turns her toward the pot on our right (Bocchi, Nijika), `right` on our left (Ryo, Kita). */
+  side: 'left' | 'right'
+  /** The outer end (the side away from the pot) of her body's waist row: the same pixel in every seat pose. */
+  waist: Point
+  /**
+   * Palette keys of her hair: the only thing drawn below her waist row (Bocchi's long hair, Nijika's side tail)
+   * and the only thing outward of `waist` on it; her body never is.
+   */
+  hair?: string
+  poses: Readonly<Partial<Record<SeatPose, SeatPoseDef>>>
+  /** Her feast faces, laid at the face box (`face.x`, `face.y`) as the face overlays are. */
+  faces: Readonly<Record<FeastFace, Grid>>
+  /** Her near and far eye (canvas pixels inside the face box): where a pot-look face may differ from the face it comes from. */
+  eyes: readonly Box[]
+  /** Nijika's nabe-bugyo headband: a patch on her hair over pixels every seat pose of hers has the same. */
+  headband?: Patch
+  /** Ryo's weed (her cold, chewing it, `half` over `seat`): where the `weed` effect's top-left goes, the blade's end in the corner of her mouth. */
+  weed?: Point
+}
 
 /**
  * The mini rig: the member's head hand-drawn at 16x16 for the terminal (half
@@ -164,10 +246,15 @@ export type MemberArt = {
   /** Her slime: what each of her acts on stage (a subagent) is drawn as, on the slime canvas. */
   slime?: SlimeArt
   /**
-   * Where the instrument strikes on a pose, in canvas pixels: Nijika's stick
-   * tip on playA and playB. The focused mood centres its impact star there.
+   * Where what she holds acts on a pose, in canvas pixels: Nijika's stick tip
+   * on playA and playB (the focused mood centres its impact star there); at
+   * the table, the chopsticks' tips (where the food rides: the `morsel`
+   * effect), the ladle's cup on Nijika's seatLadle and the phone's lens on
+   * Kita's seatPhone (her `flash`).
    */
-  tips?: Readonly<Partial<Record<PoseName, Point>>>
+  tips?: Readonly<Partial<Record<AnyPose, Point>>>
+  /** Her seated poses, faces and props at the hotpot table. */
+  feast?: FeastArt
   /**
    * Where each palette entry came from: palette.ts's `palette` and every part
    * file's `colors`, by part (set by the member's index.ts through

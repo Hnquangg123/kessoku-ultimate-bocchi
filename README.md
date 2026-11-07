@@ -2,7 +2,8 @@
 
 A *Bocchi the Rock!*-inspired mod for Claude Code. It dresses all of Claude Code in charcoal and pink, puts the
 Kessoku Band on stage as animated pixel-art sprites, seats Claude's subagents with the band, and adds five themed
-gags that each do a real job: **Cache Tax**, **Blast Radius**, **Filetree**, **Reflect** and **Replay Theater**.
+gags that each do a real job: **Cache Tax** (with its **♨ Hotpot**), **Blast Radius**, **Filetree**, **Reflect** and
+**Replay Theater**.
 
 Bocchi plays the main agent (the Claude you talk to). Nijika, Ryo and Kita take its subagents, by name or by what
 they were asked, and Bocchi takes any they don't (see [How acts are seated](#how-acts-are-seated)). Every subagent is
@@ -13,7 +14,7 @@ a slime in its member's colour.
 *The four of them in every mood, from the sprite studio. The live house itself is described under
 [Kessoku Band panel](#kessoku-band-panel).*
 
-Version 1.0.1, On Tour. Needs Claude Code 2.1.287 or newer (tested on 2.1.299; see [Notes](#notes));
+Version 1.1.0, Hotpot Night. Needs Claude Code 2.1.287 or newer (tested on 2.1.309; see [Notes](#notes));
 `/bocchi help` shows the mod's version and the Claude Code it runs on.
 
 ## Quick start
@@ -39,7 +40,7 @@ Then try three things:
 
 The gags have previews: `/bocchi crash` (the dropped guitar), `/bocchi tax` (Cache Tax), `/bocchi memo` (a band
 memo), `/bocchi setlist` (Replay Theater) and `/bocchi recap` (the end-of-set recap). `/bocchi stats` opens the
-project's tour. `/bocchi help` lists every command.
+project's tour, and `/hotpot` the prompt cache as the band's after-show hotpot. `/bocchi help` lists every command.
 
 ## Words the band uses
 
@@ -53,6 +54,29 @@ project's tour. `/bocchi help` lists every command.
 - **Encore**: the 8 s after an act ends, while it takes its bow.
 - **Night**: a day the band played at least one set in a project, by your machine's date.
 - **Tour**: what the mod keeps of a project's nights between sessions.
+- **Hotpot**: the prompt cache drawn as the band's after-show hotpot. **The feast** is its scene, **the wooden
+  board** the two lines under it, **the bill** its receipt of the conversation's cache.
+
+## New in 1.1.0
+
+- **♨ Hotpot.** `/hotpot`, or `♨ Hotpot` (`o`) on the strip and under the chalkboard, opens the band's after-show
+  hotpot: a donabe on a gas stove in the middle of a square low table, Bocchi and Nijika at its left, Ryo and Kita at
+  its right, each turned to the pot with her face to you. While the cache is warm they eat with their eyes on the pot
+  (Bocchi and Ryo reaching over its back rim, Nijika serving with her ladle, Kita leaning in to photograph it), and
+  the pot and the platter empty as its time runs down; the last minutes are last orders, all four looking up at you;
+  cold is an empty pot, a dead flame and snow, Bocchi in her box and Nijika and Kita slumped over the table. A top-up
+  is Nijika pouring broth in. See [♨ Hotpot](#-hotpot).
+- **The cache's prices, and what to do about them.** Under the feast, a wooden board: the state in a word, then the
+  context, a re-order, a top-up and a day of keepwarm. Keep the fire on (30m, 1h, 2h, 6h) or let it cool, top up
+  now, re-heat now (a re-write paid on purpose while cold), zosui (compact), clear the table, and the bill.
+- **A ledger of the cache.** Every request of the main loop and the band's acts, every ping, top-up and re-heat and
+  each compaction's summary is booked, so the bill counts the reads, the writes, Cache Tax paid, the saving and the
+  hit rate (overall and by member). `/cache-tax` gains `saved` and `tax paid`.
+- **The cache's truth.** The TTL comes from Claude Code or from what the requests show (an hour assumed until then);
+  a model switch empties the pot; a resumed session knows how old its pot is; the warmth runs from a request's start,
+  and an act's requests never warm the pot; caching off is noticed; cold means one thing everywhere. The strip, the
+  chalkboard's foot and the terminal's rail count whole minutes (`warm, 48m left`).
+- `/keepwarm` offers `6h` too.
 
 ## New in 1.0.1
 
@@ -80,7 +104,8 @@ project's tour. `/bocchi help` lists every command.
 
 **Reference:** [Claude Code theme](#claude-code-theme) · [Skin](#skin) ·
 [The band and its moods](#the-band-and-its-moods) · [Kessoku Band panel](#kessoku-band-panel) ·
-[The strip](#the-strip-above-the-prompt) · [Cache Tax](#cache-tax-and-keepwarm) · [Blast Radius](#blast-radius) ·
+[The strip](#the-strip-above-the-prompt) · [Cache Tax](#cache-tax-and-keepwarm) · [♨ Hotpot](#-hotpot) ·
+[Blast Radius](#blast-radius) ·
 [Filetree](#filetree) · [Reflect](#reflect-and-the-memo-tool) · [Replay Theater](#replay-theater) ·
 [On tour](#on-tour) · [Notifications](#notifications) · [Commands](#commands) · [Keys](#keys) · [Settings](#settings) ·
 [Installing](#installing) · [Tweaking and development](#tweaking-and-development) · [Notes](#notes)
@@ -239,8 +264,8 @@ Bocchi's mood shows on the status line, on stage and across the panel.
 - **Refused** means you turned down one of the main loop's calls, or a hook refused it: `told no… hiding in the box`.
   The mod's own memo tool, calls another plugin makes, and anything while Blast Radius holds a command do not count.
 - **Cold cache.** Checked each minute. Between turns, once the prompt cache has expired, she goes into her box:
-  `the cache went cold… in the box till your next prompt`. Your next prompt brings her out, and so does `/clear`.
-  She stays in across a reload.
+  `the cache went cold… in the box till your next prompt`. Your next prompt brings her out, and so do `/clear` and a
+  re-heat in the Hotpot. She stays in across a reload.
 - When a timed mood ends she goes back to melting (compacting, or at 85 %), focused (a turn running), hiding (the
   cache cold) or anxious.
 - The melt is the one long mood, so it is calm: she stays about half melted all loop, her face and guitar above the
@@ -307,7 +332,7 @@ A failed act gets a red ✗, a wavy red underline, its reason on a line of its o
 or `refused to go on`) and a tilted `FAILED` stamp. An act that hit a tool error and carried on gets an amber
 `⚠ last error: …` line instead: it did not fail.
 
-The foot shows `main ctx`, `limit N%` (when there is a rate-limit figure) and the cache (`warm, 48m left`,
+The foot shows `main ctx`, `limit N%` (when there is a rate-limit figure) and the cache (`warm, 48m left`, `last orders, cold in 3m`,
 `cold for 12m`, `kept warm, 5m left`, `no cache yet`), over a chalk tray. A solo page with no songs on it says the
 band is tuning up.
 
@@ -316,8 +341,8 @@ band is tuning up.
 `ended at 3:42 of the 6:02 set`), and a button, `Open on Ryo's page →`, which opens her solo with that act first.
 The main loop's song has no button.
 
-**Buttons** under the board: one per member, labelled with her name (hotkey `b`, `n`, `r` or `k`); `Back to the mix`
-(`m`) on a solo; `Hide` (`h`) above the prompt. Above the prompt the stage is left out and the board lists three
+**Buttons** under the board: one per member, labelled with her name (hotkey `b`, `n`, `r` or `k`); `♨ Hotpot` (`o`),
+which opens or closes the [Hotpot](#-hotpot); `Back to the mix` (`m`) on a solo; `Hide` (`h`) above the prompt. Above the prompt the stage is left out and the board lists three
 songs.
 
 With **Character art** on `kaomoji`, the desktop draws the terminal's layout below, with text faces.
@@ -345,10 +370,10 @@ Top to bottom:
     and four for the others (one and two above the prompt), then `+ n more`.
 - **Encore.** For 8 s after an act ends, its line is bold in her colour with `encore! · 2:40 · ≈$0.11` at the right.
   A failed one reads `wrong note · 2:40` in red.
-- **Keys row.** `solo b n r k`, a `mix` button (`m`) on a solo, and `Hide` (`h`) above the prompt.
+- **Keys row.** `solo b n r k`, a `mix` button (`m`) on a solo, `♨ Hotpot` (`o`), and `Hide` (`h`) above the prompt.
 - **Rail.** `CTX ▰▰▰▱▱▱▱▱▱▱ 34%` (red at 85 %) · `PLAN` (the plan's fullest rate-limit window, only when there is
-  one) · `GATE $0.42` (the session's cost) · `AMP` and the cache (`● keepwarm 2h00m`, `❄ cold`, `☀ warm 48:00`,
-  `○ no cache yet`) · `3 on stage`.
+  one) · `GATE $0.42` (the session's cost) · `AMP` and the cache in whole minutes (`● keepwarm 2h`, `☀ warm 48m`,
+  `☀ last orders 3m`, `❄ cold`, `○ no cache yet`) · `3 on stage`.
 - `✖ last wrong note: …` in red when there is one, and the footer
   `cost ≈ list prices × tokens, not your bill · /kessoku toggles`.
 
@@ -441,14 +466,19 @@ A line of the band sits above the prompt whenever nothing else needs that spot. 
 - where there are rows to spare, the four mini heads in quadrants (only Bocchi's below 90 columns), and beside them:
   - `● ON AIR · NOW PLAYING · Ryo · Find every call site of legacyQuery() · 0:48` (`○ OFF AIR` between turns). With
     no act running: Bocchi and her current task while a turn runs, `backstage · set 3` between turns.
-  - `3 slimes on stage (2 playing, 1 waiting) · $0.42 · cache warm 48:00`
+  - `3 slimes on stage (2 playing, 1 waiting) · $0.42 · cache warm, 48m left`
 - with seven rows to spare, a row of slime minis under the heads: the live acts and those that ended in the last
   30 s, up to six, then `+n`
 - without room for the heads, or with `kaomoji`: one line, `♪`, the four faces (with names from 90 columns), then
   `│` with what is on stage, the session's cost and the cache.
 
 Buttons, on both: `Replay 3` (`r`; when the last set left edits and Replay is not open), `Panel` (`k`; opens or
-closes the panel) and `Hide` (`h`).
+closes the panel), `♨ Hotpot` (`o`; while the [Hotpot](#-hotpot) is closed) and `Hide` (`h`).
+
+The cache's words, here and on the chalkboard's foot, count whole minutes: `no cache yet`, `warm, 48m left`
+(`kept warm, 5h 12m left` while keepwarm runs), `last orders, cold in 3m`, `cold for 12m`, `cold for 12m · a send is
+held`, `zosui (compacting)`, `no cache here (caching off)`. The terminal panel's rail says the same in short
+(`☀ warm 48m`, `● keepwarm 5h12m`, `❄ cold`).
 
 **Who gets the spot above the prompt**, highest first:
 
@@ -456,37 +486,53 @@ closes the panel) and `Hide` (`h`).
 2. the dropped-guitar screen, when a held command got no pane
 3. the Cache Tax warning, while a held prompt is under 15 minutes old
 4. Nijika's memo
-5. Replay Theater, the tour page or the Filetree, opened above the prompt
+5. Replay Theater, the tour page, the Hotpot or the Filetree, opened above the prompt
 6. the panel, drawn above the prompt
 7. nothing, while the strip is hidden
 8. Nijika's recap of the set that just ended
 9. the strip
 
-Under Replay Theater, the tour page, the Filetree, the panel, the recap and the strip, other mods' drawings above the
-prompt stack below the mod's.
+Under Replay Theater, the tour page, the Hotpot, the Filetree, the panel, the recap and the strip, other mods'
+drawings above the prompt stack below the mod's.
 
 ## Cache Tax and keepwarm
 
-The prompt cache lives for a while after each turn (its TTL, time to live: 5 minutes or an hour). Send after it has
-lapsed and the whole context is written to the cache again, at the cache-write rate. Cache Tax tells you before you
-pay.
+The prompt cache lives for a while after each request (its TTL, time to live: 5 minutes or an hour). Send after it
+has lapsed and the whole context is written to the cache again, at the cache-write rate. Cache Tax tells you before
+you pay.
 
 **The hold.** When the cache has gone cold, the next prompt you send is held once, and Bocchi panics:
 
 - `CACHE TAX · the cache went cold 12:04 ago!!`, the tokens it would re-write, the rate, the cost, and what a warm
   turn would have cost
-- your prompt is back in the box: Enter sends it (the same prompt sent again within 15 minutes passes)
-- `Keep it warm after (6h00m)` (`w`) arms keepwarm, `Start fresh (/clear)` (`f`) puts `/clear` in the box,
-  `Dismiss` (`d`) takes the card down
+- your prompt is back in the box: Enter sends it (the same prompt sent again within 15 minutes passes, and the
+  re-write is booked as Cache Tax paid); where the box cannot take it back, the card says so and your next send
+  passes, whatever it says, and once the app is known to keep its own box the hold's message carries your prompt
+  whole
+- `Keep it warm after (6h) ≈$0.19` (`w`) arms keepwarm for the Hotpot's chosen length, from the moment you press it;
+  `Start fresh (/clear)` (`f`) puts `/clear` in the box; `Dismiss` (`d`) lets the hold go and brings Bocchi out of
+  her panic (the box keeps what it has, your prompt unless it could not go back, and the next send is judged
+  afresh)
 - it holds only a person's prompt, between turns, with someone at a screen, once the cache has been warmed, and at
-  20,000 context tokens or more
+  20,000 context tokens or more; never while caching is off
 
-**The price.** Claude Code's own estimate after a model switch, while the model still matches; otherwise list price ×
-context tokens at the TTL's write rate (2× input for a one-hour cache, 1.25× for five minutes). A `~` before the rate
-means only the model family's catch-all price matched.
+**The price.** A re-order is the context × a cache write's price per token: Claude Code's own, from its estimate
+after a model switch, while the cache's model is the one it priced (a list price on a known model; a managed
+`modelPricing` estimate is not taken); otherwise the list price at the TTL's write rate (2× input for a one-hour
+cache, 1.25× for five minutes). A `~` before the rate means only the model family's catch-all price matched.
 
-**The TTL.** The **Cache TTL** option, 60 minutes by default (5 suits a plain API key). Left at 60, it gives way to
-the TTL Claude Code reports on a model switch.
+**The TTL.** The **Cache TTL** option when it is set to anything but 60. At 60, 0 or empty it is left to Claude Code
+(the TTL it reports on every model switch, and on a resume) or, while Claude Code has said nothing, to what the
+requests show: a request that reads the cache more than 5.5 minutes after the last one means an hour; one that
+re-writes it from 5.5 minutes to 20 seconds short of an hour after, on the same model and effort (a keepwarm ping
+also counts), is a first sighting of five minutes (the Hotpot shows `TTL 5m?`), and a second settles five minutes.
+Until then an hour is assumed (`TTL 1h?`). What was learned is kept for the session, through `/clear` and a reload.
+
+**The warmth.** The cache warms from the start of each request of the main loop (the TTL runs from when a request is
+processed), never from a turn's end, so an interrupted or failed turn warms nothing more than its requests did. A
+subagent's requests never warm it: a long background act lets it go cold. A switch to another model empties it (a
+resume's does not). A resumed session knows how long ago its last answer was. Three requests in a row that neither
+read nor wrote the cache mean caching is off: nothing is held, nothing warns, and keepwarm has nothing to keep.
 
 **Before it lapses.** Once per warm period, while the session is idle, without keepwarm, with 20,000 context tokens
 or more, and 5 minutes left (or half the TTL, if that is shorter):
@@ -499,18 +545,89 @@ or more, and 5 minutes left (or half the TTL, if that is shorter):
   (1 h 30 min), `1m30` (1 min 30 s), `1.5h`, or a bare `90` (minutes). `/keepwarm off` (or `stop`) ends it.
 - Each minute, while it is armed, the session idle and not compacting, with 1,000 context tokens or more and the
   cache in its last 90 s, it sends a tiny side request built on the conversation (a fork):
-  `Kessoku keep-warm ping. Reply with one word: ok`.
-- A cache that already lapsed is not pinged: the next send warms it. A ping that found the cache cold says so in a
-  toast, with what the re-write cost.
+  `Kessoku keep-warm ping. Reply with one word: ok`. Switched on in those 90 s, or freed in them by a turn's end, it
+  sends one at once rather than wait for a minute that may come after the cache has lapsed. One goes at a time, and
+  none before a turn of the conversation has run to its end (again after `/clear`, a compaction or a model switch).
+- A cache that already lapsed is not pinged: the next send warms it, and `/keepwarm` says so. A ping that found the
+  cache cold says so in a toast, with what the re-write cost. A rate-limited ping is tried once more 20 s later; a
+  second refusal stops the pings until your next send. A host that keeps no snapshot to fork turns keepwarm off.
+- The pings run on a timer only a session with a screen keeps; without one, `/keepwarm` says nothing will ping.
 
 **`/cache-tax`** shows where things stand: warm with its time left, or `COLD` and for how long; the TTL; the context
-and the model; what a cold and a warm send would cost; keepwarm with its time left, its pings so far and their cost.
+and the model; what a cold and a warm send would cost; keepwarm with its time left, its pings so far and their cost;
+what the cache `saved` this conversation and its hit rate; and the Cache Tax `tax paid`.
 
 **After a compaction** the tax starts over from the truth: the new transcript has no cache entry yet, the next write
 is priced at the compacted size, and the panel's context reads the compacted set, so no stale figure or wrong
 warning survives `/compact`. Nijika says `the set is compacted: X → Y tokens`.
 
-`/bocchi tax` previews the warning; nothing is held.
+`/bocchi tax` previews the warning; nothing is held, and the cache's own figures are left alone.
+
+## ♨ Hotpot
+
+`/hotpot` (or `/bocchi hotpot`, or `♨ Hotpot`, `o`, on the strip and under the chalkboard) opens the prompt cache as
+the band's after-show hotpot, in an izakaya room: a donabe on a gas stove in the middle of a square low table,
+Bocchi and Nijika at its left edge, Ryo and Kita at its right, each from the waist up, her body turned to the pot and
+her face to you, her zabuton's corner showing past the table's edge. Eating, they look at the pot (but for the bite,
+the chewing and a blink); at last orders and at the bill, at you. The same command, the panel's ♨ again, `Close`
+(`c`) or Esc close it. It costs nothing while it is closed.
+
+**The feast is the gauge.** It changes when the warmth steps a level or the state changes, never on a clock:
+
+| The cache | The feast |
+| --- | --- |
+| nothing cached yet | the table set, the platter full for the context, the lid on the pot, the stove out; all four wait, hands on the table |
+| more than two thirds of the TTL left | a bubbling pot, steam, the platter as full as the context; all four eat, eyes on the pot: Bocchi shyly and Ryo fast (two bites to her one), both reaching over the pot's back rim into the broth, Nijika serving with her ladle, Kita leaning in to photograph the pot over its rim (a flash, sparkles) |
+| more than a third | simmering, half the food, slower chopsticks |
+| less | the last few pieces |
+| the last 5 minutes (half the TTL, if that is shorter) | last orders: a LAST ORDER sign, a sputtering flame, one piece of meat left; all four look up at you, Ryo's chopsticks still on the last piece |
+| cold | an empty, frosted pot, no flame, blue light, snow; Bocchi in her box under a rain cloud, Ryo chewing a weed, Nijika and Kita slumped over the table, melting |
+| keepwarm on | Nijika in the nabe-bugyō headband, the stove's knob glowing; in the last minutes she has the pot, the flame steady (while a ping can go, on keepwarm's minute tick: held back, by a model switch or a resume until the next turn ends, a second rate limit or a turn still running in the last minutes, keepwarm waits, and the last minutes are last orders, as they are when keepwarm ends before the tick that would send its ping, or that tick would come after the pot has gone cold) |
+| caching off | the lid stays on and the platter full, all four waiting as before the first order |
+| a top-up or a keepwarm ping warms the pot | Nijika pours broth in from her ladle (it spills over the lip and a ripple steps out on the broth); the food comes back |
+| a re-heat warms the pot | the flame and the food come back; Bocchi comes out of her box |
+| a send held by Cache Tax | the slip on the table, the re-write's price and a warm turn's; all four look up at you, Bocchi in a seated panic, hands up |
+| the held send is sent and paid | the slip goes and the feast comes back, and stays until the turn's first request has re-written the cache |
+| compacting | zosui: rice and egg in the broth, heavy steam, the four eating it |
+
+The platter holds about half its pieces under 40k tokens of context, two thirds to 120k, all from 120k, and a meat
+tower on top from 250k; it is full before the first order and while caching is off, and empties as the warmth runs
+down. One speech line shows at a time; with reduced motion the steam, bubbles, flames and the pour stand still.
+
+**The wooden board** under it: the state in a word and its tail in whole minutes (`♨ Bubbling` `51m of feast left`,
+`Last orders!` `cold in 3m`, `❄ Gone cold` `14m ago: the next send re-orders everything`, and while a paid send's
+first request re-writes the pot `♨ Re-ordering` `your prompt writes 304k tokens back into the pot`), then the
+context and its prices (`168k on the table · a re-order ≈$1.34 · a top-up ≈$0.03 · a day of keepwarm ≈$0.83 ·
+keepwarm off`), the TTL's mark while it is unsettled, and why a button is dim.
+
+**The buttons:**
+
+- `Keep the fire on · 2h ≈$0.07` (`w`), with `30m`, `1h`, `2h` and `6h` to choose the length; while keepwarm runs,
+  `Let it cool (keepwarm off)`.
+- `Top up now ≈$0.03` (`t`): one keepwarm ping now. While cold it is `Re-heat now ≈$1.34`, a re-write paid on
+  purpose so your next prompt starts warm: the first press asks (`Press again: re-write ≈$1.34`), a second within
+  10 s sends it.
+- `Zosui (compact)` (`z`): `/compact`'s own call, on a second press (`Press again: compact 168k tokens · one
+  summarizing request`); the next send writes the smaller pot. In the desktop app, where a plugin cannot compact, it
+  is dim: type `/compact`.
+- `Clear the table (/clear)` (`f`): puts `/clear` in the box for you to send (over a draft, a second press first);
+  the next send writes a fresh pot, and keepwarm stays on if it was.
+- `The bill` (`b`) and `Close` (`c`). During a Cache Tax hold the row is the card's (`Keep it warm after`, `Start
+  fresh`, `Dismiss`), then the bill and close.
+
+A button that cannot act now is dim, and the board says why: `this host keeps no snapshot to fork`, `prompt caching
+is off`, `a turn is running`, `a top-up is on its way`, `nothing to top up until the next turn ends`, and so on.
+
+**The bill** (`お会計 · this conversation's cache`, on the board's wood so it reads on any theme) starts over at
+`/clear` and `/resume`: the reads and writes (the writes at the TTL's rate), of which Cache Tax (silent re-orders,
+such as a background report's, and mid-turn ones named), the pings and top-ups, the re-heats, the compactions'
+summarizing requests, what the cache saved against sending it all uncached (in red when it cost more), the hit rate
+overall and by member, a re-order, and a day of keepwarm. Every figure is a list price × tokens, not your bill.
+
+**In a terminal** the same pane in cells: the four mini heads at the pot's corners (Bocchi above Nijika at its left,
+Ryo above Kita at its right) over a pixel pot, in half blocks from 74 columns and 24 rows, quadrants from 36; then
+the board's two lines and the buttons. With **Character art** on `kaomoji`, on every surface, the faces round a
+text gauge (`♨ ▰▰▰▱▱`, cold `❄ ▱▱▱▱▱`).
 
 ## Blast Radius
 
@@ -704,7 +821,8 @@ cache warnings, and the notifications still go out. `none` silences the toasts a
 | `/keepwarm` | Keep the cache warm for the keepwarm default (6 h) |
 | `/keepwarm 90m` | Keep it warm that long: `90`, `2h`, `1h30`, `1.5h`, … |
 | `/keepwarm off` | Stop keepwarm (`stop` works too) |
-| `/cache-tax` | Is the cache warm, and what would a cold send cost? |
+| `/cache-tax` | Is the cache warm, and what would a cold send cost? What did it save, and what was Cache Tax paid? |
+| `/hotpot` | Open or close the ♨ Hotpot (with no screen, the wooden board as one line); runs mid-turn too |
 | `/bocchi help` | The mod's and Claude Code's versions, every command, and what is off on this Claude Code (`/bocchi` alone too) |
 | `/bocchi theme on` | Put on the Kessoku Bocchi theme, or its light twin (`apply` works too) |
 | `/bocchi theme off` | Put back the theme it replaced (`restore` works too) |
@@ -723,20 +841,23 @@ cache warnings, and the notifications still go out. `none` silences the toasts a
 | `/bocchi recap` | Put up a sample recap card (the tour does not count it) |
 | `/bocchi stats` | This project's tour, in a line and on the `♪ On Tour` page |
 | `/bocchi stats all` | Every project's tour, added up |
+| `/bocchi hotpot` | The same as `/hotpot` |
 
 - Typing `/bocchi` lists its sub-commands in the typeahead, each with a line saying what it does. After
   `/bocchi theme`, `mood`, `demo`, `memo`, `solo` or `stats` their arguments complete, and `/keepwarm` offers `30m`,
-  `1h`, `2h` and `off`.
+  `1h`, `2h`, `6h` and `off`.
 - Sub-commands are case-insensitive. An unknown one prints the help.
 - Under the `full` skin, these commands' output is drawn in a pink card.
-- `/clear` also clears the stage, the solo, the Replay setlist, the file lights, the memo card and the recap, and
-  sets Bocchi back to anxious. An armed keepwarm and the tour survive it.
+- `/clear` also clears the stage, the solo, the Replay setlist, the file lights, the memo card and the recap, starts
+  the Hotpot's bill over and sets Bocchi back to anxious. An armed keepwarm, the learned TTL and the tour survive it;
+  an in-process `/resume` does the same.
 - Blast Radius and Reflect need no command: a risky command or a correction brings them up.
 
 ## Keys
 
 A hotkey fires only while the mod's drawing holds the focus: after `ctrl+x tab`, a click, or in a pane that opened
-with the focus (the dropped-guitar screen and Replay Theater do). From the prompt the letters just type, which is why
+with the focus (the dropped-guitar screen and Replay Theater do, and the Hotpot when `/hotpot` is typed at an empty
+prompt; opened by a ♨ button it takes its keys only after `ctrl+x tab`, so on the panel `b` stays Bocchi's solo). From the prompt the letters just type, which is why
 `/bocchi solo` exists. The one exception is a bare digit in an empty prompt, which can press a button in what is
 drawn above the prompt. Keys belong to the drawing that has the focus, so `r` is Ryo on the panel and Replay on the
 strip.
@@ -749,9 +870,11 @@ strip.
 | Panel | `b` `n` `r` `k` | Bocchi's, Nijika's, Ryo's or Kita's solo; her key again goes back to the mix |
 | Panel | `m` | Back to the mix |
 | Panel | `h` | Hide (when the panel is drawn above the prompt) |
+| Panel | `o` | `♨ Hotpot`: open or close the Hotpot |
 | Panel, terminal | Tab, Enter | Move to a name or an act's number, and press it |
 | Strip | `r` | `Replay N` |
 | Strip | `k` | `Panel`: open or close the panel |
+| Strip | `o` | `♨ Hotpot`: open the Hotpot |
 | Strip | `h` | `Hide`: hide the strip until `/bocchi strip` |
 | Dropped guitar | `0` | `Cancel — catch it!` (has the focus) |
 | Dropped guitar | `p` | `Proceed — let it fall` |
@@ -760,6 +883,13 @@ strip.
 | Cache Tax | `f` | `Start fresh (/clear)` |
 | Cache Tax | `d` | `Dismiss` |
 | Cache Tax | Enter, in the prompt | Send the held prompt |
+| Hotpot | `w` | `Keep the fire on` / `Let it cool` (`Keep it warm after` during a hold) |
+| Hotpot | `t` | `Top up now`, or `Re-heat now` while cold (twice) |
+| Hotpot | `z` | `Zosui (compact)` (twice) |
+| Hotpot | `f` | `Clear the table (/clear)` (`Start fresh` during a hold) |
+| Hotpot | `d` | `Dismiss`, during a hold |
+| Hotpot | `b` | `The bill` / `Close the bill` |
+| Hotpot | `c`, Esc | `Close` |
 | Band memo | `s` | `Save to ./CLAUDE.md` (has the focus) |
 | Band memo | `g` | `Global instead` |
 | Band memo | `e` | `Edit` the rule (`keep` submits it) |
@@ -796,8 +926,8 @@ echo '{"autoSolo":"true"}' | claude plugin configure kessoku-ultimate-bocchi --v
 | Charcoal backgrounds | `paintBackgrounds` | on | Charcoal behind the mod's panels and cards. Never painted on a light theme |
 | Tool row cards | `toolCards` | `all` | `all`, `edits` or `none`: which tool rows get a track header and card |
 | Band spinner words | `spinnerWords` | on | Band verbs on the spinner, picked by what the turn is doing. Terminal only; does nothing under the `none` skin |
-| Cache TTL (minutes) | `cacheTtlMinutes` | 60 | The cache lifetime Cache Tax assumes (5 suits a plain API key). Left at 60, Claude Code's own TTL after a model switch wins; 0 reads as 60 |
-| Keepwarm default (minutes) | `keepWarmMinutes` | 360 | The length of a bare `/keepwarm` and of the Cache Tax card's `Keep it warm after` |
+| Cache TTL (minutes) | `cacheTtlMinutes` | 60 | The cache lifetime Cache Tax and the Hotpot go by (5 suits a plain API key). 60, 0 or empty leave it to Claude Code or to what the requests show, an hour assumed until then |
+| Keepwarm default (minutes) | `keepWarmMinutes` | 360 | The length of a bare `/keepwarm`, and of the Hotpot's `Keep the fire on` and the Cache Tax card's `Keep it warm after` until the Hotpot picks another |
 | Reflect memos | `reflect` | on | Corrections become memos, and Claude gets the memo tool. Off: no Haiku call, no memo tool |
 | Panel on start | `openPanelOnStart` | on | Open the panel when the session starts, where Claude Code seats it as a sidebar |
 | Auto solo | `autoSolo` | off | When a member takes a new subagent, open her solo for 10 s. Never cuts short a solo you chose |
@@ -874,12 +1004,24 @@ Here *the engine* is Claude Code itself, and `$` is the interface it hands the h
 - `hooks/register.tsx`: the one hooks module, with every hook and every `$` call, and every drawing:
   `drawScene` and `drawStripScene` (the desktop's live house and neon sign), `drawPanel` (the terminal's marquee,
   stage, mixer, solo, keys row and rail), `drawStrip`, `drawBlast`, `drawCacheTax`, `drawMemo`, `drawRecap`,
-  `drawReplay`, `drawTour` and `drawTree`; `drawSprite` (a Raster in a terminal, an animated Svg elsewhere) with the sprite clock that repaints the
+  `drawHotpot`, `drawReplay`, `drawTour` and `drawTree`; `drawSprite` (a Raster in a terminal, an animated Svg elsewhere) with the sprite clock that repaints the
   terminal's Rasters ten times a second through `$.ui.blit`; and the render hooks for the engine's own sites.
 - `hooks/lib/stage.ts`: the panel as data (`panelView`), which every panel drawing shares: who plays, each act's
   description, context, cost, tools and failure, the session's figures, the solo, the encore (`ENCORE_MS`) and the
   pit's 30 s tail, the other members' moods (`memberMood`), and readers that fill in state an older version wrote
   (`$.state` outlives a reload).
+- `hooks/lib/hotpot.ts`: the ♨ Hotpot. The feast's phase (`feastOf`), which the strip, the chalkboard's foot and
+  the rail share with the pane; when the next redraw is due (`warmthDue`, `hotpotDue`: nothing redraws on a clock);
+  the ledger's arithmetic (every step, ping, re-heat and summary booked against P, the main loop's last prompt, the
+  tax, the TTL learned from the requests) and its figures; the wooden board, the bill and the buttons' words; and the
+  drawing: the room, the table, the donabe and its food as pixel art, the band seated at the table's edges (each by
+  the outer end of her waist, `FEAST_WAIST`, the waist in her `seat.ts`, which a test holds to the sprites' pixels)
+  over the pot, the far two's lap clips open over it (`OVER_POT`) so their chopsticks cross its back rim, Kita's
+  flash at `KITA_LENS` and Nijika's pour at a top-up from `NIJIKA_CUP` (the studio's tips, held by tests to the
+  sprites), memoised with no clock inside, and the terminal's pot under the minis.
+- `hooks/lib/pixart.ts` and `hooks/lib/svgtext.ts`: the small-picture helpers (a `Pix` drawn pixel by pixel and written
+  as the sprites are) and the text and markup helpers (the faces' advance widths, wrapping, `svgDoc`, `capped`), which
+  `scene.ts` and `hotpot.ts` share.
 - `hooks/lib/scene.ts`: the live house, for a surface that draws `Svg`: the stage, the plates, the board's head,
   songs, details and foot, and the strip's neon sign. Pure functions of `panelView`, each picture under the Svg
   element's 131,072-character limit. The stage is memoised, so an unchanged stage is the same picture and its
@@ -891,8 +1033,9 @@ Here *the engine* is Claude Code itself, and `$` is the interface it hands the h
   fits sprites into what a scene picture leaves them. `dim` shades a part two thirds toward the charcoal in a
   terminal (the other heads on a solo). `StageLayer`, a spotlight behind one slot, is reached only on a surface
   without an Svg element; the live house draws its own lights and darkens a dimmed member solid.
-- `hooks/lib/sprites.gen.ts`: the sprites as data, 98 animations (four members × six moods × three views, four
-  slimes × three states × two views, the guitar crash and its mini). Generated by the studio: do not edit it by hand.
+- `hooks/lib/sprites.gen.ts`: the sprites as data, 123 animations (four members × six moods × three views, four
+  slimes × three states × two views, the guitar crash and its mini, the band seated at the Hotpot in 24 loops and
+  Nijika's headband). Generated by the studio: do not edit it by hand.
 - `hooks/lib/band.ts`: the band's agent types (`BAND_AGENTS`: each one's when-to-delegate line, prompt and tools), how
   a type seats by name (`seatOf`), the keywords that seat any other subagent, which tools belong to whom
   (`memberForTool`), which state an act's slime shows (`slimeState`), the price table behind the cost estimates,
@@ -906,7 +1049,7 @@ Here *the engine* is Claude Code itself, and `$` is the interface it hands the h
   past 60), reading back whatever the store holds (`readBook`), adding a set or a memo, the view the page draws of one
   book or several (`tourView`), the recap's MVP (`mvpOf`), the night of a time (`dayOf`), the terminal's bars and the
   desktop's chart (`tourChart`).
-- `hooks/lib/typeahead.ts`: what the typeahead offers after `/bocchi` and `/keepwarm`.
+- `hooks/lib/typeahead.ts`: what the typeahead offers after `/bocchi` and `/keepwarm` (`hotpot` and `6h` among them).
 - `hooks/lib/engine.ts`: the engine version the mod expects (`MIN_ENGINE`), how versions compare, and the features
   that switch themselves off when a call is missing. The hooks themselves cannot be gated: an engine that does not
   know a hook event refuses the whole module at load.
@@ -919,8 +1062,9 @@ Here *the engine* is Claude Code itself, and `$` is the interface it hands the h
 - `hooks/lib/diff.ts`: Replay's line diff (past 1,500 lines, a marked approximate remove-all-then-add-all), unified
   hunks, the tool's own patch turned into a diff, and hunk cutting. CRLF and LF compare equal.
 - `hooks/hooks.json` names the module. `types/index.d.ts` is the `$.state` contract, which `claude plugin validate`
-  holds every `$.state` key to. `tests/kessoku.test.ts` (the hooks, through the engine's test kit) and
-  `tests/tour.test.ts` (the tour's arithmetic) run under `claude plugin test`. `docs/specs/` holds each release's
+  holds every `$.state` key to. `tests/kessoku.test.ts` (the hooks, through the engine's test kit),
+  `tests/hotpot.test.ts` (the Hotpot's arithmetic and drawing) and `tests/tour.test.ts` (the tour's arithmetic) run
+  under `claude plugin test`. `docs/specs/` holds each release's
   spec.
 
 A folder loaded with `--plugin-dir` reloads the module on every save in an interactive session; a local-folder
@@ -936,23 +1080,35 @@ not.
 - The art is palette grids, a folder a member and a file a part (`src/art/members/<member>/`: `palette.ts`,
   `index.ts`, then stand, play, crouch, cheer, panic, box, faces, sway, mini and slime). Bocchi also has `extras.ts`
   (her guitar for the crash); Kita, Nijika and Ryo have candidate stands in `stand-a.ts` and `stand-b.ts`, previewed
-  with `--stand`.
-- The mood timelines are in `src/anim/moods.ts` and the slimes' (active, idle, asleep) in `src/anim/slimes.ts`,
-  written as keyframes with holds the way a pixel-art animator keeps an Aseprite file. Effects and the 3x5 pixel font
+  with `--stand`. For the Hotpot's table each member has `seat.ts` (the seat pose and her waist), `eat.ts` (the
+  chopsticks at the pot, the bowl and her mouth, and where their tips are) and `feast-faces.ts` (the eyes on the pot,
+  the bite), and her own poses: Bocchi's `seat-panic.ts`, Ryo's `seat-point.ts`, Nijika's `seat-ladle.ts`,
+  `seat-slump.ts` and `headband.ts`, Kita's `seat-phone.ts` and `seat-slump.ts`.
+- The mood timelines are in `src/anim/moods.ts`, the slimes' (active, idle, asleep) in `src/anim/slimes.ts` and the
+  seated band's (wait, eat, calm, worry, cold, shock, serve) in `src/anim/feast.ts`, written as keyframes with holds the way a pixel-art animator keeps an Aseprite file. Effects and the 3x5 pixel font
   are in `src/art/fx.ts`, the melt and the slimes' squash in `src/art/compose.ts`, the guitar crash in
-  `src/anim/crash.ts`.
+  `src/anim/crash.ts`. `src/colors.ts` gathers every colour a render paints with, and `scripts/alphabet.mjs` holds
+  the generated file's 268-character alphabet, which `npm run check` counts those colours against.
 
 From `studio/`, after `npm install`:
 
 - `npm run dev` opens Remotion Studio on every sprite, slime, contact sheet and the showcase.
 - `npm run check` checks the grids in a second (sizes, palette, the face region identical across poses, the portrait
-  windows holding the face, the slimes on their canvas with Bocchi's two faces on one body), then that `themes/*.json`
-  still match the palette.
+  windows holding the face, the slimes on their canvas with Bocchi's two faces on one body, `seat` with stand's head
+  inside the window down to the face's foot, every seat pose cutting nothing of stand's there and none of her hair
+  outside it (below the face, `seat` keeps her hair inside the window, down to her waist's row and on her outer side,
+  but for two pixels of Bocchi's, and the arm poses keep `seat`'s), the waist where `seat.ts` puts it and only hair
+  and chopsticks below it, the
+  pot-look faces moving only the eyes, the headband, the feast loops' lengths, their beats apart and the faces they
+  play (at you at last orders and at the bill, on the pot while eating), the colours against the alphabet), then
+  that `themes/*.json` still match the palette.
 - `npm run themes` writes both theme files from the palette's token maps (`npm run themes:check` only compares).
 - `npm run sprites` renders every sprite with Remotion and writes `hooks/lib/sprites.gen.ts`
   (`node scripts/sprites.mjs --out <path>`, or `npm run sprites -- --out <path>`, writes a scratch export instead;
   strips of the frames land in `out/sprites/`).
 - `npm run sheet` (or `node scripts/sheet.mjs <member>`) renders contact sheets to `out/sheets/`.
+- `node scripts/feast.mjs [seats|faces|loops|table|all]` renders the seated band's sheets to `out/feast/`: every
+  seat pose with her waist marked, the feast faces, every loop's frames, and the four placed at a plain table.
 - `node scripts/terminal.mjs [member]` shows what a terminal draws, through the mod's own encoder, in
   `out/terminal/`.
 - `node scripts/svg.mjs [member]` writes the sprite writer's SVGs (every mood and slime, the guard picture) to pages
@@ -969,8 +1125,8 @@ From `studio/`, after `npm install`:
 ### Checks
 
 - `claude plugin validate .` reads the manifest, the marketplace file and the hooks module (`--strict` fails on
-  warnings). It warns that the hooks on `session.compact`, `classic.PostModelSwitch`, `classic.SubagentStart` and
-  `classic.SubagentStop` pass over a plugin a person installed where an organization manages Claude Code.
+  warnings). Older Claude Code builds warned there that the hooks on `session.compact` and the `classic.` events pass
+  over a plugin a person installed where an organization manages Claude Code; 2.1.309's validate names none.
 - `claude plugin test .` runs every `tests/*.test.ts` against the engine itself.
 - A type check: `tsc -p <folder>` once the engine has laid `.claude-plugin/types/` beside the mod, or otherwise a
   `tsconfig.json` kept outside the folder whose `include` names the engine's `claude-code.d.ts` and the mod's
@@ -989,19 +1145,26 @@ From `studio/`, after `npm install`:
   - changes the `/config` theme row only with your yes or `/bocchi theme on`
   - registers three agent types and, while Reflect is on, the memo tool at each session start
   - keeps each project's tour, and a few flags (the theme it replaced, a hint shown), in its own store
-  - makes one small Haiku call per correction and one cheap request per keepwarm ping
+  - makes one small Haiku call per correction, one cheap request per keepwarm ping, and one request per top-up or
+    re-heat you press in the Hotpot (each a fork of the session's own conversation, on its own client)
+  - keeps, for the session, what it books about the prompt cache: numbers, times and model ids, never prompt text
 
   No network calls of its own.
-- **Where an organization manages Claude Code** and has not listed this mod in managed settings, four of its hooks
-  do not run: a compaction no longer melts Bocchi or resets Cache Tax, the cache figures Claude Code reports after a
-  model switch go unread, and a subagent the mod missed at spawn is picked up only by the 2 s poll.
-  `claude plugin validate` names the hooks.
+- **Where an organization manages Claude Code** and has not listed this mod in managed settings, five of its hooks
+  do not run (`session.compact` and the four `classic.` ones): a compaction no longer melts Bocchi, draws the zosui or
+  resets Cache Tax (a Zosui press in the Hotpot still settles the cache from its own call); the cache figures Claude
+  Code reports after a model switch go unread (a step on another model still reads as one); a resumed session reads
+  as nothing cached until its first request; and a subagent the mod missed at spawn is picked up only by the 2 s poll.
+- **The desktop app** runs Claude Code as an SDK host, where a plugin cannot compact: the Hotpot's Zosui is dim
+  there and says to type `/compact`. Clear the table and Start fresh fill the app's own prompt box.
+- **Several sessions** with keepwarm on are several pots pinged: each Hotpot says only its own session's.
 - **Older versions of Claude Code.** The mod expects Claude Code 2.1.287 or newer, and `/bocchi help` flags an older
-  one. 1.0.1 was checked on 2.1.299 (validate, tests, type check); 1.0.0 also validated on 2.1.295, and 2.1.287
-  itself was not re-checked. Five features switch themselves off where Claude Code lacks the call, and the help names them: the
-  Replay suggestion, the native notifications, Claude Code's version in the help, the band agent types and the memo
-  tool. On a Claude
-  Code older than 2.1.287 the mod may not load at all.
+  one. 1.1.0 was checked on 2.1.309 (validate, tests, type check; the type check on 2.1.308 too); 1.0.1 on 2.1.299,
+  1.0.0 also on 2.1.295, and 2.1.287 itself was not re-checked. Seven features switch themselves off where Claude
+  Code lacks the call, and the help names them: the Replay suggestion, the native notifications, Claude Code's
+  version in the help, the band agent types, the memo tool, the Hotpot's zosui (`$.session.compact`) and its draft
+  check (`$.prompt.read`; without it, Clear the table always takes two presses). On a Claude Code older than 2.1.287
+  the mod may not load at all.
 - **Windows.** Blast Radius waits for your answer through PowerShell's `Start-Sleep` (`powershell`, then `pwsh`), so
   no `sleep` binary is needed. The PowerShell tool is guarded too, with its own rules (see
   [Blast Radius](#blast-radius)). Paths with drive letters, backslashes or UNC names are compared the way Windows

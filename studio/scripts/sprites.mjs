@@ -13,12 +13,16 @@
 //
 // The sprites: <member>-<mood> (96x96), <member>-<mood>-portrait (32x32),
 // <member>-<mood>-mini (16x16), <member>-slime-<state> (36x24),
-// <member>-slime-<state>-mini (18x12), fx-crash (96x32), fx-crash-mini (48x16).
+// <member>-slime-<state>-mini (18x12), <member>-feast-<state> (96x64),
+// nijika-feast-headband (96x64, a still), fx-crash (96x32), fx-crash-mini
+// (48x16). The palette characters are scripts/alphabet.mjs's (check.mjs counts
+// the studio's colors against them too).
 
 import fs from 'node:fs'
 import path from 'node:path'
 import { PNG } from 'pngjs'
 import { renderFrames } from '@remotion/renderer'
+import { ALPHABET } from './alphabet.mjs'
 import { OUT, STUDIO, open } from './lib.mjs'
 
 const args = process.argv.slice(2)
@@ -29,25 +33,8 @@ if (outAt >= 0 && args[outAt + 1] === undefined) {
 }
 const TARGET = outAt >= 0 ? path.resolve(args[outAt + 1]) : path.resolve(STUDIO, '..', 'hooks', 'lib', 'sprites.gen.ts')
 
-/**
- * Palette characters for the generated file: one UTF-16 unit each, never `.`
- * (transparent), `=` (same as the frame before), a digit (run counts), a
- * quote, a backslash or a backtick. 268 of them: A-Z, a-z, safe punctuation,
- * the Latin-1 letters, then Latin Extended-A.
- */
-const range = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => String.fromCharCode(from + i)).join('')
-const ALPHABET = [
-  range(0x41, 0x5a), // A-Z
-  range(0x61, 0x7a), // a-z
-  '!#$%&()*+,-/:;<>?@[]^_{|}~',
-  range(0xc0, 0xd6), // À-Ö
-  range(0xd8, 0xf6), // Ø-ö
-  range(0xf8, 0xff), // ø-ÿ
-  range(0x100, 0x17f), // Ā-ſ
-].join('')
-if (/[.=0-9'"\\`]/.test(ALPHABET) || new Set(ALPHABET).size !== ALPHABET.length) throw new Error('the alphabet holds a reserved or repeated character')
-
-const SPRITE_ID = /^(bocchi|nijika|ryo|kita)-(anxious|focused|happy|panic|melting|hiding)(-portrait|-mini)?$|^(bocchi|nijika|ryo|kita)-slime-(active|idle|asleep)(-mini)?$|^fx-crash(-mini)?$/
+const SPRITE_ID =
+  /^(bocchi|nijika|ryo|kita)-(anxious|focused|happy|panic|melting|hiding)(-portrait|-mini)?$|^(bocchi|nijika|ryo|kita)-slime-(active|idle|asleep)(-mini)?$|^(bocchi|nijika|ryo|kita)-feast-(eat|calm|worry|wait|cold|shock|serve)$|^nijika-feast-headband$|^fx-crash(-mini)?$/
 
 const { serveUrl, browser, compositions } = await open()
 const palette = (compositions.find(c => c.id === 'Palette')?.props?.colors ?? []).map(c => c.toLowerCase())

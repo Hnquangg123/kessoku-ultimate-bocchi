@@ -28,17 +28,21 @@ import type { MemberArt } from '../../types'
 import * as box from './box'
 import * as cheer from './cheer'
 import * as crouch from './crouch'
+import * as eat from './eat'
 import * as extras from './extras'
 import * as faces from './faces'
+import * as feastFaces from './feast-faces'
 import * as mini from './mini'
 import * as palette from './palette'
 import * as panic from './panic'
 import * as play from './play'
+import * as seat from './seat'
+import * as seatPanic from './seat-panic'
 import * as slime from './slime'
 import * as stand from './stand'
 import * as sway from './sway'
 
-const { palette: merged, colorSources } = memberPalette({ palette, stand, play, crouch, cheer, panic, box, faces, sway, mini, extras, slime })
+const { palette: merged, colorSources } = memberPalette({ palette, stand, play, crouch, cheer, panic, box, faces, sway, mini, extras, slime, seat, eat, seatPanic })
 
 export const bocchi: MemberArt = {
   id: 'bocchi',
@@ -65,4 +69,13 @@ export const bocchi: MemberArt = {
   mini: mini.mini,
   slime: slime.slime,
   extras: { guitarFlat: extras.guitarFlat, guitarTilt: extras.guitarTilt },
+  tips: { ...eat.tips },
+  feast: {
+    side: seat.side,
+    waist: seat.waist,
+    hair: seat.hair,
+    poses: { seat: seat.seat, seatPot: eat.seatPot, seatBowl: eat.seatBowl, seatUp: eat.seatUp, seatPanic: seatPanic.seatPanic },
+    faces: feastFaces.feastFaces,
+    eyes: feastFaces.eyes,
+  },
 }

@@ -26,6 +26,7 @@ export const BOCCHI_VERBS: readonly Word[] = [
   ['solo', "open one member alone, every act in full: bocchi | nijika | ryo | kita, or off for the mix"],
   ['strip', 'hide or show the band strip above the prompt'],
   ['stats', "the tour: this project's sets, nights, spend, members and records across sessions (all: every project)"],
+  ['hotpot', "the prompt cache as the band's hotpot: keep the fire on, top up, re-heat, zosui, the bill (as /hotpot)"],
   ['help', 'the commands, the versions, the config'],
 ]
 
@@ -63,6 +64,7 @@ export const KEEPWARM_ARGS: readonly Word[] = [
   ['30m', 'keep the prompt cache warm for half an hour'],
   ['1h', 'keep the prompt cache warm for an hour'],
   ['2h', 'keep the prompt cache warm for two hours'],
+  ['6h', 'keep the prompt cache warm for six hours'],
   ['off', 'stop the pings'],
 ]
 

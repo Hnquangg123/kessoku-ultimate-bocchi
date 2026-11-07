@@ -9,6 +9,8 @@
 
 import type { KessokuAgent, KessokuBand, KessokuCache, KessokuMember, KessokuMood, KessokuSlimeState, KessokuUi } from '../../types'
 import { fmtDuration, fmtTokens, fmtUsd, slimeState } from './band'
+import { ampKind, feastOf, stripWords } from './hotpot'
+import type { FeastFlags } from './hotpot'
 import { MEMBERS } from './palette'
 
 /** How long an act that just ended holds its line bold in her color (its encore). */
@@ -264,20 +266,18 @@ function actView(b: KessokuBand, a: KessokuAgent, now: number): ActView {
   }
 }
 
-/** The cache's warmth in a word or three, for the session's figures. */
-function ampOf(c: KessokuCache, now: number, ttlMs: number): PanelView['amp'] {
-  if (c.keepWarmUntil > now) return { kind: 'keepwarm', words: `keepwarm ${fmtDuration(c.keepWarmUntil - now)}` }
-  if (c.lastWarmAt <= 0) return { kind: 'none', words: 'no cache yet' }
-  const left = ttlMs - (now - c.lastWarmAt)
-  return left <= 0 ? { kind: 'cold', words: `cold ${fmtDuration(-left)}` } : { kind: 'warm', words: `warm ${fmtDuration(left)}` }
+/** The cache's warmth for the session's figures: its kind by the warmth alone, its words the strip's, read off the feast's phase. */
+function ampOf(c: KessokuCache, now: number, ttlMs: number, flags: FeastFlags): PanelView['amp'] {
+  return { kind: ampKind(c, now, ttlMs), words: stripWords(feastOf(c, now, ttlMs, flags), c, now, flags.keepwarmHeld === true) }
 }
 
 /**
  * The panel as data: the band read through `bandOf`, the solo through
- * `soloNow`, the cache's warmth at its TTL. Every drawing of the panel draws
- * this, so the desktop and the terminal say the same things.
+ * `soloNow`, the cache's warmth at its TTL with the flags the feast's phase
+ * takes (false when left out). Every drawing of the panel draws this, so the
+ * desktop and the terminal say the same things.
  */
-export function panelView(rawBand: KessokuBand, cache: KessokuCache, rawUi: KessokuUi, now: number, ttlMs: number): PanelView {
+export function panelView(rawBand: KessokuBand, cache: KessokuCache, rawUi: KessokuUi, now: number, ttlMs: number, flags: FeastFlags = {}): PanelView {
   const b = bandOf(rawBand)
   const u = soloNow(rawUi, now)
   const main = b.agents.find(a => a.id === 'main')
@@ -319,7 +319,7 @@ export function panelView(rawBand: KessokuBand, cache: KessokuCache, rawUi: Kess
     planPercent: b.rateLimitPercent,
     session: fmtUsd(b.sessionUsd),
     sessionUsd: b.sessionUsd,
-    amp: ampOf(cache, now, ttlMs),
+    amp: ampOf(cache, now, ttlMs, flags),
     liveCount: liveCount(b),
     lastError: b.lastError,
     nowPlaying: nowPlaying(b, now),

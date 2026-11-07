@@ -28,16 +28,22 @@ import type { MemberArt } from '../../types'
 import * as box from './box'
 import * as cheer from './cheer'
 import * as crouch from './crouch'
+import * as eat from './eat'
 import * as faces from './faces'
+import * as feastFaces from './feast-faces'
+import * as headband from './headband'
 import * as mini from './mini'
 import * as palette from './palette'
 import * as panic from './panic'
 import * as play from './play'
+import * as seat from './seat'
+import * as seatLadle from './seat-ladle'
+import * as seatSlump from './seat-slump'
 import * as slime from './slime'
 import * as stand from './stand'
 import * as sway from './sway'
 
-const { palette: merged, colorSources } = memberPalette({ palette, stand, play, crouch, cheer, panic, box, faces, sway, mini, slime })
+const { palette: merged, colorSources } = memberPalette({ palette, stand, play, crouch, cheer, panic, box, faces, sway, mini, slime, seat, eat, seatLadle, seatSlump })
 
 export const nijika: MemberArt = {
   id: 'nijika',
@@ -63,5 +69,14 @@ export const nijika: MemberArt = {
   boxHead: box.boxHead,
   mini: mini.mini,
   slime: slime.slime,
-  tips: play.tips,
+  tips: { ...play.tips, ...eat.tips, ...seatLadle.tips },
+  feast: {
+    side: seat.side,
+    waist: seat.waist,
+    hair: seat.hair,
+    poses: { seat: seat.seat, seatPot: eat.seatPot, seatBowl: eat.seatBowl, seatUp: eat.seatUp, seatLadle: seatLadle.seatLadle, seatSlump: seatSlump.seatSlump },
+    faces: feastFaces.feastFaces,
+    eyes: feastFaces.eyes,
+    headband: headband.headband,
+  },
 }
