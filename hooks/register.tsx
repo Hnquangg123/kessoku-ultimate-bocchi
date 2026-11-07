@@ -362,7 +362,10 @@ let noSnapshot = false
  * SDK or `-p` session), so Zosui is dim there. Set at session.start (not interactive) and on that refusal.
  */
 let hostNoCompact = false
-/** The host binds no prompt box a plugin may fill (the desktop app draws its own; `-p` has none): Clear the table is dim. */
+/**
+ * The host binds no prompt box a plugin may fill, learned from a fill answering `no_composer` (a host with no composer
+ * client, as `-p`: the desktop app takes fills into its own box): Clear the table and Start fresh are dim then.
+ */
 let hostNoBox = false
 /** A paid re-order's turn is under way: the Hotpot keeps the feast drawn until its first step books it warm (or the turn ends). */
 let paying = false
@@ -1881,7 +1884,7 @@ async function hotpotViewOf($: EngineInterface, e: Site | null, now: number): Pr
     ttl,
     pick: pickMs(h),
     slip: feast.phase === 'held' ? { writeUsd: c.heldUsd, warmUsd: c.warmUsd, tokens: held.tokens, ageMs: held.ageMs } : null,
-    flags: { noSnapshot, compacting: isCompacting, working: b.isWorking, forkOut, compactOff: !features.compact, draftOff: !features.draft, paying, noCompact: hostNoCompact, noBox: hostNoBox },
+    flags: { noSnapshot, compacting: isCompacting, working: b.isWorking, forkOut, compactOff: !features.compact, draftOff: !features.draft, paying, noCompact: hostNoCompact, noBox: hostNoBox, promptBack: promptIsBack(c, h) },
     isTerminal: e?.surface === 'terminal',
     isFocused: e !== null && 'isFocused' in e.props ? e.props.isFocused === true : false,
   }
@@ -3206,6 +3209,11 @@ async function setKeepwarm($: EngineInterface, ms: number): Promise<void> {
   if (ms > 0 && !was) await playMoment($, 'keepon')
 }
 
+/** The held prompt is back in the box: its put-back fill landed (a refused one empties `heldText`), or the hold is `/bocchi tax`'s preview. */
+function promptIsBack(c: KessokuCache, hp: KessokuHotpot): boolean {
+  return c.heldText !== '' || (hp.sample !== null && hp.sample.heldAt === c.heldAt)
+}
+
 /** The hold let go: nothing held, Bocchi out of her panic (into her box while the cache is cold); the prompt stays in the box, and the next send is judged afresh. */
 async function dismissHold($: EngineInterface): Promise<void> {
   await update($, cache, x => ({ ...x, isArmed: false, heldAt: 0, heldText: '' }))
@@ -3215,6 +3223,7 @@ async function dismissHold($: EngineInterface): Promise<void> {
 function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: KessokuCache, l: KessokuLedger, hp: KessokuHotpot, now: number): Draw {
   const { Box, Text, Button } = $.ui.resolve(e)
   const held = heldFigures(c, hp, now)
+  const back = promptIsBack(c, hp)
   // cold since it lapsed (the warmth's age less the TTL), as the strip and the chalkboard's foot count it
   const age = held.ageMs > 0 ? fmtDuration(Math.max(0, held.ageMs - ttlMs())) : '?'
   const { isExact } = priceInfo(held.model || 'default')
@@ -3234,11 +3243,15 @@ function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: Kess
           <Text bold color={opts.accent}>{fmtTokens(held.tokens)} tokens</Text>
           <Text color="text"> at {rateWords} ≈ </Text>
           <Text bold color="error">{fmtUsd(c.heldUsd)}</Text>
-          <Text dimColor> (a warm turn: ≈{fmtUsd(c.warmUsd)}). Your prompt is back in the box: press Enter to pay and send.</Text>
+          <Text dimColor>
+            {` (a warm turn: ≈${fmtUsd(c.warmUsd)}). `}
+            {back ? 'Your prompt is back in the box: press Enter to pay and send.' : 'Your prompt could not go back in the box: your next send pays and sends.'}
+            {hostNoBox ? ' Type /clear to start fresh.' : ''}
+          </Text>
         </Text>
         <Box flexDirection="row" flexWrap="wrap" columnGap={2} marginTop={1}>
           <Button key="tax-keepwarm" label={keepAfterLabel(c, l, hp, now)} hotkey="w" plain onPress={() => void setKeepwarm($, pickMs(hp))} />
-          <Button key="tax-clear" label="Start fresh (/clear)" hotkey="f" plain onPress={() => void $.prompt.fill({ text: '/clear', mode: 'replace' })} />
+          <Button key="tax-clear" label="Start fresh (/clear)" hotkey="f" plain dimColor={hostNoBox} onPress={() => (hostNoBox ? undefined : void $.prompt.fill({ text: '/clear', mode: 'replace' }))} />
           <Button key="tax-dismiss" label="Dismiss" hotkey="d" plain dimColor onPress={() => void dismissHold($)} />
         </Box>
       </Box>
@@ -3959,9 +3972,10 @@ export const register: Register = (on, options) => {
     cwd = e.cwd
     isInteractive = e.isInteractive
     hasSurface = e.surface !== null
-    // Outside the REPL (the desktop app, an SDK or -p session) a plugin can neither compact nor fill the box.
+    // Outside the REPL (the desktop app, an SDK or -p session) a plugin cannot compact; whether a fill finds a box is
+    // the host's client's to say (the desktop app takes it), so that is learned from a fill's answer.
     hostNoCompact = !e.isInteractive
-    hostNoBox = !e.isInteractive
+    hostNoBox = false
     uiStarted = false
     // A reload keeps $.state (the ledger and its learned TTL) and forgets the module: mirror the TTL, note when we loaded.
     if (loadedAt === 0) loadedAt = await $.clock.now()
@@ -4505,8 +4519,11 @@ export const register: Register = (on, options) => {
         void (async () => {
           const filled = await $.prompt.fill({ text, mode: 'replace' })
           if (!filled.isFilled) {
-            toast($, `${MEMBERS.bocchi.faces.panic} cache tax: your prompt could not be put back; it was: ${text.slice(0, 80)}`)
-            await update($, cache, x => ({ ...x, isArmed: false, heldAt: 0, heldText: '' }))
+            // The box could not take it back (a dialog holds the keys, or no box is bound): the hold stays and the next
+            // send passes as the paid one, whatever it says, so a prompt is never held twice for want of a box.
+            if (isNoBox(filled)) hostNoBox = true
+            toast($, `${MEMBERS.bocchi.faces.panic} cache tax: your prompt could not go back in the box: your next send pays and sends; it was: ${text.slice(0, 80)}`)
+            await update($, cache, x => (x.isArmed && x.heldAt === now ? { ...x, heldText: '' } : x))
           }
         })().catch(() => undefined)
       })

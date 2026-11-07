@@ -743,6 +743,35 @@ test('Cache Tax holds a cold send once, puts the prompt back, and lets the secon
   expect(sent.text).toBe('where were we?')
 })
 
+test('a held prompt the box cannot take back keeps its hold: the next send passes as the paid one, and the card and the board say so', async ($, on) => {
+  const seen = fresh()
+  const st = watchState(on)
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const knobs: Answers = { refuseFill: true }
+  bottoms(on, clock, seen, knobs)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await aTurn($, 't1')
+  await clock.advance(61 * 60_000)
+  expect((await $.prompt.submit(typed('where were we?'))).drop).toMatch(/CACHE TAX/)
+  await clock.advance(500)
+  expect(seen.filled).toEqual([])
+  expect(seen.toasts.some(t => /your prompt could not go back in the box: your next send pays and sends; it was: where were we\?$/.test(t))).toBe(true)
+  // still held, for any next send
+  expect(await stateOf(st, 'cache')).toMatchObject({ isArmed: true, heldText: '' })
+  const band = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await band.find({ type: 'Text', text: /Your prompt could not go back in the box: your next send pays and sends\./ })).toBeDefined()
+  await band.unmount()
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  expect((await boardLines(pane))[1]).toBe('your prompt could not go back in the box: your next send pays and sends it, Start fresh puts /clear in the box')
+  await pane.unmount()
+  // retyped in other words, it passes, paid
+  const sent = await $.prompt.submit(typed('so, where were we?'))
+  expect(sent.drop).toBeUndefined()
+  expect((await stateOf(st, 'hotpot')).moment).toMatchObject({ kind: 'paid' })
+})
+
 test('Bocchi hides in her box when a call is turned down, and while the cache is cold until the next prompt', async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
@@ -3907,7 +3936,7 @@ test('clear the table fills /clear, on a second press over a draft; a box that c
   await pane.unmount()
 })
 
-test('in the desktop app (an SDK session, no REPL) Zosui and Clear the table are dim and say why: a plugin can neither compact nor fill the box there', async ($, on) => {
+test('in the desktop app (an SDK session, no REPL) Zosui is dim and says why, while Clear the table fills the app\'s own box', async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
   bottoms(on, clock, seen)
@@ -3919,13 +3948,17 @@ test('in the desktop app (an SDK session, no REPL) Zosui and Clear the table are
   await $.command.run(cmd('hotpot'))
   const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
   expect(await pane.find({ type: 'Button', key: 'hotpot-zosui' })).toMatchObject({ props: { dimColor: true } })
-  expect(await pane.find({ type: 'Button', key: 'hotpot-clear' })).toMatchObject({ props: { dimColor: true } })
+  expect(await pane.find({ type: 'Button', key: 'hotpot-clear' })).not.toMatchObject({ props: { dimColor: true } })
   expect(await pane.find({ type: 'Button', key: 'hotpot-topup' })).not.toMatchObject({ props: { dimColor: true } })
   expect((await boardLines(pane))[1]).toMatch(/ · this app compacts only from a typed \/compact$/)
-  for (const key of ['hotpot-zosui', 'hotpot-zosui', 'hotpot-clear', 'hotpot-clear']) await pane.press({ key })
+  for (const key of ['hotpot-zosui', 'hotpot-zosui']) await pane.press({ key })
   await clock.settle()
   expect(seen.compacts).toBe(0)
-  expect(seen.filled).toEqual([])
+  // the app attaches as a client that takes fills, so /clear goes into its own box
+  await pane.press({ key: 'hotpot-clear' })
+  await clock.settle()
+  expect(seen.filled).toEqual(['/clear'])
+  expect((await boardLines(pane))[0]).toMatch(/ {2}\/clear is in the box: Esc, then Enter$/)
   await pane.unmount()
 })
 

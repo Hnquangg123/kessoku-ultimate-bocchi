@@ -622,8 +622,10 @@ export type HotpotFlags = {
   paying: boolean
   /** The host compacts only from a typed `/compact` (outside the REPL: the desktop app, an SDK or `-p` session). */
   noCompact: boolean
-  /** The host binds no prompt box a plugin may fill (the desktop app draws its own): `/clear` cannot be put in it. */
+  /** The host binds no prompt box a plugin may fill (a fill answered `no_composer`): `/clear` cannot be put in it. */
   noBox: boolean
+  /** A held prompt is back in the box (its put-back fill landed, or the hold is `/bocchi tax`'s preview): Enter pays and sends it. */
+  promptBack: boolean
 }
 
 /** Everything the pane's drawings read, built where the state is read. */
@@ -822,7 +824,12 @@ function figuresLine(v: HotpotView): string[] {
 export function boardOf(v: HotpotView): { word: string; tail: string; line: string } {
   const s = stateWords(v)
   const note = v.hotpot.note !== null && v.now < v.hotpot.note.until ? v.hotpot.note.text : ''
-  if (v.feast.phase === 'held') return { word: s.word, tail: note || s.tail, line: 'your prompt is back in the box: Enter pays and sends it, Start fresh puts /clear in its place' }
+  if (v.feast.phase === 'held') {
+    // how to pay (the prompt back in the box, or, the box could not take it, the next send) and how to start fresh
+    const pay = v.flags.promptBack ? 'your prompt is back in the box: Enter pays and sends it' : 'your prompt could not go back in the box: your next send pays and sends it'
+    const fresh = v.flags.noBox ? 'type /clear to start fresh' : v.flags.promptBack ? 'Start fresh puts /clear in its place' : 'Start fresh puts /clear in the box'
+    return { word: s.word, tail: note || s.tail, line: `${pay}, ${fresh}` }
+  }
   const reason = dimReason(hotpotButtons(v))
   const parts = [...figuresLine(v), ...(reason === '' ? [] : [reason]), ...(v.isTerminal && !v.isFocused ? ['ctrl+x tab for its keys'] : [])]
   return { word: s.word, tail: note || s.tail, line: parts.join(' · ') }

@@ -85,7 +85,7 @@ const near = (got: number, want: number, digits = 6) => expect(Math.abs(got - wa
 
 const cacheAt = (ageMs: number, over: Partial<{ keepWarmUntil: number; contextTokens: number; model: string; heldAt: number }> = {}) => ({ lastWarmAt: ageMs < 0 ? 0 : NOW - ageMs, keepWarmUntil: 0, contextTokens: 168_000, model: OPUS, heldAt: 0, ...over })
 const HOTPOT: KessokuHotpot = { isOpen: true, inBand: false, isBillOpen: false, pick: 0, armed: null, moment: null, note: null, sample: null }
-const FLAGS = { noSnapshot: false, compacting: false, working: false, forkOut: false, compactOff: false, draftOff: false, paying: false, noCompact: false, noBox: false }
+const FLAGS = { noSnapshot: false, compacting: false, working: false, forkOut: false, compactOff: false, draftOff: false, paying: false, noCompact: false, noBox: false, promptBack: true }
 
 /** A view of the pane: a cache warmed `ageMs` ago (-1: nothing cached), the ledger P at 168k, a one-hour TTL assumed. */
 function viewOf(ageMs: number, over: Partial<HotpotView> = {}, cacheOver: Parameters<typeof cacheAt>[1] = {}, flags: Parameters<typeof feastOf>[3] = {}): HotpotView {
@@ -469,6 +469,10 @@ test('the wooden board in every phase: the state in a word and its tail, then th
   expect(boardOf(viewOf(9 * MIN, { flags: { ...FLAGS, working: true } })).line).toMatch(/ · a turn is running$/)
   expect(boardOf(viewOf(9 * MIN, { isTerminal: true, isFocused: false })).line).toMatch(/ · ctrl\+x tab for its keys$/)
   expect(boardOf(viewOf(74 * MIN, { slip: { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 } }, {}, { held: true })).line).toBe('your prompt is back in the box: Enter pays and sends it, Start fresh puts /clear in its place')
+  // a prompt the box could not take back: the next send pays; with no box at all, /clear is typed
+  const slip = { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 }
+  expect(boardOf(viewOf(74 * MIN, { slip, flags: { ...FLAGS, promptBack: false } }, {}, { held: true })).line).toBe('your prompt could not go back in the box: your next send pays and sends it, Start fresh puts /clear in the box')
+  expect(boardOf(viewOf(74 * MIN, { slip, flags: { ...FLAGS, promptBack: false, noBox: true } }, {}, { held: true })).line).toBe('your prompt could not go back in the box: your next send pays and sends it, type /clear to start fresh')
   // the second line in the other phases: the figures, then the reason a dim button gives (compacting, nothing cached, the gate, caching off)
   const figures = '168k on the table · a re-order ≈$1.34 · a top-up ≈$0.03 · a day of keepwarm ≈$0.83'
   for (const age of [30 * MIN, 45 * MIN, 57 * MIN, 74 * MIN]) expect(boardOf(viewOf(age)).line).toBe(`${figures} · keepwarm off · TTL 1h?`)
