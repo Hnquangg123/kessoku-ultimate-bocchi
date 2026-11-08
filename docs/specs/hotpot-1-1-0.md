@@ -238,14 +238,14 @@ step books.
      runs on a second within 10 s.
    - `Zosui (compact)` (`z`, `hotpot-zosui`), which arms on the first press
      (over the board, `press again within 10 s to compact <168k> tokens in one summarizing request`) and runs on a
-     second within 10 s. Armed, a button says `Press again` in a terminal, padded with no-break spaces (a cell each)
-     to its resting label's width; elsewhere it keeps its label and its look (a proportional face cannot be padded to
-     a width, and a plain Button draws the same whatever its variant), and the overlay alone says it is armed. What
-     its second press does is drawn over the wooden board in a Box keyed `hotpot-armed` (`position: 'absolute'` over
-     the board's two lines, on its paint, `overflow: 'hidden'`), out of the flow: the board beneath keeps what it
-     showed as the button armed (the note up then, else the tail; a later note waits for the arm to end, its 6 s
-     starting then), so nothing moves under the second press. In a terminal the board's second line is held to
-     `boardLineRows` (its rows with the keys hint in and a passing turn's, fork's or compaction's dim reason), so the
+     second within 10 s. Armed, a button says `Press again` in a terminal, padded with no-break spaces (a cell each) to
+     its resting label's width; elsewhere it keeps its label and its look (a proportional face cannot be padded to a
+     width, and a plain Button draws the same whatever its variant), and the overlay alone says it is armed. What its
+     second press does is drawn over the wooden board in a Box keyed `hotpot-armed` (`position: 'absolute'` over the
+     board's two lines, on its paint, `overflow: 'hidden'`), out of the flow: the board beneath keeps what it showed as
+     the button armed (the note up then, else the tail; a later note waits for the arm to end, or the arm that replaces
+     it, its 6 s starting then), so nothing moves under the second press. In a terminal the board's second line is held
+     to `boardLineRows` (its rows with the keys hint in and a passing turn's, fork's or compaction's dim reason), so the
      focus moving between the presses (a click on the pane, ctrl+x tab) moves nothing either. A press on any other
      button, a dim one's too, lets the arm go first (`disarm`): the armed button rests again, and that press's note
      shows.
@@ -258,7 +258,8 @@ step books.
      same label and press, so both arm one length; `Start fresh` replaces the held prompt in one press, on purpose, as
      the card's does.
    - A button that cannot act now is drawn dim (`dimColor`, no `variant`) with an `onPress` that spends and arms
-     nothing (Button requires one and has no disabled state), so its hotkey does nothing; the wooden board says why.
+     nothing (Button requires one and has no disabled state), though like any press, its hotkey's too, it lets another
+     button's arm go (`disarm`); the wooden board says why.
 4. The bill, when open: `お会計 · this conversation's cache` (not the session's: the ledger starts over at `/clear`
    and `/resume`), then Text rows (label, detail, figure) as [The bill](#the-bill) lists them, on the wooden board's
    paint in its own inks (the figures light green or rose for good and bad), never the theme's: the pane's wall stays
@@ -272,16 +273,17 @@ body columns and 17 body rows over what the wooden board, the buttons and an ope
 board's lines wrapped as the terminal wraps them, wrap-ansi's with `trim: false`, where a space after a word that fills
 its row opens the next; the buttons as their row packs them; an open bill's title, rows and foot. Counted on the worst
 case of what a press, a turn, a fork out, a ping or the focus changes: keepwarm off at each length and on at its longest
-words (`under 1m` left, a ping more than it has and two at least), the held line before and after Start fresh, a turn
-running, a fork out and compacting each with its dim reason, the keys hint, the bill's top-up row and its first ping's
-row (a top-up books one) wherever they can show; no note, nothing armed (an arm's words are drawn over the board). So
-none of those flips the tier: the pane's size, opening the bill and the pot's own state move it, its phase (by time, a
-send, or a press that warms, compacts or ends a hold), the fork gate shutting or opening, and the TTL being learned
-(`TTL 1h?` and the top-up's hedge go)); quadrants (35×9 cells) need 36 columns; narrower, text alone. The heads take the
-mood minis by phase: happy at `feast` and `zosui`; focused at `simmer`, `low` and `tend` (Nijika happy at `tend`) and,
-as the desktop's `wait`, at `none`, `cleared` and `off`; anxious at `last`; panic at `held`; at `cold` Bocchi hides (her
-box), Nijika and Kita melt and Ryo is anxious (her deadpan `(-_-)`; her `hiding` is a box too, and the cold gives the
-box to Bocchi alone). Then the wooden board's two lines as text, the buttons and the bill, as on the desktop.
+words (`under 1m` left, its ping count wider than any soon booked, a hundred at least), the held line before and after
+Start fresh, a turn running, a fork out and compacting each with its dim reason, the keys hint, the bill's top-up row,
+its first ping's row (a top-up books one) and its first re-heat's (one that warms nothing still books it) wherever they
+can show; no note, nothing armed (an arm's words are drawn over the board). So none of those flips the tier: the pane's
+size, opening the bill and the pot's own state move it, its phase (by time, a send, or a press that warms, compacts or
+ends a hold), the fork gate shutting or opening, and the TTL being learned (`TTL 1h?` and the top-up's hedge go));
+quadrants (35×9 cells) need 36 columns; narrower, text alone. The heads take the mood minis by phase: happy at `feast`
+and `zosui`; focused at `simmer`, `low` and `tend` (Nijika happy at `tend`) and, as the desktop's `wait`, at `none`,
+`cleared` and `off`; anxious at `last`; panic at `held`; at `cold` Bocchi hides (her box), Nijika and Kita melt and Ryo
+is anxious (her deadpan `(-_-)`; her `hiding` is a box too, and the cold gives the box to Bocchi alone). Then the wooden
+board's two lines as text, the buttons and the bill, as on the desktop.
 
 The pot rides with the heads: `LiveSprite` and `composite` take an optional still backdrop (`under`, the pot's
 pixels) that every repaint composites first, so the sprite clock repaints the heads over the pot and the pot changes
@@ -501,7 +503,8 @@ Each button lists its dim reasons in order; the one said is the first that appli
 - **What a press says**: an action's outcome, and a keepwarm ping's while the pane is open, is the hotpot atom's
   `note`: 6 s in place of the tail of the wooden board's first line, whatever the **Toasts** option (toasts go out
   as stated besides). Under an arm the board keeps the note that was up as it armed, beneath the arm's words; one that
-  lands under it (a fork's outcome, a ping's) starts its 6 s as the arm ends; a press on another button, a dim one's
+  lands under it (a fork's outcome, a ping's) starts its 6 s as the arm ends, or the arm that replaces it, and one
+  written after an arm lapsed shows at once; a press on another button, a dim one's
   too, lets the arm go, so that press's note shows at once.
 - **Two calls the mod has not made before**, `$.session.compact` and `$.prompt.read`, are guarded where they are made,
   like the five features `FEATURES` (`hooks/lib/engine.ts`) lists: a missing call (`isMissingApi`) switches its
