@@ -1981,6 +1981,16 @@ async function disarm($: EngineInterface, key: string): Promise<void> {
   if (armed !== null && ARMED_KEY[armed.action] !== key) await update($, hotpot, h => ({ ...h, armed: null }))
 }
 
+/**
+ * After a press that left no arm, a note still waiting for the arm it let go starts now (it shows from here), so a
+ * later arm keeps it beneath as the note up then rather than moving it to its own end (secondPress moves only a note
+ * still waiting under the arm it replaces).
+ */
+async function startWaitingNote($: EngineInterface): Promise<void> {
+  const now = await $.clock.now()
+  await update($, hotpot, h => (h.armed === null && h.note !== null && h.note.until - NOTE_MS > now ? { ...h, note: { ...h.note, until: now + NOTE_MS } } : h))
+}
+
 /** Keep the fire on for the pick, or let it cool; on a cold or empty cache the pings start with the next send. */
 async function pressKeep($: EngineInterface): Promise<void> {
   const now = await $.clock.now()
@@ -3523,8 +3533,12 @@ function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Dr
     'hotpot-tax-clear': () => pressStartFresh($, isTerminal),
     'hotpot-tax-dismiss': () => dismissHold($),
   }
-  // a press lets another button's arm go first (an armed button's own second press reads it)
-  const pressOf = (key: string, run: (() => Promise<unknown>) | undefined) => () => void disarm($, key).then(run)
+  // a press lets another button's arm go first (an armed button's own second press reads it); left with no arm, a
+  // note that waited for the one let go starts then
+  const pressOf = (key: string, run: (() => Promise<unknown>) | undefined) => () =>
+    void disarm($, key)
+      .then(run)
+      .then(() => startWaitingNote($))
   const bill = v.hotpot.isBillOpen ? billRows(v) : null
   return (
     <Box flexDirection="column" backgroundColor={isTerminal ? bg() : SCENE_COLORS.wall}>

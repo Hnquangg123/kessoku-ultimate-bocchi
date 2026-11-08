@@ -1009,7 +1009,7 @@ export function boardLineRows(v: HotpotView, width: number): number {
  * wrapped as the terminal wraps them, the second held to `boardLineRows`, the buttons as `buttonLayout` packs them),
  * and the bill's while it is open (its title, its rows, its foot): what is left decides the picture's tier. Counted on
  * the worst case of what a press, a turn, a fork out, a ping or the focus changes: the most rows over keepwarm off at
- * each length and on (at its longest words, its ping count wider than any soon booked), the held line before and after
+ * each length and on (at its longest words, its ping words wider than any soon booked), the held line before and after
  * Start fresh, a turn running, a fork out and compacting each with its dim reason, the keys hint in, the bill's top-up
  * row, its first ping's row and its first re-heat's wherever they can show; no note and nothing armed (an arm's words
  * are drawn over the board). So none
@@ -1021,10 +1021,11 @@ export function terminalRowsBelow(v: HotpotView, columns: number): number {
   const width = Math.max(1, columns - 2)
   const rest: HotpotView = { ...v, isFocused: false, hotpot: { ...v.hotpot, armed: null, note: null }, flags: { ...v.flags, working: false, forkOut: false, compacting: false } }
   const picks = [...new Set([...PICKS, v.pick, v.keepOption ?? v.pick])]
-  // keepwarm off at each length; on with `under 1m` left and its ping count at a width no ping or top-up soon passes (a
-  // hundred at least: a ping more than it has, its plural `s`, its digits; fmtUsd keeps the price's width), its longest
-  // words
-  const pinged = { ...rest.ledger, pings: { ...rest.ledger.pings, count: Math.max(100, rest.ledger.pings.count + 1) } }
+  // keepwarm off at each length; on with `under 1m` left and its ping words at a width no ping or top-up soon passes (a
+  // thousand pings and a thousand dollars at least: a ping more than it has, its plural `s`, its digits, and fmtUsd's
+  // widest form below $9999.5), its longest words
+  const l = rest.ledger
+  const pinged = { ...l, pings: { ...l.pings, count: Math.max(1000, l.pings.count + 1), usd: Math.max(1000, l.pings.usd) } }
   const keeps: HotpotView[] = [...picks.map(pick => ({ ...rest, pick, cache: { ...rest.cache, keepWarmUntil: 0 } })), { ...rest, ledger: pinged, cache: { ...rest.cache, keepWarmUntil: v.now + 30_000 } }]
   const views = v.feast.phase === 'held' ? keeps.flatMap(k => [false, true].map(clearInBox => ({ ...k, flags: { ...k.flags, clearInBox } }))) : keeps
   const board = Math.max(

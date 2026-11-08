@@ -3946,6 +3946,53 @@ test('a note waiting under an arm waits for the arm that replaces it, and one wr
   await pane.unmount()
 })
 
+test('a note let out by a press that arms nothing shows from then and stays beneath a later arm; a later arm brings back no note that lapsed', { timeoutMs: 20_000 }, async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const knobs: Answers = { forkMs: 2000 }
+  bottoms(on, clock, seen, knobs)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await aTurn($, 't1')
+  await clock.advance(9 * 60_000)
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  // Top up out 2 s, Zosui armed 0.3 s in, the outcome landing under it; the bill at 4 s lets Zosui go: the note shows
+  await pane.press({ key: 'hotpot-topup' })
+  await clock.advance(300)
+  await pane.press({ key: 'hotpot-zosui' })
+  await clock.settle()
+  await clock.advance(3700)
+  await pane.press({ key: 'hotpot-bill' })
+  await clock.settle()
+  expect((await boardLines(pane))[0]).toMatch(/ {2}topped up: 300k read from cache for \$0\.03$/)
+  // Clear armed over a draft at 5 s keeps it beneath (the note up as it armed), past its 6 s, for the whole arm
+  await clock.advance(1000)
+  knobs.draft = 'half a thought'
+  await pane.press({ key: 'hotpot-clear' })
+  await clock.settle()
+  expect(await armedWords(pane)).toMatch(/your draft gives way to \/clear$/)
+  expect((await boardLines(pane))[0]).toMatch(/ {2}topped up: /)
+  await clock.advance(6000)
+  expect((await boardLines(pane))[0]).toMatch(/ {2}topped up: /)
+  // its arm lapsed (at 15 s), the note's time long gone: the tail
+  await clock.advance(4500)
+  expect(await armedWords(pane)).toBeUndefined()
+  expect((await boardLines(pane))[0]).not.toMatch(/topped up/)
+  // keepwarm's note, five minutes old when Zosui arms, does not come back when the arm lapses
+  knobs.draft = undefined
+  knobs.forkMs = undefined
+  await pane.press({ key: 'hotpot-keep' })
+  await clock.settle()
+  expect((await boardLines(pane))[0]).toMatch(/ {2}keepwarm on for 6h: /)
+  await clock.advance(5 * 60_000)
+  await pane.press({ key: 'hotpot-zosui' })
+  await clock.settle()
+  await clock.advance(11_000)
+  expect((await boardLines(pane))[0]).not.toMatch(/keepwarm on for/)
+  await pane.unmount()
+})
+
 test('a note that lands under an arm starts its 6 s as the arm ends, so a top-up\'s outcome still shows', async ($, on) => {
   const seen = fresh()
   const clock = mock.clock(on, { now: 1_000_000 })
