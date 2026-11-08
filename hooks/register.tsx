@@ -119,6 +119,7 @@ import { offLine, versionLine } from './lib/engine'
 import type { FeatureKey } from './lib/engine'
 import { MEMO_QUEUE_MAX, MEMO_TOOL, MEMO_TOOL_SPEC, appendRule, checkRule, cleanRule, looksLikeCorrection, memoAnswer, rulePrompt } from './lib/reflect'
 import {
+  ARMED_KEY,
   ARM_MS,
   CELLS_H,
   CELLS_W,
@@ -128,7 +129,9 @@ import {
   NOTE_MS,
   TOP_UP_MIN_TOKENS,
   ampKind,
+  armOver,
   billRows,
+  boardLineRows,
   boardOf,
   bookActStep,
   bookFork,
@@ -148,10 +151,12 @@ import {
   hotpotSvg,
   isHostNoCompact,
   isNoBox,
+  isPriced,
   isTtlDefault,
   keepwarmUsd,
   lastWindow,
   lengthText,
+  letGo,
   minutesText,
   newLedger,
   nextPingAt,
@@ -163,8 +168,10 @@ import {
   stripWords,
   taxPaidUsd,
   taxReason,
+  terminalRowsBelow,
   topUpUsd,
   ttlInForce,
+  ttlMark,
   warmthDue,
   writePerToken,
 } from './lib/hotpot'
@@ -562,14 +569,23 @@ function setStatus($: EngineInterface, text: string): void {
   $.ui.status(text)
 }
 
-/** /cache-tax's state line: the warmth by `feastOf`, cold or warm. */
+/** /cache-tax's state line: the warmth in the strip's words (`cache cold for 14m`), as every surface counts it. */
 function warmth(c: KessokuCache, l: KessokuLedger, now: number): string {
-  const fe = feastOf(c, now, ttlMs(), { cachingOff: cachingOff(l) })
-  if (fe.phase === 'off') return 'cache: off (prompt caching is off)'
-  if (c.lastWarmAt <= 0) return 'cache: nothing cached yet'
-  if (fe.phase === 'cold') return `cache COLD ${fmtDuration(-fe.leftMs)} ago`
-  const keep = c.keepWarmUntil > now ? ` · keepwarm ${fmtDuration(c.keepWarmUntil - now)}` : ''
-  return `cache warm ${fmtDuration(fe.leftMs)}${keep}`
+  const fl = feastFlags(c, l, now)
+  return `cache ${stripWords(feastOf(c, now, ttlMs(), fl), c, now, fl.keepwarmHeld === true)}`
+}
+
+/** The TTL as the pane marks it while unsettled (`TTL 1h?`, `TTL 5m?`), else plainly (`TTL 5m`). */
+function ttlLabel(): string {
+  const t = ttlNow()
+  return ttlMark(t) || `TTL ${lengthText(t.ms)}`
+}
+
+/** A typed keepwarm length as the pane names lengths (`30m`, `1h30m`), with its seconds where it has them (`1m30s`). */
+function keepLengthText(ms: number): string {
+  if (ms < 1000) return 'under 1s'
+  const sec = Math.floor((ms % 60_000) / 1000)
+  return sec === 0 ? lengthText(ms) : ms < 60_000 ? `${sec}s` : `${lengthText(ms - (ms % 60_000))}${sec}s`
 }
 
 /** What re-writing the cache costs: a re-order at the engine's price per token while the cache's model is the one it priced, else at the TTL's list write rate. */
@@ -1012,10 +1028,18 @@ async function sendFork($: EngineInterface, kind: ForkKind): Promise<ForkSent> {
   }
 }
 
-/** A press's outcome (or a ping's while the Hotpot is up), in place of the wooden board's first tail for its 6 s. */
+/**
+ * A press's outcome (or a ping's while the Hotpot is up), in place of the wooden board's first tail for its 6 s; one
+ * that lands under an arm (a fork's outcome: a press lets an arm go first) starts its 6 s as the arm ends, or the arm
+ * that replaces it (`armOver`), or as a press lets the arm go (`letGo`), which the board waits for.
+ */
 async function noteHotpot($: EngineInterface, text: string, always = true): Promise<void> {
   const now = await $.clock.now()
-  await update($, hotpot, h => (always || h.isOpen ? { ...h, note: { text, until: now + NOTE_MS } } : h))
+  await update($, hotpot, h => {
+    if (!always && !h.isOpen) return h
+    const from = h.armed !== null && now - h.armed.at < ARM_MS ? h.armed.at + ARM_MS : now
+    return { ...h, note: { text, until: from + NOTE_MS } }
+  })
 }
 
 /** A moment of the feast (a ping, a re-heat, keepwarm switched on, a paid re-order), for 2.4 s. */
@@ -1121,7 +1145,7 @@ async function coldWatch($: EngineInterface): Promise<void> {
   const left = feastOf(c, now, ttl).leftMs
   if (left <= 0 || left > Math.min(COLD_NOTICE_MS, ttl / 2)) return
   coldNoticeFor = c.lastWarmAt
-  const text = `Cache Tax: the cache goes cold in ${fmtDuration(left)} · re-writing ${fmtTokens(c.contextTokens)} tokens would cost ≈${fmtUsd(coldWriteUsd(c, l))} · /keepwarm keeps it warm`
+  const text = `Cache Tax: the cache goes cold in ${minutesText(left)} · re-writing ${fmtTokens(c.contextTokens)} tokens would cost ≈${fmtUsd(coldWriteUsd(c, l))} · /keepwarm keeps it warm`
   if (!(await notify($, text))) toast($, `${MEMBERS.bocchi.faces.anxious} ${text}`)
 }
 
@@ -1151,7 +1175,7 @@ async function settleCompaction($: EngineInterface, before: number | undefined, 
   })
   await revertMood($)
   const shrank = before !== undefined && after !== undefined ? `${fmtTokens(before)} → ${fmtTokens(after)} tokens` : ''
-  if (shrank !== '') await noteHotpot($, shrank, false)
+  if (shrank !== '') await noteHotpot($, `${shrank}: the next send writes the smaller pot`, false)
   toast($, `${MEMBERS.nijika.faces.happy} Nijika: the set is compacted${shrank === '' ? '' : `: ${shrank}`}`, 'chatter')
 }
 
@@ -1894,18 +1918,23 @@ async function hotpotViewOf($: EngineInterface, e: Site | null, now: number): Pr
     hotpot: h,
     ttl,
     pick: pickMs(h),
+    keepOption: opts.keepWarmMs,
     slip: feast.phase === 'held' ? { writeUsd: c.heldUsd, warmUsd: c.warmUsd, tokens: held.tokens, ageMs: held.ageMs } : null,
     pingAt: pingGoesAt(c, now),
-    flags: { noSnapshot, compacting: isCompacting, working: b.isWorking, forkOut, compactOff: !features.compact, draftOff: !features.draft, paying, noCompact: hostNoCompact, noBox: hostNoBox, promptBack: promptIsBack(c, h) },
+    flags: { noSnapshot, compacting: isCompacting, working: b.isWorking, forkOut, compactOff: !features.compact, draftOff: !features.draft, paying, noCompact: hostNoCompact, noBox: hostNoBox, promptBack: promptIsBack(c, h), clearInBox: h.freshAt === c.heldAt && c.heldAt > 0 },
     isTerminal: e?.surface === 'terminal',
     isFocused: e !== null && 'isFocused' in e.props ? e.props.isFocused === true : false,
   }
 }
 
-/** The Hotpot opened: placed at any width when asked; where no surface places it (or it waits undrawn), above the prompt. */
+/**
+ * The Hotpot opened: placed at any width when asked; where no surface places it (or it waits undrawn), above the
+ * prompt. It leaves the keyboard with the prompt: its buttons' letters spend (a top-up, keepwarm) or close, so a prompt
+ * typed on after /hotpot must not press them; ctrl+x tab or a click hands the pane the keys.
+ */
 async function openHotpot($: EngineInterface): Promise<boolean> {
   reopenSprites(HOTPOT)
-  const placed = await $.ui.open({ id: HOTPOT, title: '♨ Hotpot', focus: true, closeOnEscape: true, rows: 28, columns: 74 })
+  const placed = await $.ui.open({ id: HOTPOT, title: '♨ Hotpot', closeOnEscape: true, rows: 28, columns: 74 })
   await update($, hotpot, x => ({ ...x, isOpen: true, inBand: !placed.isPlaced }))
   return placed.isPlaced
 }
@@ -1936,16 +1965,38 @@ async function liveButton($: EngineInterface, key: string, now: number): Promise
   return b === undefined || b.reason !== '' ? null : v
 }
 
-/** Re-heat, zosui or clear: the first press arms (10 s), true on the second within them. */
+/**
+ * Re-heat, zosui or clear: the first press arms (10 s), over another button's arm replacing it (`armOver`: the board
+ * beneath keeps what it showed); true on the second within them, which lets the arm go (`letGo`: a note waiting for
+ * it starts then, before the press's work).
+ */
 async function secondPress($: EngineInterface, action: 'reheat' | 'zosui' | 'clear', now: number): Promise<boolean> {
-  const armed = (await read($, hotpot)).armed
+  const v = await hotpotViewOf($, null, now)
+  const armed = v.hotpot.armed
   if (armed !== null && armed.action === action && now - armed.at < ARM_MS) {
-    await update($, hotpot, h => ({ ...h, armed: null }))
+    await update($, hotpot, h => ({ ...h, ...letGo(h, now) }))
     return true
   }
-  await update($, hotpot, h => ({ ...h, armed: { action, at: now } }))
+  const isDrawn = hotpotButtons(v).some(b => b.isArmed === true)
+  await update($, hotpot, h => ({ ...h, ...armOver(h, action, now, isDrawn) }))
   return false
 }
+
+/**
+ * A press that arms nothing lets another button's arm go (an armed button's own press reads it): it rests again, a
+ * note waiting for the arm starts then (`letGo`), before the press's work, and that press's own note shows at once.
+ */
+async function letGoArm($: EngineInterface, key: string): Promise<void> {
+  const now = await $.clock.now()
+  await update($, hotpot, h => {
+    if (h.armed !== null && ARMED_KEY[h.armed.action] === key) return h
+    const next = letGo(h, now)
+    return next.armed === h.armed && next.note === h.note ? h : { ...h, ...next }
+  })
+}
+
+/** The buttons whose press may arm: they let another's arm go in their own press, or replace it with theirs. */
+const CAN_ARM: ReadonlySet<string> = new Set(Object.values(ARMED_KEY))
 
 /** Keep the fire on for the pick, or let it cool; on a cold or empty cache the pings start with the next send. */
 async function pressKeep($: EngineInterface): Promise<void> {
@@ -1971,9 +2022,14 @@ async function pressKeep($: EngineInterface): Promise<void> {
 async function pressTopUp($: EngineInterface): Promise<void> {
   const now = await $.clock.now()
   const v = await liveButton($, 'hotpot-topup', now)
-  if (v === null) return
+  if (v === null) {
+    await letGoArm($, 'hotpot-topup')
+    return
+  }
   const isReheat = v.feast.phase === 'cold'
-  if (isReheat && !(await secondPress($, 'reheat', now))) return
+  if (isReheat) {
+    if (!(await secondPress($, 'reheat', now))) return
+  } else await letGoArm($, 'hotpot-topup')
   const r = await sendFork($, isReheat ? 'reheat' : 'topup')
   if (!r.sent) return
   const c = await read($, cache)
@@ -2024,7 +2080,10 @@ async function pressTopUp($: EngineInterface): Promise<void> {
  */
 async function pressZosui($: EngineInterface): Promise<void> {
   const now = await $.clock.now()
-  if ((await liveButton($, 'hotpot-zosui', now)) === null) return
+  if ((await liveButton($, 'hotpot-zosui', now)) === null) {
+    await letGoArm($, 'hotpot-zosui')
+    return
+  }
   if (!(await secondPress($, 'zosui', now))) return
   isCompacting = true
   await setMood($, 'melting', 'compacting the set…').catch(() => undefined)
@@ -2047,9 +2106,12 @@ async function pressZosui($: EngineInterface): Promise<void> {
 }
 
 /** Clear the table: /clear put in the box for the person to send; over a draft, a second press first. */
-async function pressClear($: EngineInterface): Promise<void> {
+async function pressClear($: EngineInterface, isTerminal: boolean): Promise<void> {
   const now = await $.clock.now()
-  if ((await liveButton($, 'hotpot-clear', now)) === null) return
+  if ((await liveButton($, 'hotpot-clear', now)) === null) {
+    await letGoArm($, 'hotpot-clear')
+    return
+  }
   let isDraft = true
   if (features.draft) {
     try {
@@ -2060,11 +2122,28 @@ async function pressClear($: EngineInterface): Promise<void> {
     }
   }
   if (isDraft && !(await secondPress($, 'clear', now))) return
-  await update($, hotpot, h => ({ ...h, armed: null }))
+  // arming nothing, it lets the arm up go (its own, over a draft since emptied, too)
+  await update($, hotpot, h => ({ ...h, ...letGo(h, now) }))
   const filled = await $.prompt.fill({ text: '/clear', mode: 'replace' }).catch(() => null)
   // No box to fill on this host (it draws its own composer): Clear the table is dim from now on.
   if (isNoBox(filled)) hostNoBox = true
-  await noteHotpot($, filled !== null && filled.isFilled ? '/clear is in the box: Esc, then Enter' : hostNoBox ? 'this app keeps its own prompt box: type /clear' : 'the box could not take /clear: type it')
+  const kept = (await read($, cache)).keepWarmUntil > now ? ' (keepwarm stays on)' : ''
+  // (in a terminal the press left the keys with the pane, so Esc hands them back first)
+  const enter = isTerminal ? 'Esc, then Enter' : 'press Enter'
+  await noteHotpot($, filled !== null && filled.isFilled ? `/clear is in the box: ${enter}, and the next send writes a fresh pot${kept}` : hostNoBox ? 'this app keeps its own prompt box: type /clear' : 'the box could not take /clear: type it')
+}
+
+/** Start fresh, the Cache Tax card's and the pane's during a hold: /clear in the box in place of the held prompt, and the card and the board say Enter now starts fresh. */
+async function pressStartFresh($: EngineInterface, isTerminal: boolean): Promise<void> {
+  if (hostNoBox) return
+  const c = await read($, cache)
+  const filled = await $.prompt.fill({ text: '/clear', mode: 'replace' }).catch(() => null)
+  if (isNoBox(filled)) hostNoBox = true
+  // kept with the hold in $.state (a reload keeps both): the card and the board say what Enter does now
+  if (filled !== null && filled.isFilled) await update($, hotpot, h => ({ ...h, freshAt: c.heldAt }))
+  // in the board's words for the surface pressed on (a terminal's press left the keys with the band or the pane)
+  const fresh = isTerminal ? '/clear is in the box: Esc, then Enter starts fresh' : '/clear is in the box: Enter starts fresh'
+  await noteHotpot($, filled !== null && filled.isFilled ? fresh : hostNoBox ? 'this app keeps its own prompt box: type /clear' : 'the box could not take /clear: type it')
 }
 
 // ---- The panel ---------------------------------------------------------------
@@ -3210,7 +3289,9 @@ function keepPriceOf(c: KessokuCache, l: KessokuLedger, ms: number): number {
 
 /** The Cache Tax card's and the Hotpot's `Keep it warm after`: one label, one press, one length. */
 function keepAfterLabel(c: KessokuCache, l: KessokuLedger, h: KessokuHotpot, now: number): string {
-  return c.keepWarmUntil > now ? 'Keep warm: on' : `Keep it warm after (${lengthText(pickMs(h))}) ≈${fmtUsd(keepPriceOf(c, l, pickMs(h)))}`
+  if (c.keepWarmUntil > now) return 'Keep warm: on'
+  // unpriced as the pane is: no context size yet, or caching off
+  return `Keep it warm after (${lengthText(pickMs(h))})${isPriced({ cache: c, ledger: l }) ? ` ≈${fmtUsd(keepPriceOf(c, l, pickMs(h)))}` : ''}`
 }
 
 /** Keepwarm armed for a length from the clock read at the press (Nijika ties her headband on), or switched off; armed past its ping's time, it pings now. */
@@ -3237,9 +3318,10 @@ function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: Kess
   const { Box, Text, Button } = $.ui.resolve(e)
   const held = heldFigures(c, hp, now)
   const back = promptIsBack(c, hp)
-  // cold since it lapsed (the warmth's age less the TTL), as the strip and the chalkboard's foot count it
+  const fresh = hp.freshAt === c.heldAt && c.heldAt > 0
+  // cold since it lapsed (the warmth's age less the TTL), in the whole minutes the strip and the board count
   const coldMs = Math.max(0, held.ageMs - ttlMs())
-  const age = held.ageMs > 0 ? fmtDuration(coldMs) : '?'
+  const age = held.ageMs > 0 ? minutesText(coldMs) : '?'
   // the card stands for the hold's 15 minutes and counts on: the count's next minute (a preview's runs on its sample's,
   // which the warmth's need not share) and the hold's end redraw the band, where no pane's tail may come
   scheduleTail($, warmthDue(c, now, ttlMs()), now)
@@ -3263,13 +3345,13 @@ function drawCacheTax($: EngineInterface, e: RenderInput<'AbovePrompt'>, c: Kess
           <Text bold color="error">{fmtUsd(c.heldUsd)}</Text>
           <Text dimColor>
             {` (a warm turn: ≈${fmtUsd(c.warmUsd)}). `}
-            {back ? 'Your prompt is back in the box: press Enter to pay and send.' : 'Your prompt could not go back in the box: your next send pays and sends.'}
+            {fresh ? (e.surface === 'terminal' ? '/clear is in the box: Esc, then Enter starts fresh.' : '/clear is in the box: press Enter to start fresh.') : back ? 'Your prompt is back in the box: press Enter to pay and send.' : 'Your prompt could not go back in the box: your next send pays and sends.'}
             {hostNoBox ? ' Type /clear to start fresh.' : ''}
           </Text>
         </Text>
         <Box flexDirection="row" flexWrap="wrap" columnGap={2} marginTop={1}>
           <Button key="tax-keepwarm" label={keepAfterLabel(c, l, hp, now)} hotkey="w" plain onPress={() => void setKeepwarm($, pickMs(hp))} />
-          <Button key="tax-clear" label="Start fresh (/clear)" hotkey="f" plain dimColor={hostNoBox} onPress={() => (hostNoBox ? undefined : void $.prompt.fill({ text: '/clear', mode: 'replace' }))} />
+          <Button key="tax-clear" label="Start fresh (/clear)" hotkey="f" plain dimColor={hostNoBox} onPress={() => void pressStartFresh($, e.surface === 'terminal')} />
           <Button key="tax-dismiss" label="Dismiss" hotkey="d" plain dimColor onPress={() => void dismissHold($)} />
         </Box>
       </Box>
@@ -3428,9 +3510,11 @@ function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Dr
       </Box>
     )
   } else if (opts.characterArt === 'sprites' && isTerminal) {
-    // Half blocks (70 x 17 cells) with 74 columns and 24 rows to spare; quadrants (35 x 9) from 36 columns; else text.
+    // Half blocks (70 x 17 cells) with 74 columns and the rows for them over what the board and the buttons take (and
+    // the bill, open); quadrants (35 x 9) from 36 columns; else text.
     const rows = 'maxRows' in e.props ? e.props.maxRows : e.props.scroll.bodyRows
-    const mode: CellMode | null = e.props.bodyColumns >= 74 && rows >= 24 ? 'half' : e.props.bodyColumns >= 36 ? 'quad' : null
+    const fitsHalf = e.props.bodyColumns >= 74 && rows >= CELLS_H / 2 + terminalRowsBelow(v, e.props.bodyColumns)
+    const mode: CellMode | null = fitsHalf ? 'half' : e.props.bodyColumns >= 36 ? 'quad' : null
     if (mode !== null) {
       const cells = hotpotCells(v)
       feast = drawSprite($, e, { key: 'hotpot-scene', parts: cells.parts, w: cells.w, h: cells.h, mode, scale: 1, alt: hotpotAlt(v), under: cells.under }, now)
@@ -3457,17 +3541,21 @@ function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Dr
     )
   }
   const board = boardOf(v)
-  const presses: Readonly<Record<string, () => void>> = {
-    'hotpot-keep': () => void pressKeep($),
-    'hotpot-topup': () => void pressTopUp($),
-    'hotpot-zosui': () => void pressZosui($),
-    'hotpot-clear': () => void pressClear($),
-    'hotpot-bill': () => void update($, hotpot, h => ({ ...h, isBillOpen: !h.isBillOpen })),
-    'hotpot-close': () => void closeHotpot($),
-    'hotpot-tax-keep': () => void setKeepwarm($, v.pick),
-    'hotpot-tax-clear': () => void $.prompt.fill({ text: '/clear', mode: 'replace' }),
-    'hotpot-tax-dismiss': () => void dismissHold($),
+  const presses: Readonly<Record<string, () => Promise<unknown>>> = {
+    'hotpot-keep': () => pressKeep($),
+    'hotpot-topup': () => pressTopUp($),
+    'hotpot-zosui': () => pressZosui($),
+    'hotpot-clear': () => pressClear($, isTerminal),
+    'hotpot-bill': () => update($, hotpot, h => ({ ...h, isBillOpen: !h.isBillOpen })),
+    'hotpot-close': () => closeHotpot($),
+    'hotpot-tax-keep': () => setKeepwarm($, v.pick),
+    'hotpot-tax-clear': () => pressStartFresh($, isTerminal),
+    'hotpot-tax-dismiss': () => dismissHold($),
   }
+  // a press that cannot arm lets another button's arm go first (`letGoArm`); Top up, Zosui and Clear decide in their
+  // own press, so an arm of theirs replaces the one up (the board beneath keeps what it showed) and one that arms
+  // nothing lets it go
+  const pressOf = (key: string, run: (() => Promise<unknown>) | undefined) => () => void (run !== undefined && CAN_ARM.has(key) ? run() : letGoArm($, key).then(run))
   const bill = v.hotpot.isBillOpen ? billRows(v) : null
   return (
     <Box flexDirection="column" backgroundColor={isTerminal ? bg() : SCENE_COLORS.wall}>
@@ -3479,19 +3567,44 @@ function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Dr
           </Text>
           <Text color={WOOD.tail}>{`  ${board.tail}`}</Text>
         </Text>
-        <Text color={WOOD.line} size="footnote" tabular wrap="wrap">
-          {board.line}
-        </Text>
+        {isTerminal ? (
+          // held to its worst case's rows (the keys hint in, a passing dim reason's room), so neither the focus nor a
+          // passing turn, fork or compaction moves the buttons, under an arm's second press least of all
+          <Box key="hotpot-line" flexDirection="column" minHeight={boardLineRows(v, e.props.bodyColumns - 2)}>
+            <Text color={WOOD.line} size="footnote" tabular wrap="wrap">
+              {board.line}
+            </Text>
+          </Box>
+        ) : (
+          <Text color={WOOD.line} size="footnote" tabular wrap="wrap">
+            {board.line}
+          </Text>
+        )}
+        {board.armed === '' ? null : (
+          // What the armed button's second press does, over the board on its paint: out of the flow, so nothing moves
+          // under the second press (the board beneath keeps its rows).
+          <Box key="hotpot-armed" position="absolute" top={0} bottom={0} left={0} right={0} flexDirection="column" paddingX={1} backgroundColor={WOOD.board} overflow="hidden">
+            <Text wrap="wrap">
+              <Text color={WOOD.word} weight="semibold" size="heading">
+                {board.word}
+              </Text>
+              <Text color={WOOD.tail}>{`  ${board.armed}`}</Text>
+            </Text>
+          </Box>
+        )}
       </Box>
       <Box key="hotpot-buttons" flexDirection="row" flexWrap="wrap" columnGap={2} paddingX={1}>
         {hotpotButtons(v).map(b => {
           if (b.pick !== undefined) {
             const ms = b.pick
-            return <Button key={b.key} label={b.label} variant={b.isOn === true ? 'primary' : undefined} onPress={() => void update($, hotpot, h => ({ ...h, pick: ms }))} />
+            return <Button key={b.key} label={b.label} variant={b.isOn === true ? 'primary' : undefined} onPress={pressOf(b.key, () => update($, hotpot, h => ({ ...h, pick: ms })))} />
           }
-          // A button that cannot act now is dim, and its press spends and arms nothing (the board says why).
-          if (b.reason !== '') return <Button key={b.key} label={b.label} hotkey={b.hotkey} dimColor onPress={() => undefined} />
-          return <Button key={b.key} label={b.label} hotkey={b.hotkey} onPress={presses[b.key] ?? (() => undefined)} />
+          // A button that cannot act now is dim, and its press spends and arms nothing (the board says why), though it lets
+          // an arm go as any press does. Plain, so a terminal draws its key before its label (`w: Keep the fire on`), as
+          // the board's `ctrl+x tab for its keys` promises; plain draws the same whatever its variant, so an armed one off
+          // the terminal looks as it rests, and the board's overlay says it is armed.
+          if (b.reason !== '') return <Button key={b.key} label={b.label} hotkey={b.hotkey} plain dimColor onPress={pressOf(b.key, undefined)} />
+          return <Button key={b.key} label={b.label} hotkey={b.hotkey} plain onPress={pressOf(b.key, presses[b.key])} />
         })}
       </Box>
       {bill === null ? null : (
@@ -4079,13 +4192,13 @@ export const register: Register = (on, options) => {
     const c = await read($, cache)
     const l = await read($, ledger)
     const now = await $.clock.now()
-    const head = `keepwarm on for ${fmtDuration(ms)}`
+    const head = `keepwarm on for ${keepLengthText(ms)}`
     // The pings run on the minute timer, which only a session with a screen keeps.
     if (!canDraw()) return { text: `${head}, but nothing will ping: keepwarm's minute timer runs only in a session with a screen.` }
     if (c.lastWarmAt <= 0) return { text: `${head}: nothing cached yet: the next send warms it, and the pings start then.` }
     if (isCold(c, l, now)) return { text: `${head}: the cache is cold: the next send warms it, and the pings start then.` }
     const P = l.prompt > 0 ? l.prompt : c.contextTokens
-    return { text: `${head}: a cheap ping (≈${fmtUsd(topUpUsd(P, c.model))} at ${fmtTokens(P)} tokens) lands shortly before the ${fmtDuration(ttlMs())} cache would lapse, while the session is idle.` }
+    return { text: `${head}: a cheap ping (≈${fmtUsd(topUpUsd(P, c.model))} at ${fmtTokens(P)} tokens) lands shortly before the cache would lapse (${ttlLabel()}), while the session is idle.` }
   })
   on('command.run', { command: 'cache-tax' }, async $ => {
     const c = await read($, cache)
@@ -4098,10 +4211,10 @@ export const register: Register = (on, options) => {
     const rate = hitRate(l)
     const lines = [
       `${MEMBERS.bocchi.faces[isCold(c, l, now) ? 'panic' : 'anxious']} Cache Tax`,
-      `state      ${warmth(c, l, now)} (TTL ${fmtDuration(ttl)})`,
+      `state      ${warmth(c, l, now)} (${ttlLabel()})`,
       `context    ${fmtTokens(c.contextTokens)} tokens on ${c.model || 'the session model'}`,
       `cold send  ≈ ${fmtUsd(write)} to re-write the cache${isEnginePrice(c, l) ? " (the engine's own estimate)" : ''} · warm send ≈ ${fmtUsd(warm)}`,
-      `keepwarm   ${c.keepWarmUntil > now ? `on, ${fmtDuration(c.keepWarmUntil - now)} left` : 'off (/keepwarm to arm it)'} · ${l.pings.count} pings so far (≈${fmtUsd(pingsUsd(l, ttl))}${l.pings.misses > 0 ? `, ${l.pings.misses} found it cold` : ''})${c.lastPingNote ? ` · ${c.lastPingNote}` : ''}`,
+      `keepwarm   ${c.keepWarmUntil > now ? `on, ${minutesText(c.keepWarmUntil - now)} left` : 'off (/keepwarm to arm it)'} · ${l.pings.count} pings so far (≈${fmtUsd(pingsUsd(l, ttl))}${l.pings.misses > 0 ? `, ${l.pings.misses} found it cold` : ''})${c.lastPingNote ? ` · ${c.lastPingNote}` : ''}`,
       `saved      ${saved >= 0 ? `≈${fmtUsd(saved)}` : `cost ≈${fmtUsd(-saved)} more`} this conversation, against sending it all uncached${rate === null ? '' : ` · hit rate ${Math.round(rate * 100)}%`}`,
       `tax paid   ≈${fmtUsd(taxPaidUsd(l, ttl))} · ${l.tax.count} cold re-write${l.tax.count === 1 ? '' : 's'}${l.tax.silent > 0 ? `, ${l.tax.silent} silent` : ''}${l.tax.midTurn > 0 ? `, ${l.tax.midTurn} mid-turn` : ''}`,
     ]
