@@ -609,8 +609,8 @@ prices (`nothing on the table yet · prices after the first reply`), nor with ca
   `Let it cool (keepwarm off)`.
 - `Top up now ≈$0.03` (`t`): one keepwarm ping now. While cold it is `Re-heat now ≈$1.34`, a re-write paid on
   purpose so your next prompt starts warm: the first press arms it (in a terminal the button says `Press again`, in
-  the desktop app it stands out as the button to press; over the board, what the second press does: `press again
-  within 10 s to re-write 168k tokens ≈$1.34`), a second within 10 s sends it.
+  the desktop app it keeps its label and look; over the board, what the second press does: `press again within 10 s
+  to re-write 168k tokens ≈$1.34`), a second within 10 s sends it.
 - `Zosui (compact)` (`z`): `/compact`'s own call, on a second press (over the board,
   `press again within 10 s to compact 168k tokens in one summarizing request`); the next send writes the smaller pot.
   In the desktop app, where a plugin cannot compact, it is dim: type `/compact`.
@@ -620,8 +620,9 @@ prices (`nothing on the table yet · prices after the first reply`), nor with ca
   fresh`, `Dismiss`), then the bill and close.
 
 In a terminal each button shows its key before its label (`w: Keep the fire on · 2h ≈$0.07`), the lengths in
-brackets. Nothing moves under your second press: an armed button keeps its width (in the desktop app, its label), and
-its words are drawn over the board, which keeps its lines beneath. Any other press lets the arm go.
+brackets. Nothing moves under your second press: an armed button keeps its width (in the desktop app, its label), its
+words are drawn over the board, which keeps its lines beneath, and in a terminal the board's second line keeps its
+rows whether the pane has the keys or not. Any other press, a dim button's too, lets the arm go.
 
 A button that cannot act now is dim, and the board says why: `this host keeps no snapshot to fork`, `prompt caching
 is off`, `a turn is running`, `a top-up is on its way`, `nothing to top up until the next turn ends`, and so on.
