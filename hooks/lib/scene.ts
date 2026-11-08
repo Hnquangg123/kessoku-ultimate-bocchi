@@ -25,6 +25,10 @@ import type { ActView, MemberView, PanelView } from './stage'
 import { animOf, fitSprites, framePixels, SVG_LIMIT } from './sprite'
 import type { SpritePart } from './sprite'
 import { fmtUsd } from './band'
+import { pix, pxAt, put, block, oval, pline, rim, layOn, pixPaths, boxPaths, placedArt, spliceAfter, DIM_GHOST } from './pixart'
+import type { Pix, Px4 } from './pixart'
+import { f, esc, svgDoc, capped, SANS, SCRIPT, LAMP_FACE, TEXT_CSS, textWidth, wrapText, wrapLines, clipEnd, T, runs, runsWidth, fixedT, sansLine, sparkleD, sparkle } from './svgtext'
+import type { Face, Seg } from './svgtext'
 
 /** One Svg element's drawing: its source, the words a reader gets for it, and its height in layout units. */
 export type SceneSvg = { svg: string; alt: string; height: number }
@@ -180,215 +184,6 @@ export function boardPlan(view: PanelView, maxSongs = 8): BoardPlan {
   return { songs: ordered.slice(0, cap), folded: Math.max(0, ordered.length - cap), expanded: false }
 }
 
-// ---- Type: advance widths per 100 px of font size, measured in Chrome on Windows -------------
-
-type Face = 'ink' | 'ui' | 'uib' | 'script' | 'bahn'
-
-const GLYPHS = "0123456789 !\"#$%&'()*+,-./:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~·…—–’“”♪✓✗×≈"
-const ADV: Record<Face, readonly number[]> = {
-  ink: [56, 44, 69, 70, 70, 55, 58, 59, 69, 62, 29, 20, 34, 61, 55, 99, 64, 21, 41, 41, 36, 47, 21, 34, 21, 36, 21, 21, 48, 49, 48, 50, 100, 62, 69, 55, 65, 59, 59, 73, 68, 66, 58, 58, 58, 81, 69, 72, 56, 71, 63, 55, 71, 65, 55, 71, 39, 49, 60, 41, 36, 41, 48, 47, 46, 53, 51, 37, 48, 46, 42, 54, 56, 22, 22, 48, 20, 75, 46, 43, 52, 48, 41, 45, 49, 50, 54, 71, 39, 43, 53, 41, 36, 41, 57, 21, 64, 100, 50, 23, 39, 39, 50, 75, 82, 47, 55],
-  ui: [54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 27, 28, 39, 59, 54, 82, 80, 23, 30, 30, 42, 68, 22, 40, 22, 39, 22, 22, 68, 68, 68, 45, 96, 65, 57, 62, 70, 51, 49, 69, 71, 27, 36, 58, 47, 90, 75, 75, 56, 75, 60, 53, 52, 69, 62, 93, 59, 55, 57, 30, 38, 30, 68, 42, 27, 51, 59, 46, 59, 52, 31, 59, 57, 24, 24, 50, 24, 86, 57, 59, 59, 59, 35, 42, 34, 57, 48, 72, 46, 48, 45, 30, 24, 30, 68, 22, 73, 100, 50, 23, 38, 38, 50, 75, 82, 68, 69],
-  uib: [56, 40, 56, 56, 58, 56, 56, 54, 56, 56, 27, 30, 44, 59, 56, 84, 72, 26, 33, 33, 43, 69, 24, 40, 24, 41, 24, 24, 69, 69, 69, 44, 95, 67, 60, 62, 72, 52, 50, 70, 74, 29, 40, 61, 49, 92, 77, 76, 58, 76, 62, 54, 55, 70, 64, 97, 62, 58, 59, 33, 40, 33, 69, 42, 29, 52, 60, 47, 60, 53, 34, 60, 58, 26, 26, 52, 26, 89, 58, 60, 60, 60, 37, 43, 36, 58, 51, 76, 50, 51, 46, 33, 28, 33, 69, 24, 81, 100, 50, 26, 43, 43, 50, 75, 82, 69, 70],
-  script: [73, 73, 73, 73, 73, 73, 73, 73, 73, 73, 40, 32, 40, 80, 55, 73, 92, 23, 40, 36, 51, 57, 34, 64, 25, 58, 30, 33, 54, 63, 57, 52, 82, 84, 75, 74, 87, 75, 58, 80, 82, 31, 61, 78, 68, 100, 84, 80, 78, 83, 88, 61, 70, 77, 73, 101, 73, 68, 85, 41, 55, 42, 58, 42, 31, 61, 54, 55, 71, 52, 39, 53, 65, 38, 30, 65, 40, 111, 73, 52, 62, 56, 54, 39, 45, 70, 60, 83, 71, 61, 69, 42, 32, 40, 78, 26, 81, 114, 81, 24, 58, 57, 66, 75, 82, 57, 73],
-  bahn: [55, 33, 52, 53, 57, 54, 51, 50, 56, 51, 27, 27, 38, 62, 58, 69, 65, 18, 34, 34, 43, 53, 23, 48, 23, 38, 23, 23, 42, 46, 43, 43, 89, 65, 65, 62, 66, 60, 56, 65, 68, 28, 51, 64, 57, 78, 70, 65, 62, 66, 65, 62, 48, 66, 59, 85, 57, 50, 54, 29, 38, 29, 50, 44, 29, 53, 54, 50, 54, 54, 32, 54, 56, 25, 27, 53, 29, 86, 56, 54, 54, 54, 43, 52, 33, 56, 50, 77, 52, 48, 49, 36, 28, 36, 51, 21, 58, 86, 56, 18, 32, 32, 50, 75, 82, 50, 55],
-}
-const GLYPH_AT = new Map<string, number>([...GLYPHS].map((c, i) => [c, i]))
-
-/** A full-width character (CJK, kana, hangul, full-width forms, emoji): one em wide. */
-function isWide(cp: number): boolean {
-  return (cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) || (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff) || (cp >= 0xfe30 && cp <= 0xfe4f) || (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0xffe0 && cp <= 0xffe6) || (cp >= 0x1f300 && cp <= 0x1faff) || (cp >= 0x20000 && cp <= 0x3fffd)
-}
-
-/** One character's advance in a face, per 100 px; the sans faces' digits tabular. */
-function advance(ch: string, face: Face): number {
-  const i = GLYPH_AT.get(ch)
-  if (i !== undefined) {
-    if (i < 10 && face === 'ui') return 54
-    if (i < 10 && face === 'uib') return 56
-    return ADV[face][i] ?? 60
-  }
-  const cp = ch.codePointAt(0) ?? 0
-  return isWide(cp) ? 100 : face === 'ink' ? 58 : 62
-}
-
-/** A string's width in CSS pixels in a face (`ink` the chalk hand, `ui` the sans, `uib` its semibold, `script` the neon, `bahn` the lamp). */
-export function textWidth(s: string, face: Face, size: number): number {
-  let w = 0
-  for (const ch of s) w += advance(ch, face)
-  return (w / 100) * size
-}
-
-const KATAKANA = /[゠-ヿㇰ-ㇿｦ-ﾟ]/
-/** Where CJK text breaks best: after its own punctuation. */
-const CJK_STOP = /[、。，．！？」』）〕】]/
-/** Where a path or a long name breaks best: after a slash, then after a dash, a dot or an underscore. */
-const PATH_STOP = /[/\\]/
-const NAME_STOP = /[-._]/
-
-/**
- * A word too wide for a line, broken by width: never inside a run of
- * katakana; in CJK text after its punctuation (、。) where that leaves the
- * line at least half full; in a path after a slash (else a dash, a dot, an
- * underscore) where that leaves it a third full, so a file's name stays whole
- * when it can. The first piece may have a narrower room.
- */
-function breakWord(word: string, face: Face, size: number, max: number, firstMax = max): string[] {
-  const units: string[] = []
-  for (const ch of word) {
-    const last = units[units.length - 1]
-    if (KATAKANA.test(ch) && last !== undefined && KATAKANA.test(last.slice(-1))) units[units.length - 1] = last + ch
-    else units.push(ch)
-  }
-  const parts: string[] = []
-  const room = () => (parts.length === 0 ? firstMax : max)
-  let cur = ''
-  let w = 0
-  let stop = -1
-  let stopW = 0
-  // how full a line must be for a break at its stop: half for CJK punctuation, a third for a path's
-  let stopFill = 0.5
-  let slash = false
-  const flush = () => {
-    if (cur !== '') parts.push(cur)
-    cur = ''
-    w = 0
-    stop = -1
-    slash = false
-  }
-  for (const u of units) {
-    const uw = textWidth(u, face, size)
-    if (cur !== '' && w + uw > room()) {
-      if (stop > 0 && stop < cur.length && stopW >= room() * stopFill) {
-        const rest = cur.slice(stop)
-        cur = cur.slice(0, stop)
-        flush()
-        cur = rest
-        w = textWidth(rest, face, size)
-        if (w + uw > room()) flush()
-      } else flush()
-    }
-    if (uw > room()) {
-      // a run too long for any line (a long katakana word, a path): by character after all
-      for (const ch of u) {
-        const cw = (advance(ch, face) / 100) * size
-        if (cur !== '' && w + cw > room()) flush()
-        cur += ch
-        w += cw
-      }
-      continue
-    }
-    cur += u
-    w += uw
-    if (CJK_STOP.test(u)) {
-      stop = cur.length
-      stopW = w
-      stopFill = 0.5
-    } else if (PATH_STOP.test(u) || (NAME_STOP.test(u) && !slash)) {
-      // a slash outranks a dash before it; after a slash, a dash in the file's name breaks only as a last resort
-      if (PATH_STOP.test(u)) slash = true
-      stop = cur.length
-      stopW = w
-      stopFill = 0.34
-    }
-  }
-  flush()
-  return parts
-}
-
-/**
- * Greedy wrap by measured width (the first line may be narrower), at most
- * `maxLines`; a cut text ends its last line in an ellipsis.
- */
-function wrapText(text: string, face: Face, size: number, max: number, firstMax = max, maxLines = 99): string[] {
-  return wrapLines(text, face, size, max, firstMax, maxLines).lines
-}
-
-/** `wrapText`, and whether the text was cut. */
-function wrapLines(text: string, face: Face, size: number, max: number, firstMax = max, maxLines = 99): { lines: string[]; cut: boolean } {
-  const out: string[] = []
-  let line = ''
-  const room = () => (out.length === 0 ? firstMax : max)
-  const words = text.split(/\s+/).filter(w => w !== '')
-  let cut = false
-  for (const word of words) {
-    if (out.length >= maxLines) {
-      cut = true
-      break
-    }
-    const next = line === '' ? word : `${line} ${word}`
-    if (textWidth(next, face, size) <= room()) {
-      line = next
-      continue
-    }
-    // a path too long for any line starts on this one (`Edit studio/out/` then the rest), broken after a slash
-    const left = room() - textWidth(`${line} `, face, size)
-    if (line !== '' && /[/\\]/.test(word) && textWidth(word, face, size) > max && left >= room() * 0.3) {
-      const pieces = breakWord(word, face, size, max, left)
-      const head = pieces[0] ?? ''
-      if (pieces.length > 1 && /[/\\]$/.test(head)) {
-        out.push(`${line} ${head}`)
-        line = ''
-        for (let k = 1; k < pieces.length - 1; k += 1) {
-          if (out.length >= maxLines) break
-          out.push(pieces[k] ?? '')
-        }
-        if (out.length >= maxLines) {
-          cut = true
-          break
-        }
-        line = pieces[pieces.length - 1] ?? ''
-        continue
-      }
-    }
-    if (line !== '') {
-      out.push(line)
-      line = ''
-      if (out.length >= maxLines) {
-        cut = true
-        break
-      }
-    }
-    if (textWidth(word, face, size) <= room()) {
-      line = word
-      continue
-    }
-    const pieces = breakWord(word, face, size, max, room())
-    for (let k = 0; k < pieces.length - 1; k += 1) {
-      out.push(pieces[k] ?? '')
-      if (out.length >= maxLines) {
-        cut = true
-        break
-      }
-    }
-    if (cut) break
-    line = pieces[pieces.length - 1] ?? ''
-  }
-  if (!cut && line !== '') {
-    if (out.length >= maxLines) cut = true
-    else out.push(line)
-  }
-  if (cut && out.length > 0) {
-    const last = out.length - 1
-    out[last] = clipEnd(`${out[last] ?? ''}…`, face, size, last === 0 ? firstMax : max)
-  }
-  return { lines: out, cut }
-}
-
-/** Cut to a width with an ellipsis. */
-function clipEnd(text: string, face: Face, size: number, max: number): string {
-  if (textWidth(text, face, size) <= max) return text
-  const ell = textWidth('…', face, size)
-  let out = ''
-  let w = 0
-  for (const ch of text) {
-    const cw = (advance(ch, face) / 100) * size
-    if (w + cw + ell > max) break
-    out += ch
-    w += cw
-  }
-  return `${out.trimEnd()}…`
-}
-
 /**
  * A tool call's words fitted to a width, keeping what matters: the verb and
  * the file's name (`Edit …/lib/register.tsx`, `Edit …/register.tsx`), the
@@ -444,16 +239,6 @@ function balanceItems(items: string[], sep: string, face: Face, size: number, ma
 
 // ---- Markup helpers ---------------------------------------------------------------------------
 
-const f = (n: number) => String(Math.round(n * 10) / 10)
-/** Text as XML: escaped, and free of what XML cannot hold (control characters, lone surrogates). */
-const esc = (s: string) =>
-  s
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f￾￿]/g, '')
-    .replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
 /** A text as one line: whitespace runs as one space. */
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim()
 
@@ -489,33 +274,7 @@ function wave(x: number, y: number, w: number, amp = 1.7, half = 3): string {
   return `M${f(x)} ${f(y)}q${f(half / 2)} ${f(-amp * 1.4)} ${f(half)} 0${`t${f(half)} 0`.repeat(n - 1)}`
 }
 
-/** A four-point sparkle. */
-function sparkleD(x: number, y: number, r: number): string {
-  const k = r * 0.2
-  return `M${f(x)} ${f(y - r)}Q${f(x + k)} ${f(y - k)} ${f(x + r)} ${f(y)}Q${f(x + k)} ${f(y + k)} ${f(x)} ${f(y + r)}Q${f(x - k)} ${f(y + k)} ${f(x - r)} ${f(y)}Q${f(x - k)} ${f(y - k)} ${f(x)} ${f(y - r)}z`
-}
-function sparkle(x: number, y: number, r: number, fill: string, cls = ''): string {
-  return `<path${cls === '' ? '' : ` class="${cls}"`} d="${sparkleD(x, y, r)}" fill="${fill}"/>`
-}
-
-/** One standalone SVG document: the layout's width in its viewBox, four times that as its size, so a surface scales it down. */
-function svgDoc(W: number, H: number, body: string, css = ''): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${f(W)} ${f(H)}" width="${f(W * 4)}" height="${f(H * 4)}">${css === '' ? '' : `<style>${css}</style>`}${body}</svg>`
-}
-
-/** A picture held to the element's limit: past it, the simpler drawing (which must fit). */
-function capped(svg: string, simpler: () => string): string {
-  return svg.length <= SVG_LIMIT ? svg : simpler()
-}
-
 // ---- The look --------------------------------------------------------------------------------
-
-const SANS = `'Segoe UI', system-ui, -apple-system, sans-serif`
-const CHALK_HAND = `'Ink Free', 'Segoe Print', 'Chalkboard SE', 'Comic Sans MS', cursive`
-const SCRIPT = `'Segoe Script', 'Snell Roundhand', 'Brush Script MT', cursive`
-const LAMP_FACE = `Bahnschrift, 'DIN Alternate', 'Arial Narrow', 'Segoe UI', sans-serif`
-/** The two voices: `.u` the tabular sans for numbers and meta, `.c` the chalk hand for titles. */
-const TEXT_CSS = `.u{font-family:${SANS};font-variant-numeric:tabular-nums}.c{font-family:${CHALK_HAND}}`
 
 /** Each member's colour as chalk reads it on the slate. */
 const CHALK: Record<Member, string> = { bocchi: '#ffc6de', nijika: '#ffe39a', ryo: '#bcd4ff', kita: '#ffb79e' }
@@ -532,37 +291,6 @@ const MINT = '#a9f0c6'
 const chalkOf = (m: Member) => CHALK[m] ?? WHITE
 const neonOf = (m: Member) => NEON[m] ?? '#f7a8c9'
 
-/** The text helper: a `<text>` in a voice (`u` sans, `c` chalk). */
-function T(x: number, y: number, s: string, size: number, fill: string, cls: 'u' | 'c', extra = ''): string {
-  return `<text class="${cls}" x="${f(x)}" y="${f(y)}" font-size="${f(size)}" fill="${fill}"${extra}>${esc(s)}</text>`
-}
-
-/** A run of a line: its words, its colour, bold, faded. */
-type Seg = { t: string; c: string; bold?: boolean; fixed?: boolean; faded?: boolean }
-
-/**
- * A line of runs flowing in one `<text>` (the face lays them out, so no run
- * can overlap the next), anchored at x. Given its `room`, a line close to it
- * is held to its measured width, so a wider fallback face (SF, Roboto,
- * Verdana) squeezes instead of running into its neighbour.
- */
-function runs(x: number, y: number, segs: readonly Seg[], size: number, anchor: 'start' | 'middle' | 'end' = 'start', extra = '', room = 0): string {
-  const spans = segs.map(s => `<tspan fill="${s.c}"${s.bold === true ? ' font-weight="600"' : ''}${s.faded === true ? ' fill-opacity=".42"' : ''}>${esc(s.t)}</tspan>`).join('')
-  const w = runsWidth(segs, size)
-  const guard = room > 0 && w > room * 0.86 ? ` textLength="${f(Math.min(w, room))}" lengthAdjust="spacingAndGlyphs"` : ''
-  return `<text class="u" x="${f(x)}" y="${f(y)}" font-size="${f(size)}" style="white-space:pre"${anchor === 'start' ? '' : ` text-anchor="${anchor}"`}${guard}${extra}>${spans}</text>`
-}
-
-/** How wide a line of runs is. */
-function runsWidth(segs: readonly Seg[], size: number): number {
-  return segs.reduce((w, s) => w + textWidth(s.t, s.bold === true ? 'uib' : 'ui', size), 0)
-}
-
-/** A sans text held to exactly its measured width: for the few words laid out against their neighbours (the strip's head). */
-function fixedT(x: number, y: number, s: string, size: number, fill: string, face: 'ui' | 'uib', extra = ''): string {
-  return T(x, y, s, size, fill, 'u', ` textLength="${f(textWidth(s, face, size))}" lengthAdjust="spacingAndGlyphs"${face === 'uib' ? ' font-weight="600"' : ''}${extra}`)
-}
-
 /** A context % as words, never `NaN%`. */
 const pctText = (p: number) => `${Number.isFinite(p) ? Math.max(0, Math.round(p)) : 0}%`
 
@@ -570,13 +298,6 @@ const pctText = (p: number) => `${Number.isFinite(p) ? Math.max(0, Math.round(p)
 function chalkLine(x: number, y: number, s: string, size: number, fill: string, extra = ''): string {
   const w = textWidth(s, 'ink', size)
   return T(x, y, s, size, fill, 'c', ` textLength="${f(w)}" lengthAdjust="spacingAndGlyphs"${extra}`)
-}
-
-/** A sans line close to its room held to its measured width (a wider fallback face squeezes to fit). */
-function sansLine(x: number, y: number, s: string, size: number, fill: string, room: number, extra = '', face: Face = 'ui'): string {
-  const w = textWidth(s, face, size)
-  const guard = w > room * 0.86 ? ` textLength="${f(Math.min(w, room))}" lengthAdjust="spacingAndGlyphs"` : ''
-  return T(x, y, s, size, fill, 'u', `${guard}${face === 'uib' ? ' font-weight="600"' : ''}${extra}`)
 }
 
 /** `claude-sonnet-5-5` as `sonnet 5.5`. */
@@ -762,167 +483,6 @@ type StageGeo = ReturnType<typeof stageGeo>
 
 // ---- The stage's furniture: pixel art in the sprites' own language ----------------------------------
 
-/**
- * A small picture drawn pixel by pixel (flat colours, a darker outline, a
- * highlight from the upper right, as the band is drawn), written as the
- * sprites are: a stroked path a colour, a run a row or a column of pixels.
- */
-type Pix = { w: number; h: number; px: (string | null)[] }
-
-const pix = (w: number, h: number): Pix => ({ w, h, px: new Array<string | null>(w * h).fill(null) })
-const pxAt = (p: Pix, x: number, y: number): string | null => (x >= 0 && y >= 0 && x < p.w && y < p.h ? (p.px[y * p.w + x] ?? null) : null)
-
-function put(p: Pix, x: number, y: number, c: string | null): void {
-  if (c !== null && x >= 0 && y >= 0 && x < p.w && y < p.h) p.px[y * p.w + x] = c
-}
-
-/** Every pixel of a rectangle (both corners in), coloured by where it is. */
-function block(p: Pix, x0: number, y0: number, x1: number, y1: number, c: (x: number, y: number) => string | null): void {
-  for (let y = y0; y <= y1; y += 1) for (let x = x0; x <= x1; x += 1) put(p, x, y, c(x, y))
-}
-
-/** A filled ellipse round (cx, cy) in pixel edges, each pixel coloured by where it falls in it (u, v from -1 to 1). */
-function oval(p: Pix, cx: number, cy: number, rx: number, ry: number, c: (u: number, v: number) => string | null): void {
-  for (let y = Math.floor(cy - ry); y <= Math.ceil(cy + ry); y += 1) {
-    for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x += 1) {
-      const u = (x + 0.5 - cx) / rx
-      const v = (y + 0.5 - cy) / ry
-      if (u * u + v * v <= 1) put(p, x, y, c(u, v))
-    }
-  }
-}
-
-/** A one-pixel line. */
-function pline(p: Pix, x0: number, y0: number, x1: number, y1: number, c: string): void {
-  const n = Math.max(1, Math.abs(x1 - x0), Math.abs(y1 - y0))
-  for (let k = 0; k <= n; k += 1) put(p, Math.round(x0 + ((x1 - x0) * k) / n), Math.round(y0 + ((y1 - y0) * k) / n), c)
-}
-
-/** The outline: every empty pixel beside a drawn one (above, below, left or right) in `c`. */
-function rim(p: Pix, c: string): void {
-  const edge: number[] = []
-  for (let y = 0; y < p.h; y += 1) {
-    for (let x = 0; x < p.w; x += 1) {
-      if (p.px[y * p.w + x] !== null) continue
-      if (pxAt(p, x - 1, y) !== null || pxAt(p, x + 1, y) !== null || pxAt(p, x, y - 1) !== null || pxAt(p, x, y + 1) !== null) edge.push(y * p.w + x)
-    }
-  }
-  for (const k of edge) p.px[k] = c
-}
-
-/** `top` laid over `p` (the same size). */
-function layOn(p: Pix, top: Pix): void {
-  top.px.forEach((c, k) => {
-    if (c !== null) p.px[k] = c
-  })
-}
-
-/** Two numbers of a relative move, as short as a path takes them. */
-const pairOf = (a: number, b: number) => `${a}${b < 0 ? '' : ' '}${b}`
-
-/**
- * The picture as the sprites are written: one stroked path a colour, its
- * pixels in runs along rows or along columns, whichever writes shorter. The
- * colours go most-drawn first, and a run of one may cross pixels of the
- * colours drawn after it (they paint over it), so the big areas take long
- * runs and the details sit on top.
- */
-function pixPaths(p: Pix): string {
-  const byColor = new Map<string, number[]>()
-  p.px.forEach((c, k) => {
-    if (c === null) return
-    const list = byColor.get(c) ?? []
-    list.push(k)
-    byColor.set(c, list)
-  })
-  const order = [...byColor.entries()].sort((x, y) => y[1].length - x[1].length || (x[0] < y[0] ? -1 : 1))
-  const rank = new Map<string, number>()
-  order.forEach(([c], r) => rank.set(c, r))
-  let out = ''
-  order.forEach(([c], r) => {
-    const mine = (k: number) => p.px[k] === c
-    const crosses = (k: number) => {
-      const q = p.px[k]
-      return q !== null && q !== undefined && (rank.get(q) ?? -1) > r
-    }
-    const runsAlong = (down: boolean) => {
-      const lines = down ? p.w : p.h
-      const along = down ? p.h : p.w
-      const idx = (line: number, at: number) => (down ? at * p.w + line : line * p.w + at)
-      let d = ''
-      let lastLine = 0
-      let lastAt = 0
-      let started = false
-      for (let line = 0; line < lines; line += 1) {
-        let at = 0
-        while (at < along) {
-          if (!mine(idx(line, at))) {
-            at += 1
-            continue
-          }
-          // the run goes on over her own pixels and over those drawn after her, and ends on her own last
-          let end = at + 1
-          for (let k = at + 1; k < along; k += 1) {
-            if (mine(idx(line, k))) end = k + 1
-            else if (!crosses(idx(line, k))) break
-          }
-          const n = end - at
-          if (down) d += started ? `m${pairOf(line - lastLine, at - lastAt)}v${n}` : `M${line}.5 ${at}v${n}`
-          else d += started ? `m${pairOf(at - lastAt, line - lastLine)}h${n}` : `M${at} ${line}.5h${n}`
-          started = true
-          lastLine = line
-          lastAt = end
-          at = end
-        }
-      }
-      return d
-    }
-    // or each run along a row or a column, whichever takes more of her pixels not drawn yet
-    const mixed = () => {
-      const done = new Set<number>()
-      const run = (x: number, y: number, down: boolean) => {
-        const along = down ? p.h - y : p.w - x
-        const at = (k: number) => (down ? (y + k) * p.w + x : y * p.w + x + k)
-        let end = 1
-        let fresh = 1
-        let seen = 1
-        for (let k = 1; k < along; k += 1) {
-          if (mine(at(k))) {
-            end = k + 1
-            if (!done.has(at(k))) seen += 1
-            fresh = seen
-          } else if (!crosses(at(k))) break
-        }
-        return { n: end, fresh, cells: Array.from({ length: end }, (_, k) => at(k)) }
-      }
-      const num = (n: number) => String(n).replace(/^(-?)0./, '$1.')
-      let d = ''
-      let penX = 0
-      let penY = 0
-      for (let k = 0; k < p.px.length; k += 1) {
-        if (!mine(k) || done.has(k)) continue
-        const x = k % p.w
-        const y = Math.floor(k / p.w)
-        const h = run(x, y, false)
-        const v = run(x, y, true)
-        const down = v.fresh > h.fresh
-        const r = down ? v : h
-        for (const cell of r.cells) done.add(cell)
-        const sx = down ? x + 0.5 : x
-        const sy = down ? y : y + 0.5
-        d += d === '' ? `M${num(sx)} ${num(sy)}` : `m${num(sx - penX)}${sy - penY < 0 ? '' : ' '}${num(sy - penY)}`
-        d += `${down ? 'v' : 'h'}${r.n}`
-        penX = down ? sx : sx + r.n
-        penY = down ? sy + r.n : sy
-      }
-      return d
-    }
-    const ways = [runsAlong(false), runsAlong(true), mixed()]
-    out += `<path stroke="${c}" d="${ways.reduce((a, b) => (b.length < a.length ? b : a))}"/>`
-  })
-  return out
-}
-
 /** The kit's colours: her bow's red sparkle for the shells, coated heads, chrome, brass, the band's yellow star. */
 const KIT = {
   o: '#2b1b24',
@@ -1105,29 +665,6 @@ function marksOnKit(id: string, dx: number, dy: number, z: number): boolean {
 /** The grilles' cloth and mesh, a pixel a cell in the amps' own pixels: what the amps' grilles are filled with. */
 const GRILLES = '<pattern id="ag" width="2" height="2" patternUnits="userSpaceOnUse"><path d="M0 0h2v2H0z" fill="#4a3c31"/><path d="M0 0h1v1H0zM1 1h1v1H1z" fill="#64533f"/></pattern><pattern id="cm" width="2" height="2" patternUnits="userSpaceOnUse"><path d="M0 0h2v2H0z" fill="#33373f"/><path d="M0 0h1v1H0z" fill="#525866"/></pattern>'
 
-/** A box of pixels: its colour (or a fill), its left, top, width and height. */
-type Px4 = readonly [string, number, number, number, number]
-
-/** Boxes of pixels as filled paths, in drawing order (the later over the earlier), the boxes of one colour in a row sharing a path. */
-function boxPaths(list: readonly Px4[]): string {
-  let out = ''
-  let color = ''
-  let d = ''
-  const flush = () => {
-    if (d !== '') out += `<path fill="${color}" d="${d}"/>`
-    d = ''
-  }
-  for (const [c, x, y, w, h] of list) {
-    if (c !== color) {
-      flush()
-      color = c
-    }
-    d += `M${x} ${y}h${w}v${h}h${-w}z`
-  }
-  flush()
-  return out
-}
-
 /** The amp behind Bocchi: a half stack, its head's gold panel and red jewel over a cab of salt-and-pepper grille cloth (GRILLES) with her pink plate. 30 x 39. */
 const AMP = boxPaths([
   ['#120d12', 0, 1, 30, 38],
@@ -1187,9 +724,6 @@ function micArt(): string {
   micMemo.push(art)
   return art
 }
-
-/** A picture placed on the stage: its top left at (x, y), drawn `z` pixels a pixel. */
-const placedArt = (x: number, y: number, z: number, body: string) => `<g transform="translate(${f(x)} ${f(y)}) scale(${z})">${body}</g>`
 
 type PitSlime = { state: ActView['slime']; encore: boolean; failed: boolean }
 
@@ -1455,41 +989,6 @@ export function stageDrawing(view: PanelView, layout: SceneLayout): StageDrawing
   return drawn
 }
 
-/**
- * The furniture spliced into the sprites' markup, each piece just after the
- * figure it stands before (the kit after Nijika, the mic after Kita), so a
- * figure in front of it stands over it and the figures behind stay behind:
- * `thens[k]` follows `parts[k]`, drawn or not (a part with no sprite, or left
- * out to fit, keeps its furniture). A drawn part with a wrap (`wraps[k]`, a
- * group's attributes: a clip, an id its copies use) is drawn inside that group.
- */
-function spliceAfter(markup: string, parts: readonly SpritePart[], thens: readonly string[], wraps: readonly string[] = []): string {
-  const starts: number[] = []
-  let from = 0
-  for (const p of parts) {
-    const z = p.zoom ?? 1
-    let at = markup.indexOf(`<g transform="translate(${p.x} ${p.y})${z === 1 ? '' : ` scale(${z})`}">`, from)
-    if (at >= 0) {
-      if (p.dim === true && markup.slice(Math.max(0, at - DIM_GHOST.length), at) === DIM_GHOST) at -= DIM_GHOST.length
-      from = at + 1
-    }
-    starts.push(at)
-  }
-  const end = markup.lastIndexOf('</g>')
-  let out = markup
-  for (let k = parts.length - 1; k >= 0; k -= 1) {
-    const start = starts[k] ?? -1
-    const wrap = start >= 0 ? (wraps[k] ?? '') : ''
-    const then = (wrap === '' ? '' : '</g>') + (thens[k] ?? '')
-    if (then !== '') {
-      const next = starts.slice(k + 1).find(s => s >= 0) ?? end
-      out = out.slice(0, next) + then + out.slice(next)
-    }
-    if (wrap !== '') out = `${out.slice(0, start)}<g ${wrap}>${out.slice(start)}`
-  }
-  return out
-}
-
 function drawStage(view: PanelView, layout: SceneLayout): StageDrawing {
   const g = geoOf(view, layout.width)
   const { W, z, lip, H, can, front, riser, wallFoot, edge, face, rx0, rx1 } = g
@@ -1743,8 +1242,7 @@ function drawStage(view: PanelView, layout: SceneLayout): StageDrawing {
   return { scene: { svg, alt, height: H }, parts: parts.filter(p => animOf(p.id) !== undefined).map(p => p.id), levels: fitted.levels, chrome }
 }
 
-/** The sprites' dimmed wrapper as `fitSprites` writes it, and as the stage draws it: solid, darkened by its filter. */
-const DIM_GHOST = '<g opacity="0.35" filter="url(#kessoku-dim)">'
+/** The dimmed wrapper as the stage draws it: solid, darkened by its filter. */
 const DIM_SOLID = '<g filter="url(#kessoku-dim)">'
 const DIM_FILTER_OLD = '<filter id="kessoku-dim"><feColorMatrix type="saturate" values="0.2"/></filter>'
 /** Greyed a little (her colours kept) and darkened to about three fifths, in sRGB, alpha kept: under the room's dark, a figure standing unlit. */
@@ -2508,17 +2006,6 @@ export function songDetailSvg(view: PanelView, act: ActView, layout: SceneLayout
   return { svg, alt, height: H }
 }
 
-/** The cache's warmth in plain words, never a clock: `warm, 48m left`, `cold for 12m`, `kept warm, 5m left`. */
-function ampText(view: PanelView): string {
-  const m = /^(warm|cold|keepwarm)\s+(.+)$/.exec(view.amp.words)
-  if (m === null) return view.amp.words
-  const s = Math.max(0, atSeconds(m[2] ?? ''))
-  const h = Math.floor(s / 3600)
-  const mins = Math.floor((s % 3600) / 60)
-  const d = s < 60 ? 'under 1m' : h > 0 ? (mins > 0 ? `${h}h ${mins}m` : `${h}h`) : `${mins}m`
-  return m[1] === 'cold' ? `cold for ${d}` : m[1] === 'keepwarm' ? `kept warm, ${d} left` : `warm, ${d} left`
-}
-
 /** A member's status in the plates' grammar, for one line: `♪ main loop`, `♪ 1`, `✓ 2`, `✗ 1 failed`; `short`: `♪ main`, `♪1`, `✓2`, `✗1`. */
 function statusBits(m: MemberView, short = false): Seg[] {
   const c = chalkOf(m.member)
@@ -2654,7 +2141,7 @@ export function boardFootSvg(view: PanelView, plan: BoardPlan, layout: SceneLayo
     type Item = { label: string; value: string; color: string; bar?: number }
     const items: Item[] = [{ label: 'main ctx', value: pctText(view.ctxPercent), color: view.ctxPercent > 85 ? RED : WHITE, bar: view.ctxPercent }]
     if (view.planPercent > 0) items.push({ label: 'limit', value: pctText(view.planPercent), color: view.planPercent > 85 ? RED : WHITE })
-    items.push({ label: 'cache', value: ampText(view), color: view.amp.kind === 'warm' || view.amp.kind === 'keepwarm' ? CHALK.nijika : SOFT })
+    items.push({ label: 'cache', value: view.amp.words, color: view.amp.kind === 'warm' || view.amp.kind === 'keepwarm' ? CHALK.nijika : SOFT })
     let x = g.X0
     for (const it of items) {
       const lw = textWidth(it.label, 'ui', g.small) + 5
@@ -2752,7 +2239,7 @@ export function stripSvg(view: PanelView, layout: SceneLayout): SceneSvg {
     // between sets: the house light's warm sign; the set's figures, and who failed and why
     const label = 'Between sets'
     const ls = W < 400 ? 18 : 19
-    const tail = [`main ctx ${pctText(view.ctxPercent)}`, `cache ${ampText(view)}`]
+    const tail = [`main ctx ${pctText(view.ctxPercent)}`, `cache ${view.amp.words}`]
     if (view.planPercent > 0) tail.push(`limit ${pctText(view.planPercent)}`)
     const room = W - 2 * pad - 10
     // the band's line only where the figures leave it room on one line

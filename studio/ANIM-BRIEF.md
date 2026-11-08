@@ -124,6 +124,46 @@ fading in (dusk, lavender), held pale, fading out. Mid-tones with no outline, so
 dark surface and a light one. On the mini it rises from its own free corner, on frames where the
 slime's z moves too.
 
+## The feast (`src/anim/feast.ts`)
+
+The ♨ Hotpot's band at the table: a loop per member per feast state, the same kind of keys with
+holds (`pose` a seat pose, `face` a face or a feast face, `fx`). A feast key has no `dx`, `dy`,
+`squash` or `melt`: the loops move arms, shoulders and faces only, by changing pose and face, and
+the head and the waist never move (the mod lays each figure's waist on the table's edge), so a
+figure's frames share most of their pixels. Each state's loop is one length for every member who
+loops it, and the beats are placed member by member on that clock: no two members blink, bite or
+look round on the same frame.
+
+**wait** (nothing cached yet; 4 s, 40 frames): `seat`, both hands resting on the table; idle, a
+blink, a look at the pot. Bocchi looks away and her eyes dart, Nijika beams, Ryo's lids stay
+heavy, Kita sparkles.
+
+**eat** (a feast, and the zosui; 4.8 s, 48 frames): the bite goes into the pot (`seatPot` under a
+pot look, the food caught on the tips), to the torizara (`seatBowl`), up to the mouth (`seatUp`,
+`bite`), back at the bowl chewing (`happy`) and a blink, then a pot look again. Bocchi is shy and
+slow, one bite; Ryo bites twice to everyone's once, her beats shorter; Nijika serves with her
+ladle between bites (`seatLadle`); Kita photographs the pot between them (`seatPhone`, the
+`flash` on her lens).
+
+**calm** (simmering, running low, or Nijika tending the pot; 6.4 s, 64 frames): the same eating,
+slower, the eyes half shut on the pot (`halfPot`), one bite each.
+
+**worry** (last orders; 4 s, 40 frames): still, sweat sliding beside the face; Ryo's chopsticks on
+the last piece (`seatPoint`), Nijika's ladle in the pot, the other two with their torizara.
+
+**shock** (a send held by Cache Tax; 2 s, 20 frames): the `panic` face held, the bang popping in,
+sweat flung off; Bocchi's hands up (`seatPanic`).
+
+**cold** and **serve** keep lengths of their own: Nijika's and Kita's slumps are stills
+(`seatSlump` under `melt`); Ryo chews her weed on 2.4 s, the blade dipping a row on each chew;
+Bocchi has none (the mod seats her box). Nijika's serve is a ping's moment, 2.4 s: the ladle in
+the pot, steam puffing up off its cup (the pour itself is the mod's scene layer).
+
+The eyes do the turning, and `npm run check` holds where they go. Reacting (worry, shock), they
+are at us on every beat: no pot look, no glance. Eating (eat, calm, serve), they are on the pot,
+but for the bite (at us), the chewing, a blink with its half lids beside it (`blink(at,
+'halfPot')` keeps those on the pot too) and at most one glance a loop.
+
 ## The effects in motion
 
 An effect never pops on and off in the same place for a whole loop: it rises, drifts, grows in or

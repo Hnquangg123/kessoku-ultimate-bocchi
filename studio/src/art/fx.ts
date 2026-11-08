@@ -15,7 +15,21 @@
 
 import type { Grid, Palette } from './types'
 
-export type FxKind = 'note' | 'note2' | 'sweat' | 'sparkle' | 'twinkle' | 'bang' | 'zz' | 'heart' | 'star' | 'drop' | 'dust' | 'gloom'
+export type FxKind = 'note' | 'note2' | 'sweat' | 'sparkle' | 'twinkle' | 'bang' | 'zz' | 'heart' | 'star' | 'drop' | 'dust' | 'gloom' | 'morsel' | 'flash' | 'weed'
+
+/**
+ * The colors the feast's effects take (their keys' colors; the export adds
+ * each one's highlight): a morsel is the food on the chopsticks' tips, colored
+ * by what she picked from the pot.
+ */
+export const MORSEL_COLORS = {
+  meat: '#ee9aa3', // a slice of pork, pink
+  veg: '#8cc85a', // napa cabbage and shungiku, green
+  tofu: '#f6f1e2', // tofu, white
+} as const
+/** Kita's flash (its rays; the core is white, FX_INKS) and Ryo's weed (its blade; the seed head is lighter, FX_INKS). */
+export const FLASH_COLOR = '#fff6cf'
+export const WEED_COLOR = '#4f8a2e'
 
 /** A shape with one pixel of margin all round, outlined with `o` wherever a filled pixel touches the outside (4-neighbours). */
 export function outlined(core: Grid): Grid {
@@ -144,11 +158,41 @@ export const FX: Readonly<Record<FxKind, Grid>> = {
     '.x....xe...x.',
     '......x......',
   ],
+  // the food on the chopsticks' tips (a slice of meat, a leaf, a cube of tofu: MORSEL_COLORS), 5x4: a 3x2
+  // bite, lit on its upper right, centred on the tips' point
+  morsel: outlined([
+    'xxh',
+    'xxx',
+  ]),
+  // Kita's phone flash, 9x9, no outline (it is light): a white core (`w`, FX_INKS) in a ring of the key's pale
+  // yellow (FLASH_COLOR), eight rays out of it, the long ones on the axes
+  flash: [
+    '....x....',
+    '.x..x..x.',
+    '..x.h.x..',
+    '...hwh...',
+    'xxhwwwhxx',
+    '...hwh...',
+    '..x.h.x..',
+    '.x..x..x.',
+    '....x....',
+  ],
+  // Ryo's weed, 8x5, no outline: a grass blade out of the corner of her mouth (its left end), drooping over her
+  // chin to a seed head; the blade the key's green (WEED_COLOR), lit along its top (`h`), the head pale (`e`, FX_INKS)
+  weed: [
+    'xh......',
+    '.xxh....',
+    '...xxh..',
+    '.....xee',
+    '......ee',
+  ],
 }
 
-/** Colors an effect always paints with, whatever color its key gives it: the gloom lines' lighter edge. */
+/** Colors an effect always paints with, whatever color its key gives it: the gloom lines' lighter edge, the flash's white core, the weed's seed head. */
 export const FX_INKS: Readonly<Partial<Record<FxKind, Palette>>> = {
   gloom: { e: '#6d5a92' },
+  flash: { w: '#fdfefe' },
+  weed: { e: '#8cc85a' },
 }
 
 /**
@@ -181,6 +225,12 @@ export const FX_MINI: Readonly<Record<FxKind, Grid>> = {
   dust: ['.x.', 'x.x'],
   // the gloom lines (new in v2): three dark strokes, the middle one longer, lit tips
   gloom: ['x.x.x', 'x.x.x', 'e.x.e', '..e..'],
+  // the food on the tips (new in 1.1.0)
+  morsel: ['xx', 'xx'],
+  // the phone's flash: a white core in its rays
+  flash: ['x.x', '.w.', 'x.x'],
+  // Ryo's weed: a blade drooping to its seed head
+  weed: ['xx..', '..xe'],
 }
 
 /** An effect's size in pixels (in `table`: FX, or FX_MINI for the minis). */

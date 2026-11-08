@@ -20,7 +20,7 @@
 //             element loses frames (neighbours merged into longer holds), at
 //             worst down to a still of the first.
 
-import type { KessokuMember, KessokuMood, KessokuSlimeState } from '../../types'
+import type { KessokuFeastState, KessokuMember, KessokuMood, KessokuSlimeState } from '../../types'
 import { SPRITES, SPRITE_COLORS } from './sprites.gen'
 import type { SpriteAnim } from './sprites.gen'
 
@@ -32,7 +32,10 @@ export type MemberView = 'full' | 'portrait' | 'mini'
 /** A member's slime, one an act on stage, played by state: the slime (36x24), or the slime halved (18x12) for the terminal's quadrants. */
 export type SlimeView = 'slime' | 'slime-mini'
 
-export type SpriteView = MemberView | SlimeView
+/** A member seated at the Hotpot's table, played by feast state: rows 6 to 69 of her 96x96 canvas (96x64), her waist on the table's edge. */
+export type FeastView = 'feast'
+
+export type SpriteView = MemberView | SlimeView | FeastView
 
 /**
  * How a terminal packs pixels into cells, a cell being about twice as tall as
@@ -102,23 +105,26 @@ const NOMINAL: Readonly<Record<SpriteView, { w: number; h: number }>> = {
   mini: { w: 16, h: 16 },
   slime: { w: 36, h: 24 },
   'slime-mini': { w: 18, h: 12 },
+  feast: { w: 96, h: 64 },
 }
 
 export function isSlimeView(view: SpriteView): view is SlimeView {
   return view === 'slime' || view === 'slime-mini'
 }
 
-/** A sprite's id: a member in a mood in a figure's view (`kita-happy-mini`), or her slime in a state (`ryo-slime-active-mini`). */
+/** A sprite's id: a member in a mood in a figure's view (`kita-happy-mini`), her slime in a state (`ryo-slime-active-mini`), or her seat at the Hotpot (`nijika-feast-serve`). */
 export function spriteId(member: KessokuMember, mood: KessokuMood, view?: MemberView): string
 export function spriteId(member: KessokuMember, state: KessokuSlimeState, view: SlimeView): string
-export function spriteId(member: KessokuMember, moodOrState: KessokuMood | KessokuSlimeState, view: SpriteView = 'full'): string {
+export function spriteId(member: KessokuMember, state: KessokuFeastState, view: FeastView): string
+export function spriteId(member: KessokuMember, moodOrState: KessokuMood | KessokuSlimeState | KessokuFeastState, view: SpriteView = 'full'): string {
+  if (view === 'feast') return `${member}-feast-${moodOrState}`
   if (isSlimeView(view)) return view === 'slime' ? `${member}-slime-${moodOrState}` : `${member}-slime-${moodOrState}-mini`
   return view === 'full' ? `${member}-${moodOrState}` : `${member}-${moodOrState}-${view}`
 }
 
 /** A view's size in pixels, read off the exported frames (every member's, mood's and state's is the same), the studio's own when none are there. */
 export function viewSize(view: SpriteView): { w: number; h: number } {
-  const anim = SPRITES[isSlimeView(view) ? spriteId('bocchi', 'active', view) : spriteId('bocchi', 'anxious', view)]
+  const anim = SPRITES[view === 'feast' ? spriteId('bocchi', 'wait', view) : isSlimeView(view) ? spriteId('bocchi', 'active', view) : spriteId('bocchi', 'anxious', view)]
   return anim === undefined ? NOMINAL[view] : { w: anim.w, h: anim.h }
 }
 
@@ -272,9 +278,14 @@ function paintOf(code: number, isDim: boolean): string | null {
   return hit
 }
 
-/** Several sprites, each at its own frame for `now` and drawn at its zoom (a `dim` one shaded), laid on one canvas of `w` x `h` pixels. */
-export function composite(parts: readonly SpritePart[], w: number, h: number, now: number): (string | null)[] {
-  const px: (string | null)[] = Array.from({ length: w * h }, () => null)
+/**
+ * Several sprites, each at its own frame for `now` and drawn at its zoom (a
+ * `dim` one shaded), laid on one canvas of `w` x `h` pixels: over a still
+ * backdrop (`under`, the canvas's own pixels) when one is given, which every
+ * repaint lays first.
+ */
+export function composite(parts: readonly SpritePart[], w: number, h: number, now: number, under?: readonly (string | null)[]): (string | null)[] {
+  const px: (string | null)[] = Array.from({ length: w * h }, (_v, i) => under?.[i] ?? null)
   for (const part of parts) {
     const anim = SPRITES[part.id]
     const frame = decodedOf(part.id)?.frames[anim === undefined ? 0 : frameAt(anim, now)]

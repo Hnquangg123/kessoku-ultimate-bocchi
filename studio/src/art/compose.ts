@@ -6,8 +6,8 @@
 import { FONT, FX, FX_INKS, FX_MINI, outlined } from './fx'
 import type { FxKind } from './fx'
 import { paletteClashes } from './parts'
-import type { Grid, HeadOffset, MemberArt, Palette, Patch, PoseDef, PoseName } from './types'
-import { H, MINI, PH, PW, SLIME_H, SLIME_W, W } from './types'
+import type { AnyPose, FaceName, FeastFace, Grid, HeadOffset, MemberArt, MemberId, Palette, Patch, PoseDef, PoseName, SeatPose, SeatPoseDef } from './types'
+import { FEAST_H, FEAST_Y, H, MINI, PH, PW, SLIME_H, SLIME_W, W } from './types'
 
 /** A canvas: `[y][x]`, a `#rrggbb` color or null for transparent. */
 export type Pixels = (string | null)[][]
@@ -23,6 +23,39 @@ export const HEAD_POSES: readonly PoseName[] = ['stand', 'playA', 'playB', 'crou
 
 /** The poses the sway overlays are drawn for (the hair is the same in all three). */
 export const SWAY_POSES: readonly PoseName[] = ['stand', 'playA', 'playB']
+
+/** The seat poses (MemberArt.feast), in the order the sheets show them. Each carries stand's head, face box and all. */
+export const SEAT_POSES: readonly SeatPose[] = ['seat', 'seatPot', 'seatBowl', 'seatUp', 'seatPanic', 'seatPoint', 'seatLadle', 'seatPhone', 'seatSlump']
+
+/** Who sits where and holds what: the seat poses each member has, and her edge of the table (checkArt holds her feast to both). */
+export const FEAST_POSES: Readonly<Record<MemberId, readonly SeatPose[]>> = {
+  bocchi: ['seat', 'seatPot', 'seatBowl', 'seatUp', 'seatPanic'],
+  nijika: ['seat', 'seatPot', 'seatBowl', 'seatUp', 'seatLadle', 'seatSlump'],
+  ryo: ['seat', 'seatPot', 'seatBowl', 'seatUp', 'seatPoint'],
+  kita: ['seat', 'seatPot', 'seatBowl', 'seatUp', 'seatPhone', 'seatSlump'],
+}
+export const FEAST_SIDE: Readonly<Record<MemberId, 'left' | 'right'>> = { bocchi: 'left', nijika: 'left', ryo: 'right', kita: 'right' }
+/**
+ * Her hair's own keys, the ones no other part of her is drawn in (a hair outline her jacket, hands or bow share is
+ * left out): below the face box, the head check keeps them where her pose's base draws them beside her face.
+ */
+export const HEAD_HAIR: Readonly<Record<MemberId, string>> = { bocchi: 'hHr', nijika: 'hHru', ryo: 'UHhrRN', kita: 'hHrv' }
+/**
+ * Stand's hair a `seat` leaves out on her waist row, as drawn ("x,y"): Bocchi's turned body ends at x 57 there, where
+ * stand's hair hung on to 59. Draw them back and drop the entry; anything else on the row is held.
+ */
+export const SEAT_WAIST_GAPS: Readonly<Record<MemberId, readonly string[]>> = { bocchi: ['58,56', '59,56'], nijika: [], ryo: [], kita: [] }
+
+/** The seat poses that hold something with a point that acts (`tips`): the chopsticks' tips, the ladle's cup, the phone's lens. */
+export const TIPPED_SEATS: readonly SeatPose[] = ['seatPot', 'seatBowl', 'seatUp', 'seatPoint', 'seatLadle', 'seatPhone']
+
+/** The feast faces, and the face each pot-look face moves the eyes of (`bite` keeps idle's eyes). */
+export const FEAST_FACES: readonly FeastFace[] = ['idlePot', 'halfPot', 'focusPot', 'bite']
+export const POT_LOOK_OF: Readonly<Record<'idlePot' | 'halfPot' | 'focusPot', FaceName>> = { idlePot: 'idle', halfPot: 'half', focusPot: 'focus' }
+
+export function isSeatPose(name: string): name is SeatPose {
+  return (SEAT_POSES as readonly string[]).includes(name)
+}
 
 export function blank(w = W, h = H): Pixels {
   return Array.from({ length: h }, () => Array.from({ length: w }, () => null as string | null))
@@ -65,8 +98,13 @@ export function gridSize(grid: Grid): { w: number; h: number } {
 
 // ---- Poses -------------------------------------------------------------------------
 
-export function isPatched(def: PoseDef): def is { from: PoseName; patches: readonly Patch[] } {
+export function isPatched(def: PoseDef | SeatPoseDef): def is { from: PoseName; patches: readonly Patch[] } | SeatPoseDef {
   return !Array.isArray(def)
+}
+
+/** A pose's definition: the stage's in `poses`, a seat pose's in `feast.poses`. */
+function poseDef(art: MemberArt, name: AnyPose): PoseDef | SeatPoseDef | undefined {
+  return isSeatPose(name) ? art.feast?.poses[name] : (art.poses[name] as PoseDef | undefined)
 }
 
 /** Lays a patch over rows of characters: `.` keeps, `_` erases to `.`, anything else replaces. Clipped to the rows. */
@@ -82,15 +120,15 @@ function overlayChars(rows: string[][], patch: Patch): void {
   })
 }
 
-const resolved = new WeakMap<MemberArt, Map<PoseName, Grid>>()
+const resolved = new WeakMap<MemberArt, Map<AnyPose, Grid>>()
 
 /**
  * A pose as a full 96x96 grid: a grid pose as drawn (padded or cut to the
- * canvas), a patched pose as its `from` with each patch laid over in order.
- * Memoised per member. Throws on a missing pose or a `from` cycle
- * (`checkArt` reports both as problems).
+ * canvas), a patched pose (a seat pose always is) as its `from` with each
+ * patch laid over in order. Memoised per member. Throws on a missing pose or
+ * a `from` cycle (`checkArt` reports both as problems).
  */
-export function resolvePose(art: MemberArt, name: PoseName): Grid {
+export function resolvePose(art: MemberArt, name: AnyPose): Grid {
   let memo = resolved.get(art)
   if (memo === undefined) {
     memo = new Map()
@@ -103,9 +141,9 @@ export function resolvePose(art: MemberArt, name: PoseName): Grid {
   return grid
 }
 
-function resolveChain(art: MemberArt, name: PoseName, chain: readonly PoseName[]): Grid {
+function resolveChain(art: MemberArt, name: AnyPose, chain: readonly AnyPose[]): Grid {
   if (chain.includes(name)) throw new Error(`pose cycle: ${[...chain, name].join(' -> ')}`)
-  const def = art.poses[name] as PoseDef | undefined
+  const def = poseDef(art, name)
   if (def === undefined) throw new Error(`pose ${name} is missing`)
   if (!isPatched(def)) {
     return Array.from({ length: H }, (_, y) => {
@@ -119,9 +157,9 @@ function resolveChain(art: MemberArt, name: PoseName, chain: readonly PoseName[]
   return rows.map(r => r.join(''))
 }
 
-/** Where a pose carries the head, from stand's: `heads[pose]`, 0 for the box (it has its own window). */
-export function headOffset(art: MemberArt, pose: PoseName): HeadOffset {
-  if (pose === 'box') return { dx: 0, dy: 0 }
+/** Where a pose carries the head, from stand's: `heads[pose]`, 0 for the box (it has its own window) and the seat poses (stand's head untouched). */
+export function headOffset(art: MemberArt, pose: AnyPose): HeadOffset {
+  if (pose === 'box' || isSeatPose(pose)) return { dx: 0, dy: 0 }
   return art.heads?.[pose] ?? { dx: 0, dy: 0 }
 }
 
@@ -668,8 +706,9 @@ const RESERVED = /^[._=0-9'"\\` ]$/
  * sway overlays that do not fit stand, playA and playB, a palette key two
  * part files define with different colors, a mini rig that is not 16x16 or
  * whose overlays run off it, stick tips off the canvas, a slime grid that
- * does not fit its canvas below the bounce's row, and slime faces (Bocchi's
- * awake and content) that differ outside their face region.
+ * does not fit its canvas below the bounce's row, slime faces (Bocchi's
+ * awake and content) that differ outside their face region, and whatever is
+ * wrong with her seats at the hotpot table (checkFeast).
  */
 export function checkArt(art: MemberArt): string[] {
   const problems: string[] = []
@@ -847,6 +886,287 @@ export function checkArt(art: MemberArt): string[] {
       )
       if (diff > 0) problems.push(`sway ${side}: ${pose} differs from stand in ${diff} of the pixels it covers${first}, so it will not fit ${pose}`)
     }
+  }
+  if (art.feast !== undefined) problems.push(...checkFeast(art, resolvedPoses.get('stand'), checkChars, inCanvas, fw, fh))
+  return problems
+}
+
+/** How far (in pixels, along the row) a pot-look eye's darkness must move toward the pot: any real move of a pixel's tone does it. */
+const POT_SHIFT = 0.02
+
+/** The chopsticks' wood, lit and shaded (the band's shared prop keys): the one thing besides hair a seat pose may draw below her waist. */
+const CHOPSTICK: ReadonlySet<string> = new Set(['(', ')'])
+
+/**
+ * The feast's problems (see checkArt): her seat poses (the ones FEAST_POSES
+ * gives her, each from stand or a seat pose, its patches on the canvas), each
+ * keeping stand's face region (as the HEAD_POSES do) and `seat` stand's whole
+ * head, drawn inside the feast window (rows 6-69: her face, her hands, what
+ * she holds), her waist row ending at `waist` on her outer side in every one
+ * (her body from there in, only `hair` beyond it) and only her hair and her
+ * chopsticks below it; her feast faces (the
+ * face overlays' size), the pot-look ones differing from the face they come from
+ * only inside her eyes, each iris toward the pot, and `bite` keeping idle's
+ * eyes; a tip on every seat pose that holds something, inside the window; the
+ * headband over pixels every seat pose of hers has the same, clear of her face.
+ */
+function checkFeast(
+  art: MemberArt,
+  stand: Grid | undefined,
+  checkChars: (label: string, grid: Grid, erase: boolean) => void,
+  inCanvas: (label: string, x: number, y: number, grid: Grid) => void,
+  fw: number,
+  fh: number,
+): string[] {
+  const problems: string[] = []
+  const feast = art.feast
+  if (feast === undefined) return problems
+  const dir = feast.side === 'left' ? 1 : -1
+  const want = FEAST_POSES[art.id]
+  const top = FEAST_Y
+  const foot = FEAST_Y + FEAST_H - 1
+  const at = (grid: Grid, x: number, y: number) => [...(grid[y] ?? '')][x] ?? '.'
+  if (feast.side !== FEAST_SIDE[art.id]) problems.push(`feast.side: ${feast.side}, where ${art.name} sits at the table's ${FEAST_SIDE[art.id]} edge`)
+
+  // The poses: hers, from the right pose, on the canvas, resolving.
+  const seats = new Map<SeatPose, Grid>()
+  for (const name of want) if (feast.poses[name] === undefined) problems.push(`feast pose ${name} is missing`)
+  for (const name of SEAT_POSES) {
+    const def = feast.poses[name]
+    if (def === undefined) continue
+    if (!want.includes(name)) problems.push(`feast pose ${name}: not one of ${art.name}'s (${want.join(', ')})`)
+    if (name === 'seat' ? def.from !== 'stand' : !isSeatPose(def.from)) problems.push(`feast pose ${name}: from "${def.from}", wants ${name === 'seat' ? 'stand' : 'a seat pose'}`)
+    def.patches.forEach((p, i) => {
+      checkChars(`feast pose ${name} patch ${i}`, p.grid, true)
+      inCanvas(`feast pose ${name} patch ${i}`, p.x, p.y, p.grid)
+    })
+    try {
+      seats.set(name, resolvePose(art, name))
+    } catch (e) {
+      problems.push(`feast pose ${name}: ${(e as Error).message}`)
+    }
+  }
+
+  // Stand's face region in every one, so every face overlay and feast face fits.
+  if (stand !== undefined) {
+    for (const [name, grid] of seats) {
+      let diff = 0
+      let first = ''
+      for (let y = art.face.y; y < art.face.y + fh; y += 1)
+        for (let x = art.face.x; x < art.face.x + fw; x += 1) {
+          if (at(grid, x, y) === at(stand, x, y)) continue
+          diff += 1
+          if (first === '') first = ` (first at ${x},${y})`
+        }
+      if (diff > 0) problems.push(`feast pose ${name}: the face region (${fw}x${fh} at ${art.face.x},${art.face.y}) differs from stand's in ${diff} pixels${first}, so the face overlays will not fit it`)
+    }
+    // Stand's whole head on her seat, the pose the others patch their arms onto: the portrait window from its top
+    // down to the face box's foot (below it the shoulders are the turned body's), hair and outline untouched.
+    const seat = seats.get('seat')
+    if (seat !== undefined) {
+      let diff = 0
+      let first = ''
+      for (let y = art.head.y; y < art.face.y + fh; y += 1)
+        for (let x = art.head.x; x < art.head.x + PW; x += 1) {
+          if (at(seat, x, y) === at(stand, x, y)) continue
+          diff += 1
+          if (first === '') first = ` (first at ${x},${y})`
+        }
+      if (diff > 0) problems.push(`feast pose seat: the head (the portrait window at ${art.head.x},${art.head.y}, ${PW} wide, down to row ${art.face.y + fh - 1}) differs from stand's in ${diff} pixels${first}: the heads are reused as they are`)
+    }
+    // And every pose keeps that head. Above the face box's foot: inside the portrait window it may draw over stand's
+    // pixels (a hand raised beside her face) but never cut one, and outside it never cut her hair (HEAD_HAIR: an ahoge's
+    // tip, a side tail). Below the face box her hair stays where her base draws it, drawn over or kept: `seat` keeps
+    // stand's wherever the table does not hide her (inside the window, down to her waist's row, which the lap clip
+    // draws over the table, and on her outer side below it, beside the table), but for SEAT_WAIST_GAPS; and the poses
+    // patched on `seat` keep its hair anywhere on the canvas (the flips on her shoulders, a side tail, hair hanging past
+    // her waist).
+    const hair = new Set([...HEAD_HAIR[art.id]])
+    const gaps = new Set(SEAT_WAIST_GAPS[art.id])
+    const below = art.face.y + fh
+    const inWindow = (x: number, y: number) => y >= art.head.y && y < art.head.y + PH && x >= art.head.x && x < art.head.x + PW
+    const outer = (x: number) => (feast.side === 'left' ? x < feast.waist.x : x > feast.waist.x)
+    const hairOf = (x: number, y: number) => (hair.has(at(stand, x, y)) ? at(stand, x, y) : '')
+    for (const [name, grid] of seats) {
+      const base = name === 'seat' ? stand : (seats.get('seat') ?? stand)
+      let cut = 0
+      let first = ''
+      for (let y = 0; y < H; y += 1)
+        for (let x = 0; x < W; x += 1) {
+          if (at(grid, x, y) !== '.') continue
+          let lost = ''
+          // above the face box's foot (`seat`'s window is held whole by the check above)
+          if (y < below) lost = !inWindow(x, y) ? hairOf(x, y) : name === 'seat' ? '' : at(stand, x, y) === '.' ? '' : at(stand, x, y)
+          else if (name === 'seat') lost = (inWindow(x, y) || y <= feast.waist.y || outer(x)) && !gaps.has(`${x},${y}`) ? hairOf(x, y) : ''
+          else {
+            // her base's hair, or the hair behind what `seat` drew there (stand's: an arm lifted away from in front of
+            // her side tail leaves the tail, not a hole)
+            const was = at(base, x, y)
+            lost = was === '.' ? '' : hair.has(was) ? was : hairOf(x, y)
+          }
+          if (lost === '') continue
+          cut += 1
+          if (first === '') first = ` (first at ${x},${y}: "${lost}")`
+        }
+      if (cut > 0) problems.push(`feast pose ${name}: cuts ${cut} ${cut === 1 ? 'pixel' : 'pixels'} of her head${first}; a seat pose draws over her head and the hair beside her face, never erases them`)
+    }
+    // each gap let pass is one still: stand's hair, on her waist row, that `seat` leaves out (else the entry is stale)
+    for (const g of gaps) {
+      const [gx = -1, gy = -1] = g.split(',').map(Number)
+      if (seat === undefined || gy !== feast.waist.y || at(seat, gx, gy) !== '.' || hairOf(gx, gy) === '') problems.push(`SEAT_WAIST_GAPS: ${g} is not stand's hair that ${art.name}'s seat leaves out on her waist row (${feast.waist.y}): drop it`)
+    }
+  }
+
+  // The feast window holds all of her: the face, the hands, what she holds.
+  for (const [name, grid] of seats) {
+    let out = 0
+    let first = ''
+    grid.forEach((row, y) => {
+      if (y >= top && y <= foot) return
+      ;[...row].forEach((c, x) => {
+        if (c === '.') return
+        out += 1
+        if (first === '') first = ` (first at ${x},${y})`
+      })
+    })
+    if (out > 0) problems.push(`feast pose ${name}: ${out} pixels outside the feast window (rows ${top}-${foot})${first}`)
+  }
+
+  // Her waist row ends at `waist` on her outer side in every pose: her body from there inward (the pixel past it is
+  // not her hair: Bocchi's hair outline is her jacket's too), only her hair beyond it.
+  const { x: wx, y: wy } = feast.waist
+  if (!Number.isInteger(wx) || !Number.isInteger(wy) || wx < 0 || wx >= W || wy < top || wy > foot) {
+    problems.push(`feast.waist: ${wx},${wy} is not a pixel inside the feast window (rows ${top}-${foot})`)
+  } else {
+    const hair = new Set([...(feast.hair ?? '')])
+    for (const [name, grid] of seats) {
+      const c = at(grid, wx, wy)
+      const inward = at(grid, wx + dir, wy)
+      if (c === '.') problems.push(`feast pose ${name}: nothing at feast.waist (${wx},${wy}), the pixel the mod lays on the table's edge`)
+      else if (inward === '.' || hair.has(inward)) problems.push(`feast pose ${name}: inward of feast.waist (${wx},${wy}) is ${inward === '.' ? 'nothing' : `her hair ("${inward}")`}, not her body`)
+      for (let x = wx - dir; x >= 0 && x < W; x -= dir) {
+        const o = at(grid, x, wy)
+        if (o === '.' || hair.has(o)) continue
+        problems.push(`feast pose ${name}: her waist row (${wy}) runs on past feast.waist (${wx}) on her outer side, to ${x} ("${o}"), so the mod would seat her ${Math.abs(x - wx)} pixels off`)
+        break
+      }
+      // below the waist, only her hair and the chopsticks' wood (the table hides the rest of her; beside it, her hair
+      // still shows, and over the pot the far two's chopsticks reach down into it)
+      let below = 0
+      let first = ''
+      for (let y = wy + 1; y < H; y += 1)
+        [...(grid[y] ?? '')].forEach((ch, x) => {
+          if (ch === '.' || hair.has(ch) || CHOPSTICK.has(ch)) return
+          below += 1
+          if (first === '') first = ` (first at ${x},${y}: "${ch}")`
+        })
+      if (below > 0) problems.push(`feast pose ${name}: ${below} pixels below her waist (row ${wy}) that are not her hair or her chopsticks${first}`)
+    }
+  }
+
+  // The faces: the face overlays' size at the face box; the pot-look ones move only the eyes, each iris toward the pot.
+  for (const name of FEAST_FACES) {
+    const grid = feast.faces[name] as Grid | undefined
+    if (grid === undefined) {
+      problems.push(`feast face ${name} is missing`)
+      continue
+    }
+    checkChars(`feast face ${name}`, grid, true)
+    const { w, h } = gridSize(grid)
+    if (w > fw || h > fh) problems.push(`feast face ${name}: ${w}x${h}, larger than the face region (${fw}x${fh}) every pose keeps as stand's`)
+    inCanvas(`feast face ${name}`, art.face.x, art.face.y, grid)
+  }
+  if (feast.eyes.length !== 2) problems.push(`feast.eyes: ${feast.eyes.length} boxes, wants her two eyes (near, far)`)
+  feast.eyes.forEach((b, i) => {
+    if (b.w < 1 || b.h < 1 || b.x < art.face.x || b.y < art.face.y || b.x + b.w > art.face.x + fw || b.y + b.h > art.face.y + fh) problems.push(`feast.eyes[${i}]: ${b.w}x${b.h} at ${b.x},${b.y} is not inside the face region (${fw}x${fh} at ${art.face.x},${art.face.y})`)
+  })
+  const inEye = (x: number, y: number) => feast.eyes.some(b => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h)
+  if (stand !== undefined) {
+    /** Stand with a face laid on it, as rows of characters. */
+    const lay = (grid: Grid) => {
+      const rows = stand.map(r => [...r])
+      overlayChars(rows, { x: art.face.x, y: art.face.y, grid })
+      return rows.map(r => r.join(''))
+    }
+    /** The darkness-weighted mean column of an eye: an iris moved toward the pot (its white away from it) moves it that way. */
+    const darkMean = (rows: Grid, b: { x: number; y: number; w: number; h: number }) => {
+      let sum = 0
+      let mass = 0
+      for (let y = b.y; y < b.y + b.h; y += 1)
+        for (let x = b.x; x < b.x + b.w; x += 1) {
+          const color = art.palette[at(rows, x, y)]
+          if (color === undefined) continue
+          const k = 255 - luma(color)
+          sum += k * x
+          mass += k
+        }
+      return mass > 0 ? sum / mass : 0
+    }
+    const towards = feast.side === 'left' ? 'our right' : 'our left'
+    for (const [pot, base] of Object.entries(POT_LOOK_OF) as ['idlePot' | 'halfPot' | 'focusPot', FaceName][]) {
+      const from = art.face.grids[base]
+      const to = feast.faces[pot] as Grid | undefined
+      if (to === undefined) continue
+      const a = lay(from)
+      const b = lay(to)
+      let outside = 0
+      let first = ''
+      for (let y = art.face.y; y < art.face.y + fh; y += 1)
+        for (let x = art.face.x; x < art.face.x + fw; x += 1) {
+          if (at(a, x, y) === at(b, x, y) || inEye(x, y)) continue
+          outside += 1
+          if (first === '') first = ` (first at ${x},${y})`
+        }
+      if (outside > 0) problems.push(`feast face ${pot}: differs from ${base} in ${outside} pixels outside her eyes${first}`)
+      feast.eyes.forEach((box, i) => {
+        const was = darkMean(a, box)
+        const now = darkMean(b, box)
+        if ((now - was) * dir < POT_SHIFT) problems.push(`feast face ${pot}: the ${i === 0 ? 'near' : 'far'} eye (${box.w}x${box.h} at ${box.x},${box.y}) does not look toward the pot (${towards}): its iris sits at ${now.toFixed(2)}, ${base}'s at ${was.toFixed(2)}`)
+      })
+    }
+    const idle = lay(art.face.grids.idle)
+    const bite = lay(feast.faces.bite)
+    let moved = 0
+    for (let y = art.face.y; y < art.face.y + fh; y += 1) for (let x = art.face.x; x < art.face.x + fw; x += 1) if (inEye(x, y) && at(idle, x, y) !== at(bite, x, y)) moved += 1
+    if (moved > 0) problems.push(`feast face bite: its eyes differ from idle's in ${moved} pixels (a bite keeps the eyes at us)`)
+  }
+
+  // A tip on every seat pose that holds something, inside the window.
+  for (const name of TIPPED_SEATS) if (want.includes(name) && art.tips?.[name] === undefined) problems.push(`tips.${name} is missing (where what she holds acts: the chopsticks' tips, the ladle's cup, the phone's lens)`)
+  for (const [name, p] of Object.entries(art.tips ?? {})) {
+    if (p === undefined || !isSeatPose(name)) continue
+    if (p.y < top || p.y > foot) problems.push(`tips.${name}: ${p.x},${p.y} is outside the feast window (rows ${top}-${foot})`)
+  }
+
+  // The headband: over pixels every seat pose has the same (it is drawn over whatever she plays), clear of her face.
+  const band = feast.headband
+  if (band !== undefined) {
+    checkChars('feast headband', band.grid, true)
+    inCanvas('feast headband', band.x, band.y, band.grid)
+    const seat = seats.get('seat')
+    let diff = 0
+    let face = 0
+    let outside = 0
+    let first = ''
+    band.grid.forEach((row, gy) =>
+      [...row].forEach((c, gx) => {
+        if (c === '.') return
+        const x = band.x + gx
+        const y = band.y + gy
+        if (y < top || y > foot) outside += 1
+        if (x >= art.face.x && x < art.face.x + fw && y >= art.face.y && y < art.face.y + fh) face += 1
+        if (seat === undefined) return
+        for (const grid of seats.values()) {
+          if (at(grid, x, y) === at(seat, x, y)) continue
+          diff += 1
+          if (first === '') first = ` (first at ${x},${y})`
+          break
+        }
+      }),
+    )
+    if (outside > 0) problems.push(`feast headband: ${outside} pixels outside the feast window (rows ${top}-${foot})`)
+    if (face > 0) problems.push(`feast headband: ${face} pixels on the face region (${fw}x${fh} at ${art.face.x},${art.face.y}), where the faces change under it`)
+    if (diff > 0) problems.push(`feast headband: covers ${diff} pixels that differ between her seat poses${first}, so it will not fit them all`)
   }
   return problems
 }

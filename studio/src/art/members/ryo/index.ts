@@ -36,16 +36,20 @@ import type { MemberArt } from '../../types'
 import * as box from './box'
 import * as cheer from './cheer'
 import * as crouch from './crouch'
+import * as eat from './eat'
 import * as faces from './faces'
+import * as feastFaces from './feast-faces'
 import * as mini from './mini'
 import * as palette from './palette'
 import * as panic from './panic'
 import * as play from './play'
+import * as seat from './seat'
+import * as seatPoint from './seat-point'
 import * as slime from './slime'
 import * as stand from './stand'
 import * as sway from './sway'
 
-const { palette: merged, colorSources } = memberPalette({ palette, stand, play, crouch, cheer, panic, box, faces, sway, mini, slime })
+const { palette: merged, colorSources } = memberPalette({ palette, stand, play, crouch, cheer, panic, box, faces, sway, mini, slime, seat, eat, seatPoint })
 
 export const ryo: MemberArt = {
   id: 'ryo',
@@ -71,4 +75,13 @@ export const ryo: MemberArt = {
   boxHead: box.boxHead,
   mini: mini.mini,
   slime: slime.slime,
+  tips: { ...eat.tips, ...seatPoint.tips },
+  feast: {
+    side: seat.side,
+    waist: seat.waist,
+    poses: { seat: seat.seat, seatPot: eat.seatPot, seatBowl: eat.seatBowl, seatUp: eat.seatUp, seatPoint: seatPoint.seatPoint },
+    faces: feastFaces.feastFaces,
+    eyes: feastFaces.eyes,
+    weed: feastFaces.weed,
+  },
 }
