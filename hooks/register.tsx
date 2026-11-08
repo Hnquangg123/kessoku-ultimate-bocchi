@@ -130,6 +130,7 @@ import {
   TOP_UP_MIN_TOKENS,
   ampKind,
   billRows,
+  boardLineRows,
   boardOf,
   bookActStep,
   bookFork,
@@ -1025,10 +1026,18 @@ async function sendFork($: EngineInterface, kind: ForkKind): Promise<ForkSent> {
   }
 }
 
-/** A press's outcome (or a ping's while the Hotpot is up), in place of the wooden board's first tail for its 6 s. */
+/**
+ * A press's outcome (or a ping's while the Hotpot is up), in place of the wooden board's first tail for its 6 s; one
+ * that lands under an arm (a fork's outcome: a press lets an arm go first) starts its 6 s as the arm ends, which the
+ * board waits for.
+ */
 async function noteHotpot($: EngineInterface, text: string, always = true): Promise<void> {
   const now = await $.clock.now()
-  await update($, hotpot, h => (always || h.isOpen ? { ...h, note: { text, until: now + NOTE_MS } } : h))
+  await update($, hotpot, h => {
+    if (!always && !h.isOpen) return h
+    const from = h.armed !== null && now - h.armed.at < ARM_MS ? h.armed.at + ARM_MS : now
+    return { ...h, note: { text, until: from + NOTE_MS } }
+  })
 }
 
 /** A moment of the feast (a ping, a re-heat, keepwarm switched on, a paid re-order), for 2.4 s. */
@@ -3526,9 +3535,19 @@ function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Dr
           </Text>
           <Text color={WOOD.tail}>{`  ${board.tail}`}</Text>
         </Text>
-        <Text color={WOOD.line} size="footnote" tabular wrap="wrap">
-          {board.line}
-        </Text>
+        {isTerminal ? (
+          // held to its worst case's rows (the keys hint in, a passing dim reason's room), so neither the focus nor a
+          // passing turn, fork or compaction moves the buttons, under an arm's second press least of all
+          <Box key="hotpot-line" flexDirection="column" minHeight={boardLineRows(v, e.props.bodyColumns - 2)}>
+            <Text color={WOOD.line} size="footnote" tabular wrap="wrap">
+              {board.line}
+            </Text>
+          </Box>
+        ) : (
+          <Text color={WOOD.line} size="footnote" tabular wrap="wrap">
+            {board.line}
+          </Text>
+        )}
         {board.armed === '' ? null : (
           // What the armed button's second press does, over the board on its paint: out of the flow, so nothing moves
           // under the second press (the board beneath keeps its rows).
@@ -3548,11 +3567,12 @@ function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Dr
             const ms = b.pick
             return <Button key={b.key} label={b.label} variant={b.isOn === true ? 'primary' : undefined} onPress={pressOf(b.key, () => update($, hotpot, h => ({ ...h, pick: ms })))} />
           }
-          // A button that cannot act now is dim, and its press spends and arms nothing (the board says why). Plain, so a
-          // terminal draws its key before its label (`w: Keep the fire on`), as the board's `ctrl+x tab for its keys`
-          // promises; a desktop draws its native button either way, an armed one as its primary.
-          if (b.reason !== '') return <Button key={b.key} label={b.label} hotkey={b.hotkey} plain dimColor onPress={() => undefined} />
-          return <Button key={b.key} label={b.label} hotkey={b.hotkey} plain variant={b.isArmed === true ? 'primary' : undefined} onPress={pressOf(b.key, presses[b.key])} />
+          // A button that cannot act now is dim, and its press spends and arms nothing (the board says why), though it lets
+          // an arm go as any press does. Plain, so a terminal draws its key before its label (`w: Keep the fire on`), as
+          // the board's `ctrl+x tab for its keys` promises; plain draws the same whatever its variant, so an armed one off
+          // the terminal looks as it rests, and the board's overlay says it is armed.
+          if (b.reason !== '') return <Button key={b.key} label={b.label} hotkey={b.hotkey} plain dimColor onPress={pressOf(b.key, undefined)} />
+          return <Button key={b.key} label={b.label} hotkey={b.hotkey} plain onPress={pressOf(b.key, presses[b.key])} />
         })}
       </Box>
       {bill === null ? null : (

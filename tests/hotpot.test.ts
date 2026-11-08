@@ -10,6 +10,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { KessokuHotpot, KessokuLedger } from '../types'
 import {
+  ARMED_KEY,
   BOX_RAISE,
   FEAST_TOP,
   FEAST_WAIST,
@@ -26,6 +27,7 @@ import {
   TABLE,
   bandParts,
   billRows,
+  boardLineRows,
   boardOf,
   bookActStep,
   buttonLayout,
@@ -660,8 +662,8 @@ test('a terminal pane\'s board and buttons take their rows as they wrap, the bil
   // the buttons on three (17 more for half blocks: 24)
   expect(terminalRowsBelow(v, 74)).toBe(7)
   expect(terminalRowsBelow(v, 54)).toBe(9)
-  // the bill: its title, its eight rows, its foot
-  expect(terminalRowsBelow({ ...v, hotpot: { ...HOTPOT, isBillOpen: true } }, 74)).toBe(17)
+  // the bill: its title, its eight rows, the first ping's row a top-up or a ping adds, its foot
+  expect(terminalRowsBelow({ ...v, hotpot: { ...HOTPOT, isBillOpen: true } }, 74)).toBe(18)
   const slip = { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 }
   // a hold: its word and tail, its two lines of how to pay or start fresh (no dim reason comes there), its buttons on two
   expect(terminalRowsBelow(viewOf(74 * MIN, { isTerminal: true, slip }, {}, { held: true }), 74)).toBe(5)
@@ -691,6 +693,20 @@ test('a terminal pane\'s board and buttons take their rows as they wrap, the bil
       pairs.push([`${t} ${isBillOpen ? 'bill ' : ''}held keep`, held, at(74 * MIN, { slip }, { keepWarmUntil: NOW + 2 * HOUR }, { held: true })])
     }
   for (const [name, a, b] of pairs) for (const cols of [74, 84, 88, 90, 104, 120]) expect(`${name} @${cols}: ${terminalRowsBelow(b, cols)}`).toBe(`${name} @${cols}: ${terminalRowsBelow(a, cols)}`)
+  // a top-up as the ledger books it, a ping (the bill's first ping row, a ping more in keepwarm's words), with the TTL
+  // settled, so it teaches nothing (learning it may move the tier: `TTL 1h?` and the hedge go), at every width
+  const settled: TtlInForce = { ms: HOUR, how: 'engine', sighting: 0 }
+  for (const isBillOpen of [false, true])
+    for (const keep of [0, NOW + 2 * HOUR])
+      for (const count of [0, 1, 9, 99]) {
+        const ledger = { ...INITIAL_LEDGER, prompt: 168_000, canFork: true, steps: 3, pings: { ...INITIAL_LEDGER.pings, count, usd: count * 0.03 } }
+        const booked = bookFork(ledger, { kind: 'topup', usage: { input: 30, output: 8, read: 168_000, write: 0 }, calledAt: NOW, gateOpen: true, model: OPUS }, { lastWarmAt: NOW - 9 * MIN, loadedAt: 0, ttlMs: HOUR, context: 168_000 })
+        expect(booked.ledger.pings.count).toBe(count + 1)
+        const before = viewOf(9 * MIN, { isTerminal: true, ttl: settled, hotpot: { ...HOTPOT, isBillOpen }, ledger }, { keepWarmUntil: keep })
+        const after = viewOf(0, { isTerminal: true, ttl: settled, hotpot: { ...HOTPOT, isBillOpen }, ledger: booked.ledger }, { keepWarmUntil: keep })
+        const name = `booked top-up ${isBillOpen ? 'bill ' : ''}${keep > 0 ? 'keep on ' : ''}${count} pings`
+        for (let cols = 74; cols <= 200; cols += 1) expect(`${name} @${cols}: ${terminalRowsBelow(after, cols)}`).toBe(`${name} @${cols}: ${terminalRowsBelow(before, cols)}`)
+      }
   // a chip's pick where its label takes a row more (30m a cell longer, or the option's 1h30m): with the TTL settled at
   // 88 to 90 columns, during a hold at 95 to 97
   const targeted: [HotpotView, number[]][] = [
@@ -727,6 +743,28 @@ test('a terminal pane\'s board and buttons take their rows as they wrap, the bil
   expect(wrappedRows(`abcdefgh ${'c'.repeat(12)}`, 10)).toBe(3)
   // in cells: a wide glyph takes two
   expect(wrappedRows('〆〆〆', 5)).toBe(2)
+})
+
+test('in a terminal the board\'s second line holds its rows through the focus and a passing turn, fork or compaction, so an arm\'s second press finds its button where the first left it', async () => {
+  // a dock of 47 to 72 cells, a mouse's first click armed (the pane may take the keys with it, and the keys hint goes)
+  for (const [age, action] of [[9 * MIN, 'zosui'], [9 * MIN, 'clear'], [74 * MIN, 'reheat']] as const)
+    for (const ttl of [ASSUMED, { ms: HOUR, how: 'engine', sighting: 0 } as TtlInForce])
+      for (let cells = 47; cells <= 72; cells += 1) {
+        const rest = viewOf(age, { isTerminal: true, isFocused: false, ttl })
+        const armed: HotpotView = { ...rest, isFocused: true, hotpot: { ...rest.hotpot, armed: { action, at: NOW - 1000 } } }
+        // the rows above the buttons as the drawing holds them (the second line at its own rows or more), and where the
+        // armed button sits
+        const drawn = (x: HotpotView) => {
+          const b = boardOf(x)
+          const above = wrappedRows(`${b.word}  ${b.tail}`, cells) + Math.max(wrappedRows(b.line, cells), boardLineRows(x, cells))
+          const at = buttonLayout(hotpotButtons(x), cells).at.find(p => p.key === ARMED_KEY[action])
+          return `${above} rows above, the button at ${at?.row},${at?.x}`
+        }
+        const name = `${action} ${ttl.how} @${cells}`
+        for (const f of [{}, { working: true }, { forkOut: true }, { compacting: true }]) for (const x of [armed, { ...armed, isFocused: false }]) expect(`${name}: ${drawn({ ...x, flags: { ...x.flags, ...f } })}`).toBe(`${name}: ${drawn(rest)}`)
+        // the line never draws more than it is held to
+        expect(`${name}: ${wrappedRows(boardOf(rest).line, cells) <= boardLineRows(rest, cells)}`).toBe(`${name}: true`)
+      }
 })
 
 test('the bill: reads, writes and the tax among them, pings, re-heats, compaction, the saving, the hit rate by member, a re-order, a day of keepwarm', async () => {

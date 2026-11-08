@@ -736,8 +736,9 @@ export const PRESS_AGAIN = 'Press again'
 
 /**
  * A two-press button, armed while `isArmed`: in a terminal it says `Press again` at its resting label's width
- * (no-break spaces after it, a cell each), so nothing in the row moves; elsewhere it keeps its label (a proportional
- * face cannot be padded to a width) and is drawn as the primary button. Dim, it never arms.
+ * (no-break spaces after it, a cell each), so nothing in the row moves; elsewhere it keeps its label and its look (a
+ * proportional face cannot be padded to a width, and a plain Button draws the same whatever its variant), and the
+ * board's overlay alone says it is armed. Dim, it never arms.
  */
 function twoPress(v: HotpotView, b: HotpotButton, isArmed: boolean): HotpotButton {
   if (!isArmed || b.reason !== '') return b
@@ -887,7 +888,8 @@ function figuresLine(v: HotpotView): string[] {
  * not hold the keys how to give them; during a hold, how to pay or start fresh.
  * While a button is armed, `armed` says what its second press does, drawn over
  * the board; under it the board keeps what it showed as the button armed (the
- * note up then, else the state's tail), so nothing moves under the second press.
+ * note up then, else the state's tail), and in a terminal the drawing holds the
+ * line to `boardLineRows`, so nothing moves under the second press.
  */
 export function boardOf(v: HotpotView): { word: string; tail: string; line: string; armed: string } {
   const s = stateWords(v)
@@ -988,34 +990,53 @@ export function wrappedRows(text: string, width: number): number {
   return rows
 }
 
+/** What passes without a press: a turn running, a fork out, a compaction, each drawing its dim reason on the board. */
+const PASSING: readonly Partial<HotpotFlags>[] = [{}, { working: true }, { forkOut: true }, { compacting: true }]
+
+/**
+ * The rows a terminal draws the board's second line in at `width`, which the drawing holds it to: its worst case over
+ * what changes without a press (the focus, which takes the keys hint away; a turn, a fork out or a compaction, which
+ * add a dim reason), so none of them moves the buttons, under an arm's second press least of all.
+ */
+export function boardLineRows(v: HotpotView, width: number): number {
+  // each passing thing alone, from none (two at once draw the first one's reason, one of these)
+  const x: HotpotView = { ...v, isFocused: false, flags: { ...v.flags, working: false, forkOut: false, compacting: false } }
+  return Math.max(...PASSING.map(p => wrappedRows(boardOf({ ...x, flags: { ...x.flags, ...p } }).line, width)))
+}
+
 /**
  * The rows a terminal pane's board and buttons take at `columns` (inside its one-cell padding: the board's two lines
- * wrapped as the terminal wraps them, the buttons as `buttonLayout` packs them), and the bill's while it is open (its
- * title, its rows, its foot): what is left decides the picture's tier. Counted on the worst case of what a press, a
- * turn, a fork out or the focus changes: the most rows over keepwarm off at each length and on (at its longest words),
- * the held line before and after Start fresh, a turn running, a fork out and compacting each with its dim reason, the
- * keys hint in, the bill's top-up row wherever it can show; no note and nothing armed (an arm's words are drawn over
- * the board). So none of those flips the tier: the pane's size, opening the bill and the pot's own state move it (its
- * phase, by time, a send or a press that warms, compacts or ends a hold; the fork gate shutting or opening).
+ * wrapped as the terminal wraps them, the second held to `boardLineRows`, the buttons as `buttonLayout` packs them),
+ * and the bill's while it is open (its title, its rows, its foot): what is left decides the picture's tier. Counted on
+ * the worst case of what a press, a turn, a fork out, a ping or the focus changes: the most rows over keepwarm off at
+ * each length and on (at its longest words, a ping more than it has), the held line before and after Start fresh, a
+ * turn running, a fork out and compacting each with its dim reason, the keys hint in, the bill's top-up row and its
+ * first ping's row wherever they can show; no note and nothing armed (an arm's words are drawn over the board). So none
+ * of those flips the tier: the pane's size, opening the bill and the pot's own state move it (its phase, by time, a
+ * send or a press that warms, compacts or ends a hold; the fork gate shutting or opening; the TTL being learned, which
+ * takes `TTL 1h?` and the top-up's hedge away).
  */
 export function terminalRowsBelow(v: HotpotView, columns: number): number {
   const width = Math.max(1, columns - 2)
   const rest: HotpotView = { ...v, isFocused: false, hotpot: { ...v.hotpot, armed: null, note: null }, flags: { ...v.flags, working: false, forkOut: false, compacting: false } }
   const picks = [...new Set([...PICKS, v.pick, v.keepOption ?? v.pick])]
-  // keepwarm off at each length; on with `under 1m` left, its longest words
-  const keeps: HotpotView[] = [...picks.map(pick => ({ ...rest, pick, cache: { ...rest.cache, keepWarmUntil: 0 } })), { ...rest, cache: { ...rest.cache, keepWarmUntil: v.now + 30_000 } }]
+  // keepwarm off at each length; on with `under 1m` left and a ping more than it has (two at least, the plural's `s`),
+  // its longest words
+  const pinged = { ...rest.ledger, pings: { ...rest.ledger.pings, count: Math.max(2, rest.ledger.pings.count + 1) } }
+  const keeps: HotpotView[] = [...picks.map(pick => ({ ...rest, pick, cache: { ...rest.cache, keepWarmUntil: 0 } })), { ...rest, ledger: pinged, cache: { ...rest.cache, keepWarmUntil: v.now + 30_000 } }]
   const views = v.feast.phase === 'held' ? keeps.flatMap(k => [false, true].map(clearInBox => ({ ...k, flags: { ...k.flags, clearInBox } }))) : keeps
-  const passing: Partial<HotpotFlags>[] = [{}, { working: true }, { forkOut: true }, { compacting: true }]
   const board = Math.max(
     ...views.map(x => {
       const b = boardOf(x)
-      const line = Math.max(...passing.map(p => wrappedRows(boardOf({ ...x, flags: { ...x.flags, ...p } }).line, width)))
-      return wrappedRows(`${b.word}  ${b.tail}`, width) + line + buttonLayout(hotpotButtons(x), width).rows
+      return wrappedRows(`${b.word}  ${b.tail}`, width) + boardLineRows(x, width) + buttonLayout(hotpotButtons(x), width).rows
     }),
   )
   if (!v.hotpot.isBillOpen) return board
   const shown = billRows(rest).rows
-  return board + shown.length + 2 + (hedgeCanShow(rest) && !shown.some(r => r.label === HEDGE) ? 1 : 0)
+  // rows a press or a ping adds while the pot stays warm: the top-up's hedge, and the first ping's (a top-up books one)
+  const hedge = hedgeCanShow(rest) && !shown.some(r => r.label === HEDGE) ? 1 : 0
+  const firstPing = isWarmPhase(rest.feast.phase) && !cachingOff(rest.ledger) && !shown.some(r => r.label === 'Keepwarm') ? 1 : 0
+  return board + shown.length + 2 + hedge + firstPing
 }
 
 /** `/hotpot` where nothing can draw: the wooden board as one line. */
