@@ -244,11 +244,11 @@ step books.
      second press does is drawn over the wooden board in a Box keyed `hotpot-armed` (`position: 'absolute'` over the
      board's two lines, on its paint, `overflow: 'hidden'`), out of the flow: the board beneath keeps what it showed as
      the button armed (the note up then, else the tail; a later note waits for the arm to end, or the arm that replaces
-     it, its 6 s starting then), so nothing moves under the second press. In a terminal the board's second line is held
-     to `boardLineRows` (its rows with the keys hint in and a passing turn's, fork's or compaction's dim reason), so the
-     focus moving between the presses (a click on the pane, ctrl+x tab) moves nothing either. A press on any other
-     button, a dim one's too, lets the arm go first (`disarm`): the armed button rests again, and that press's note
-     shows.
+     it, its 6 s starting then, or for a press that lets the arm go and arms nothing, when it shows), so nothing moves
+     under the second press. In a terminal the board's second line is held to `boardLineRows` (its rows with the keys
+     hint in and a passing turn's, fork's or compaction's dim reason), so the focus moving between the presses (a click
+     on the pane, ctrl+x tab) moves nothing either. A press on any other button, a dim one's too, lets the arm go first
+     (`disarm`): the armed button rests again, and that press's note shows.
    - `Clear the table (/clear)` (`f`, as the Cache Tax card's `Start fresh`; `hotpot-clear`; over a draft it arms
      first, as The actions says); its note says the next send writes a fresh pot, and that keepwarm stays on.
    - `The bill` / `Close the bill` (`b`, `hotpot-bill`); `Close` (`c`, `hotpot-close`).
@@ -273,17 +273,17 @@ body columns and 17 body rows over what the wooden board, the buttons and an ope
 board's lines wrapped as the terminal wraps them, wrap-ansi's with `trim: false`, where a space after a word that fills
 its row opens the next; the buttons as their row packs them; an open bill's title, rows and foot. Counted on the worst
 case of what a press, a turn, a fork out, a ping or the focus changes: keepwarm off at each length and on at its longest
-words (`under 1m` left, its ping count wider than any soon booked, a hundred at least), the held line before and after
-Start fresh, a turn running, a fork out and compacting each with its dim reason, the keys hint, the bill's top-up row,
-its first ping's row (a top-up books one) and its first re-heat's (one that warms nothing still books it) wherever they
-can show; no note, nothing armed (an arm's words are drawn over the board). So none of those flips the tier: the pane's
-size, opening the bill and the pot's own state move it, its phase (by time, a send, or a press that warms, compacts or
-ends a hold), the fork gate shutting or opening, and the TTL being learned (`TTL 1h?` and the top-up's hedge go));
-quadrants (35×9 cells) need 36 columns; narrower, text alone. The heads take the mood minis by phase: happy at `feast`
-and `zosui`; focused at `simmer`, `low` and `tend` (Nijika happy at `tend`) and, as the desktop's `wait`, at `none`,
-`cleared` and `off`; anxious at `last`; panic at `held`; at `cold` Bocchi hides (her box), Nijika and Kita melt and Ryo
-is anxious (her deadpan `(-_-)`; her `hiding` is a box too, and the cold gives the box to Bocchi alone). Then the wooden
-board's two lines as text, the buttons and the bill, as on the desktop.
+words (`under 1m` left, its ping words wider than any soon booked, a thousand pings and a thousand dollars at least),
+the held line before and after Start fresh, a turn running, a fork out and compacting each with its dim reason, the keys
+hint, the bill's top-up row, its first ping's row (a top-up books one) and its first re-heat's (one that warms nothing
+still books it) wherever they can show; no note, nothing armed (an arm's words are drawn over the board). So none of
+those flips the tier: the pane's size, opening the bill and the pot's own state move it, its phase (by time, a send, or
+a press that warms, compacts or ends a hold), the fork gate shutting or opening, and the TTL being learned (`TTL 1h?`
+and the top-up's hedge go)); quadrants (35×9 cells) need 36 columns; narrower, text alone. The heads take the mood minis
+by phase: happy at `feast` and `zosui`; focused at `simmer`, `low` and `tend` (Nijika happy at `tend`) and, as the
+desktop's `wait`, at `none`, `cleared` and `off`; anxious at `last`; panic at `held`; at `cold` Bocchi hides (her box),
+Nijika and Kita melt and Ryo is anxious (her deadpan `(-_-)`; her `hiding` is a box too, and the cold gives the box to
+Bocchi alone). Then the wooden board's two lines as text, the buttons and the bill, as on the desktop.
 
 The pot rides with the heads: `LiveSprite` and `composite` take an optional still backdrop (`under`, the pot's
 pixels) that every repaint composites first, so the sprite clock repaints the heads over the pot and the pot changes
@@ -503,9 +503,10 @@ Each button lists its dim reasons in order; the one said is the first that appli
 - **What a press says**: an action's outcome, and a keepwarm ping's while the pane is open, is the hotpot atom's
   `note`: 6 s in place of the tail of the wooden board's first line, whatever the **Toasts** option (toasts go out
   as stated besides). Under an arm the board keeps the note that was up as it armed, beneath the arm's words; one that
-  lands under it (a fork's outcome, a ping's) starts its 6 s as the arm ends, or the arm that replaces it, and one
-  written after an arm lapsed shows at once; a press on another button, a dim one's
-  too, lets the arm go, so that press's note shows at once.
+  lands under it (a fork's outcome, a ping's) starts its 6 s as the arm ends, or the arm that replaces it, or as a press
+  that lets the arm go and arms nothing shows it (a later arm then keeps it beneath, as the note up then), and one
+  written after an arm lapsed shows at once; a press on another button, a dim one's too, lets the arm go, so that
+  press's note shows at once.
 - **Two calls the mod has not made before**, `$.session.compact` and `$.prompt.read`, are guarded where they are made,
   like the five features `FEATURES` (`hooks/lib/engine.ts`) lists: a missing call (`isMissingApi`) switches its
   feature off for the session. `FEATURES` gains `compact` (`$.session.compact`, `the Hotpot's zosui`) and `draft`
