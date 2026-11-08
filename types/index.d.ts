@@ -249,8 +249,11 @@ export type KessokuHotpot = {
   isBillOpen: boolean
   /** Keepwarm's length for Keep the fire on, in milliseconds; 0 for the Keepwarm default option. */
   pick: number
-  /** Re-heat, zosui or clear the table, pressed once at `at`: a second press within 10 s runs it. */
-  armed: { action: 'reheat' | 'zosui' | 'clear'; at: number } | null
+  /**
+   * Re-heat, zosui or clear the table, pressed once at `at`: a second press within 10 s runs it. `since`: the press
+   * whose board it keeps beneath, the first of the arms it replaced (absent from values an older version wrote: `at`).
+   */
+  armed: { action: 'reheat' | 'zosui' | 'clear'; at: number; since?: number } | null
   /** A one-shot moment of the feast (a ping, a re-heat, keepwarm switched on, a paid re-order) until `until`. */
   moment: { kind: 'ping' | 'reheat' | 'keepon' | 'paid'; until: number } | null
   /** An action's outcome, in place of the wooden board's first tail until `until`. */

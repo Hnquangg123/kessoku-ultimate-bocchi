@@ -731,6 +731,32 @@ const ARMED = (v: HotpotView, action: 'reheat' | 'zosui' | 'clear') => v.hotpot.
 /** The button each two-press action arms. */
 export const ARMED_KEY = { reheat: 'hotpot-topup', zosui: 'hotpot-zosui', clear: 'hotpot-clear' } as const
 
+/** The arm and the note, as a press leaves them. */
+export type ArmAndNote = Pick<KessokuHotpot, 'armed' | 'note'>
+
+/**
+ * A two-press button arms at `now`. Over an arm the board draws (`isDrawn`: live, its button able to act) it replaces
+ * that one: it keeps beneath what that one kept (the board as the first of them armed, `since`), and a note still
+ * waiting for that one's end waits for this one's. With none drawn, a note up now that was still to start (let out
+ * early, as its arm's button went dim) starts now, so this arm keeps it beneath as the note up then.
+ */
+export function armOver(h: ArmAndNote, action: 'reheat' | 'zosui' | 'clear', now: number, isDrawn: boolean): ArmAndNote {
+  const n = h.note
+  const since = isDrawn && h.armed !== null ? (h.armed.since ?? h.armed.at) : now
+  const note = n === null || n.until - NOTE_MS <= now ? n : { ...n, until: isDrawn ? now + ARM_MS + NOTE_MS : now + NOTE_MS }
+  return { armed: { action, at: now, since }, note }
+}
+
+/**
+ * The arm let go at `now` with nothing armed after (its second press, or another press that arms nothing): a note
+ * still waiting for it starts now, for its 6 s, before the press's own work (a fork, a compaction), so it shows from
+ * then and a later arm keeps it beneath.
+ */
+export function letGo(h: ArmAndNote, now: number): ArmAndNote {
+  const n = h.note
+  return { armed: null, note: n === null || n.until - NOTE_MS <= now ? n : { ...n, until: now + NOTE_MS } }
+}
+
 /** An armed two-press button's label in a terminal; the board says what the second press does. */
 export const PRESS_AGAIN = 'Press again'
 
@@ -888,16 +914,19 @@ function figuresLine(v: HotpotView): string[] {
  * not hold the keys how to give them; during a hold, how to pay or start fresh.
  * While a button is armed, `armed` says what its second press does, drawn over
  * the board; under it the board keeps what it showed as the button armed (the
- * note up then, else the state's tail), and in a terminal the drawing holds the
- * line to `boardLineRows`, so nothing moves under the second press.
+ * note up then, else the state's tail; an arm that replaced another keeps what
+ * that one kept, `armOver`), and in a terminal the drawing holds the line to
+ * `boardLineRows`, so nothing moves under the second press.
  */
 export function boardOf(v: HotpotView): { word: string; tail: string; line: string; armed: string } {
   const s = stateWords(v)
   const armed = armedTail(v)
   const n = v.hotpot.note
   const arm = v.hotpot.armed
-  // the note up now; under an arm, the one up as it armed (a later one waits for the arm to end)
-  const note = n === null ? '' : arm === null || armed === '' ? (v.now < n.until ? n.text : '') : n.until - NOTE_MS <= arm.at && arm.at < n.until ? n.text : ''
+  // the note up now; under an arm, the one up as the first of the arms it replaced armed (`since`; absent from values
+  // an older version wrote: its own press), and a later one waits for the arm to end
+  const since = arm === null ? 0 : (arm.since ?? arm.at)
+  const note = n === null ? '' : arm === null || armed === '' ? (v.now < n.until ? n.text : '') : n.until - NOTE_MS <= since && since < n.until ? n.text : ''
   const keys = v.isTerminal && !v.isFocused ? ['ctrl+x tab for its keys'] : []
   if (v.feast.phase === 'held') {
     // how to pay (the prompt back in the box, or, the box could not take it, the next send) and how to start fresh;

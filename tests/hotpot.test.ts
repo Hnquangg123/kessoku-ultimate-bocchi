@@ -705,7 +705,7 @@ test('a terminal pane\'s board and buttons take their rows as they wrap, the bil
   for (const isBillOpen of [false, true])
     for (const keep of [0, NOW + 2 * HOUR])
       // the counts and the price just before each of their digits' boundaries too
-      for (const [count, usd] of [[0, 0], [1, 0.03], [8, 0.24], [9, 0.27], [98, 2.94], [99, 2.97], [5, 9.98], [5, 99.94], [998, 999.45]] as const) {
+      for (const [count, usd] of [[0, 0], [1, 0.03], [8, 0.24], [9, 0.27], [98, 2.94], [99, 2.97], [5, 9.98], [5, 99.94], [998, 999.48]] as const) {
         const ledger = { ...INITIAL_LEDGER, prompt: 168_000, canFork: true, steps: 3, pings: { ...INITIAL_LEDGER.pings, count, usd } }
         const booked = bookFork(ledger, { kind: 'topup', usage: { input: 30, output: 8, read: 168_000, write: 0 }, calledAt: NOW, gateOpen: true, model: OPUS }, { lastWarmAt: NOW - 9 * MIN, loadedAt: 0, ttlMs: HOUR, context: 168_000 })
         expect(booked.ledger.pings.count).toBe(count + 1)

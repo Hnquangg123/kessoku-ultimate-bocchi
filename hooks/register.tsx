@@ -129,6 +129,7 @@ import {
   NOTE_MS,
   TOP_UP_MIN_TOKENS,
   ampKind,
+  armOver,
   billRows,
   boardLineRows,
   boardOf,
@@ -155,6 +156,7 @@ import {
   keepwarmUsd,
   lastWindow,
   lengthText,
+  letGo,
   minutesText,
   newLedger,
   nextPingAt,
@@ -1029,7 +1031,7 @@ async function sendFork($: EngineInterface, kind: ForkKind): Promise<ForkSent> {
 /**
  * A press's outcome (or a ping's while the Hotpot is up), in place of the wooden board's first tail for its 6 s; one
  * that lands under an arm (a fork's outcome: a press lets an arm go first) starts its 6 s as the arm ends, or the arm
- * that replaces it (secondPress), which the board waits for.
+ * that replaces it (`armOver`), or as a press lets the arm go (`letGo`), which the board waits for.
  */
 async function noteHotpot($: EngineInterface, text: string, always = true): Promise<void> {
   const now = await $.clock.now()
@@ -1963,33 +1965,38 @@ async function liveButton($: EngineInterface, key: string, now: number): Promise
   return b === undefined || b.reason !== '' ? null : v
 }
 
-/** Re-heat, zosui or clear: the first press arms (10 s), true on the second within them. */
+/**
+ * Re-heat, zosui or clear: the first press arms (10 s), over another button's arm replacing it (`armOver`: the board
+ * beneath keeps what it showed); true on the second within them, which lets the arm go (`letGo`: a note waiting for
+ * it starts then, before the press's work).
+ */
 async function secondPress($: EngineInterface, action: 'reheat' | 'zosui' | 'clear', now: number): Promise<boolean> {
-  const armed = (await read($, hotpot)).armed
+  const v = await hotpotViewOf($, null, now)
+  const armed = v.hotpot.armed
   if (armed !== null && armed.action === action && now - armed.at < ARM_MS) {
-    await update($, hotpot, h => ({ ...h, armed: null }))
+    await update($, hotpot, h => ({ ...h, ...letGo(h, now) }))
     return true
   }
-  // a note waiting for the end of an arm this one replaces waits for this one's
-  await update($, hotpot, h => ({ ...h, armed: { action, at: now }, note: h.note !== null && h.note.until - NOTE_MS > now ? { ...h.note, until: now + ARM_MS + NOTE_MS } : h.note }))
+  const isDrawn = hotpotButtons(v).some(b => b.isArmed === true)
+  await update($, hotpot, h => ({ ...h, ...armOver(h, action, now, isDrawn) }))
   return false
 }
 
-/** Another button's press lets an arm go: the armed button rests again, and that press's note shows. */
-async function disarm($: EngineInterface, key: string): Promise<void> {
-  const armed = (await read($, hotpot)).armed
-  if (armed !== null && ARMED_KEY[armed.action] !== key) await update($, hotpot, h => ({ ...h, armed: null }))
+/**
+ * A press that arms nothing lets another button's arm go (an armed button's own press reads it): it rests again, a
+ * note waiting for the arm starts then (`letGo`), before the press's work, and that press's own note shows at once.
+ */
+async function letGoArm($: EngineInterface, key: string): Promise<void> {
+  const now = await $.clock.now()
+  await update($, hotpot, h => {
+    if (h.armed !== null && ARMED_KEY[h.armed.action] === key) return h
+    const next = letGo(h, now)
+    return next.armed === h.armed && next.note === h.note ? h : { ...h, ...next }
+  })
 }
 
-/**
- * After a press that left no arm, a note still waiting for the arm it let go starts now (it shows from here), so a
- * later arm keeps it beneath as the note up then rather than moving it to its own end (secondPress moves only a note
- * still waiting under the arm it replaces).
- */
-async function startWaitingNote($: EngineInterface): Promise<void> {
-  const now = await $.clock.now()
-  await update($, hotpot, h => (h.armed === null && h.note !== null && h.note.until - NOTE_MS > now ? { ...h, note: { ...h.note, until: now + NOTE_MS } } : h))
-}
+/** The buttons whose press may arm: they let another's arm go in their own press, or replace it with theirs. */
+const CAN_ARM: ReadonlySet<string> = new Set(Object.values(ARMED_KEY))
 
 /** Keep the fire on for the pick, or let it cool; on a cold or empty cache the pings start with the next send. */
 async function pressKeep($: EngineInterface): Promise<void> {
@@ -2015,9 +2022,14 @@ async function pressKeep($: EngineInterface): Promise<void> {
 async function pressTopUp($: EngineInterface): Promise<void> {
   const now = await $.clock.now()
   const v = await liveButton($, 'hotpot-topup', now)
-  if (v === null) return
+  if (v === null) {
+    await letGoArm($, 'hotpot-topup')
+    return
+  }
   const isReheat = v.feast.phase === 'cold'
-  if (isReheat && !(await secondPress($, 'reheat', now))) return
+  if (isReheat) {
+    if (!(await secondPress($, 'reheat', now))) return
+  } else await letGoArm($, 'hotpot-topup')
   const r = await sendFork($, isReheat ? 'reheat' : 'topup')
   if (!r.sent) return
   const c = await read($, cache)
@@ -2068,7 +2080,10 @@ async function pressTopUp($: EngineInterface): Promise<void> {
  */
 async function pressZosui($: EngineInterface): Promise<void> {
   const now = await $.clock.now()
-  if ((await liveButton($, 'hotpot-zosui', now)) === null) return
+  if ((await liveButton($, 'hotpot-zosui', now)) === null) {
+    await letGoArm($, 'hotpot-zosui')
+    return
+  }
   if (!(await secondPress($, 'zosui', now))) return
   isCompacting = true
   await setMood($, 'melting', 'compacting the set…').catch(() => undefined)
@@ -2093,7 +2108,10 @@ async function pressZosui($: EngineInterface): Promise<void> {
 /** Clear the table: /clear put in the box for the person to send; over a draft, a second press first. */
 async function pressClear($: EngineInterface, isTerminal: boolean): Promise<void> {
   const now = await $.clock.now()
-  if ((await liveButton($, 'hotpot-clear', now)) === null) return
+  if ((await liveButton($, 'hotpot-clear', now)) === null) {
+    await letGoArm($, 'hotpot-clear')
+    return
+  }
   let isDraft = true
   if (features.draft) {
     try {
@@ -2104,7 +2122,8 @@ async function pressClear($: EngineInterface, isTerminal: boolean): Promise<void
     }
   }
   if (isDraft && !(await secondPress($, 'clear', now))) return
-  await update($, hotpot, h => ({ ...h, armed: null }))
+  // arming nothing, it lets the arm up go (its own, over a draft since emptied, too)
+  await update($, hotpot, h => ({ ...h, ...letGo(h, now) }))
   const filled = await $.prompt.fill({ text: '/clear', mode: 'replace' }).catch(() => null)
   // No box to fill on this host (it draws its own composer): Clear the table is dim from now on.
   if (isNoBox(filled)) hostNoBox = true
@@ -3533,12 +3552,10 @@ function drawHotpot($: EngineInterface, e: Site, v: HotpotView, now: number): Dr
     'hotpot-tax-clear': () => pressStartFresh($, isTerminal),
     'hotpot-tax-dismiss': () => dismissHold($),
   }
-  // a press lets another button's arm go first (an armed button's own second press reads it); left with no arm, a
-  // note that waited for the one let go starts then
-  const pressOf = (key: string, run: (() => Promise<unknown>) | undefined) => () =>
-    void disarm($, key)
-      .then(run)
-      .then(() => startWaitingNote($))
+  // a press that cannot arm lets another button's arm go first (`letGoArm`); Top up, Zosui and Clear decide in their
+  // own press, so an arm of theirs replaces the one up (the board beneath keeps what it showed) and one that arms
+  // nothing lets it go
+  const pressOf = (key: string, run: (() => Promise<unknown>) | undefined) => () => void (run !== undefined && CAN_ARM.has(key) ? run() : letGoArm($, key).then(run))
   const bill = v.hotpot.isBillOpen ? billRows(v) : null
   return (
     <Box flexDirection="column" backgroundColor={isTerminal ? bg() : SCENE_COLORS.wall}>
