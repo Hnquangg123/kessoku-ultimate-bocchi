@@ -174,8 +174,10 @@ step books.
 - It asks no `focus`: its letters spend (a top-up, keepwarm) or close it, so a prompt typed on after `/hotpot` must
   reach the prompt, not press them. `ctrl+x tab` or a click hands it the keys (on the panel `b` stays Bocchi's solo).
 - State: a new atom `hotpot: KessokuHotpot`: `isOpen`, `inBand`, `isBillOpen`, `pick` (keepwarm's length, initially
-  the **Keepwarm default** option), `armed: { action: 'reheat' | 'zosui' | 'clear'; at } | null` (one 10 s window for
-  all three), `moment: { kind: 'ping' | 'reheat' | 'keepon' | 'paid'; until } | null`, `note: { text; until } | null`
+  the **Keepwarm default** option), `armed: { action: 'reheat' | 'zosui' | 'clear'; at; since? } | null` (one 10 s
+  window for all three; `since` is the press whose board the arm keeps beneath: an arm made over a drawn arm takes
+  that one's, so a run of arms keeps the first one's, and a value an older version wrote lacks it, read as `at`),
+  `moment: { kind: 'ping' | 'reheat' | 'keepon' | 'paid'; until } | null`, `note: { text; until } | null`
   (The actions' "What a press says") and `sample: { model; tokens; ageMs; heldAt } | null` (the `/bocchi tax`
   preview's model, size and age, stamped with its hold's `heldAt`; its age the cache's only once it has gone cold,
   else two TTLs back, and running on from `heldAt`, so the card reads and counts as a real hold would; The cache's
