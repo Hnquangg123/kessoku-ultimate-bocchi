@@ -243,12 +243,16 @@ step books.
      width, and a plain Button draws the same whatever its variant), and the overlay alone says it is armed. What its
      second press does is drawn over the wooden board in a Box keyed `hotpot-armed` (`position: 'absolute'` over the
      board's two lines, on its paint, `overflow: 'hidden'`), out of the flow: the board beneath keeps what it showed as
-     the button armed (the note up then, else the tail; a later note waits for the arm to end, or the arm that replaces
-     it, its 6 s starting then, or for a press that lets the arm go and arms nothing, when it shows), so nothing moves
-     under the second press. In a terminal the board's second line is held to `boardLineRows` (its rows with the keys
-     hint in and a passing turn's, fork's or compaction's dim reason), so the focus moving between the presses (a click
-     on the pane, ctrl+x tab) moves nothing either. A press on any other button, a dim one's too, lets the arm go first
-     (`disarm`): the armed button rests again, and that press's note shows.
+     the button armed (the note up then, else the tail), so nothing moves under the second press. An arm that replaces
+     another keeps what that one kept (`armOver`: its `since`), past the note's 6 s too. A note that lands under an arm
+     waits for the arm to end, or the arm that replaces it, its 6 s starting then; a press that lets the arm go, its own
+     second press too, starts them as it lets go, before its work (a fork, a compaction). An armed button a turn dims
+     lets the board show again, a waiting note too, and an arm made then keeps that note beneath. In a terminal the
+     board's second line is held to `boardLineRows` (its rows with the keys hint in and a passing turn's, fork's or
+     compaction's dim reason), so the focus moving between the presses (a click on the pane, ctrl+x tab) moves nothing
+     either. A press on any other button, a dim one's too, lets the arm go first (`letGoArm`; Top up, Zosui and Clear
+     decide in their own press, so an arm of theirs replaces it): the armed button rests again, and that press's note
+     shows.
    - `Clear the table (/clear)` (`f`, as the Cache Tax card's `Start fresh`; `hotpot-clear`; over a draft it arms
      first, as The actions says); its note says the next send writes a fresh pot, and that keepwarm stays on.
    - `The bill` / `Close the bill` (`b`, `hotpot-bill`); `Close` (`c`, `hotpot-close`).
@@ -259,7 +263,7 @@ step books.
      the card's does.
    - A button that cannot act now is drawn dim (`dimColor`, no `variant`) with an `onPress` that spends and arms
      nothing (Button requires one and has no disabled state), though like any press, its hotkey's too, it lets another
-     button's arm go (`disarm`); the wooden board says why.
+     button's arm go (`letGoArm`); the wooden board says why.
 4. The bill, when open: `お会計 · this conversation's cache` (not the session's: the ledger starts over at `/clear`
    and `/resume`), then Text rows (label, detail, figure) as [The bill](#the-bill) lists them, on the wooden board's
    paint in its own inks (the figures light green or rose for good and bad), never the theme's: the pane's wall stays
@@ -502,11 +506,11 @@ Each button lists its dim reasons in order; the one said is the first that appli
 - **The bill** toggles `isBillOpen`; **Close** closes the pane.
 - **What a press says**: an action's outcome, and a keepwarm ping's while the pane is open, is the hotpot atom's
   `note`: 6 s in place of the tail of the wooden board's first line, whatever the **Toasts** option (toasts go out
-  as stated besides). Under an arm the board keeps the note that was up as it armed, beneath the arm's words; one that
-  lands under it (a fork's outcome, a ping's) starts its 6 s as the arm ends, or the arm that replaces it, or as a press
-  that lets the arm go and arms nothing shows it (a later arm then keeps it beneath, as the note up then), and one
-  written after an arm lapsed shows at once; a press on another button, a dim one's too, lets the arm go, so that
-  press's note shows at once.
+  as stated besides). Under an arm the board keeps the note that was up as it armed, beneath the arm's words, and so
+  does an arm that replaces it, past the note's 6 s too; one that lands under it (a fork's outcome, a ping's) starts
+  its 6 s as the arm ends, or the arm that replaces it, or as a press lets the arm go (its own second press too, before
+  its work), and a later arm keeps it beneath as the note up then; one written after an arm lapsed shows at once; a
+  press on another button, a dim one's too, lets the arm go, so that press's note shows at once.
 - **Two calls the mod has not made before**, `$.session.compact` and `$.prompt.read`, are guarded where they are made,
   like the five features `FEATURES` (`hooks/lib/engine.ts`) lists: a missing call (`isMissingApi`) switches its
   feature off for the session. `FEATURES` gains `compact` (`$.session.compact`, `the Hotpot's zosui`) and `draft`
