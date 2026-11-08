@@ -4330,10 +4330,15 @@ test('Re-heat armed over another button\'s arm moves a note waiting under that o
   await clock.advance(10_500)
   expect(await armedWords(pane)).toBeUndefined()
   expect((await boardLines(pane))[0]).toMatch(/ {2}could not re-heat; it cost \$0\.00$/)
+  // its 6 s run from Re-heat's end, not Zosui's (16.3 s): up at 19.9 s, gone at 20.1 s
+  await clock.advance(5400)
+  expect((await boardLines(pane))[0]).toMatch(/ {2}could not re-heat; it cost \$0\.00$/)
+  await clock.advance(200)
+  expect((await boardLines(pane))[0]).not.toMatch(/could not re-heat/)
   await pane.unmount()
 })
 
-test('a Clear over an empty box lets another button\'s arm go: its note shows, and the next Zosui press arms again', async ($, on) => {
+test('a Clear over an empty box lets an arm go, another button\'s or its own: its note shows, and the next Zosui press arms again', async ($, on) => {
   const seen = fresh()
   const st = watchState(on)
   const clock = mock.clock(on, { now: 1_000_000 })
@@ -4359,6 +4364,19 @@ test('a Clear over an empty box lets another button\'s arm go: its note shows, a
   await clock.settle()
   expect(await armedWords(pane)).toMatch(/ {2}press again within 10 s to compact /)
   expect(seen.compacts).toBe(0)
+  // its own: Clear armed over a draft once Zosui's arm lapsed, the draft gone from the box, Clear again
+  await clock.advance(11_000)
+  knobs.draft = 'half a thought'
+  await pane.press({ key: 'hotpot-clear' })
+  await clock.settle()
+  expect(await armedWords(pane)).toMatch(/your draft gives way to \/clear$/)
+  knobs.draft = undefined
+  await clock.advance(1000)
+  await pane.press({ key: 'hotpot-clear' })
+  await clock.settle()
+  expect(stateOf(st, 'hotpot').armed).toBeNull()
+  expect(await armedWords(pane)).toBeUndefined()
+  expect((await boardLines(pane))[0]).toMatch(/ {2}\/clear is in the box: press Enter, and the next send writes a fresh pot$/)
   await pane.unmount()
 })
 
