@@ -1009,9 +1009,10 @@ export function boardLineRows(v: HotpotView, width: number): number {
  * wrapped as the terminal wraps them, the second held to `boardLineRows`, the buttons as `buttonLayout` packs them),
  * and the bill's while it is open (its title, its rows, its foot): what is left decides the picture's tier. Counted on
  * the worst case of what a press, a turn, a fork out, a ping or the focus changes: the most rows over keepwarm off at
- * each length and on (at its longest words, a ping more than it has), the held line before and after Start fresh, a
- * turn running, a fork out and compacting each with its dim reason, the keys hint in, the bill's top-up row and its
- * first ping's row wherever they can show; no note and nothing armed (an arm's words are drawn over the board). So none
+ * each length and on (at its longest words, its ping count wider than any soon booked), the held line before and after
+ * Start fresh, a turn running, a fork out and compacting each with its dim reason, the keys hint in, the bill's top-up
+ * row, its first ping's row and its first re-heat's wherever they can show; no note and nothing armed (an arm's words
+ * are drawn over the board). So none
  * of those flips the tier: the pane's size, opening the bill and the pot's own state move it (its phase, by time, a
  * send or a press that warms, compacts or ends a hold; the fork gate shutting or opening; the TTL being learned, which
  * takes `TTL 1h?` and the top-up's hedge away).
@@ -1020,9 +1021,10 @@ export function terminalRowsBelow(v: HotpotView, columns: number): number {
   const width = Math.max(1, columns - 2)
   const rest: HotpotView = { ...v, isFocused: false, hotpot: { ...v.hotpot, armed: null, note: null }, flags: { ...v.flags, working: false, forkOut: false, compacting: false } }
   const picks = [...new Set([...PICKS, v.pick, v.keepOption ?? v.pick])]
-  // keepwarm off at each length; on with `under 1m` left and a ping more than it has (two at least, the plural's `s`),
-  // its longest words
-  const pinged = { ...rest.ledger, pings: { ...rest.ledger.pings, count: Math.max(2, rest.ledger.pings.count + 1) } }
+  // keepwarm off at each length; on with `under 1m` left and its ping count at a width no ping or top-up soon passes (a
+  // hundred at least: a ping more than it has, its plural `s`, its digits; fmtUsd keeps the price's width), its longest
+  // words
+  const pinged = { ...rest.ledger, pings: { ...rest.ledger.pings, count: Math.max(100, rest.ledger.pings.count + 1) } }
   const keeps: HotpotView[] = [...picks.map(pick => ({ ...rest, pick, cache: { ...rest.cache, keepWarmUntil: 0 } })), { ...rest, ledger: pinged, cache: { ...rest.cache, keepWarmUntil: v.now + 30_000 } }]
   const views = v.feast.phase === 'held' ? keeps.flatMap(k => [false, true].map(clearInBox => ({ ...k, flags: { ...k.flags, clearInBox } }))) : keeps
   const board = Math.max(
@@ -1033,10 +1035,13 @@ export function terminalRowsBelow(v: HotpotView, columns: number): number {
   )
   if (!v.hotpot.isBillOpen) return board
   const shown = billRows(rest).rows
-  // rows a press or a ping adds while the pot stays warm: the top-up's hedge, and the first ping's (a top-up books one)
+  // rows a press or a ping adds while the pot keeps its phase: the top-up's hedge and the first ping's (a top-up books
+  // one) while warm; while cold, the first re-heat's (one that warms nothing still books it)
+  const off = cachingOff(rest.ledger)
   const hedge = hedgeCanShow(rest) && !shown.some(r => r.label === HEDGE) ? 1 : 0
-  const firstPing = isWarmPhase(rest.feast.phase) && !cachingOff(rest.ledger) && !shown.some(r => r.label === 'Keepwarm') ? 1 : 0
-  return board + shown.length + 2 + hedge + firstPing
+  const firstPing = isWarmPhase(rest.feast.phase) && !off && !shown.some(r => r.label === 'Keepwarm') ? 1 : 0
+  const firstReheat = rest.feast.phase === 'cold' && !off && !shown.some(r => r.label === 'Re-heats') ? 1 : 0
+  return board + shown.length + 2 + hedge + firstPing + firstReheat
 }
 
 /** `/hotpot` where nothing can draw: the wooden board as one line. */

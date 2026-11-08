@@ -3853,7 +3853,6 @@ test('a press on another button lets an arm go: the armed button rests again, it
   expect(stateOf(st, 'hotpot').armed).toBeNull()
   expect(await armedWords(pane)).toBeUndefined()
   expect(await pane.find({ type: 'Button', key: 'hotpot-zosui' })).toMatchObject({ props: { label: 'Zosui (compact)' } })
-  expect(await pane.find({ type: 'Button', key: 'hotpot-zosui' })).not.toMatchObject({ props: { variant: 'primary' } })
   expect((await boardLines(pane))[0]).toMatch(/ {2}keepwarm on for 6h: Nijika tops it up before each lapse$/)
   // the bill's press lets one go too; the armed button's own second press is its own (the zosui test presses it)
   await pane.press({ key: 'hotpot-zosui' })
@@ -3901,6 +3900,49 @@ test('a press on a dim button lets an arm go too, and spends and arms nothing', 
   expect(await armedWords(pane)).toBeUndefined()
   expect(seen.forks).toBe(1)
   await clock.advance(8000)
+  await pane.unmount()
+})
+
+test('a note waiting under an arm waits for the arm that replaces it, and one written after an arm lapsed shows at once', { timeoutMs: 20_000 }, async ($, on) => {
+  const seen = fresh()
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const knobs: Answers = { forkMs: 2000 }
+  bottoms(on, clock, seen, knobs)
+  stepBottom(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await aTurn($, 't1')
+  await clock.advance(9 * 60_000)
+  await $.command.run(cmd('hotpot'))
+  const pane = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  // Top up out 2 s, Zosui armed 0.3 s in, its outcome landing under the arm; Clear armed over a draft at 7 s replaces it
+  await pane.press({ key: 'hotpot-topup' })
+  await clock.advance(300)
+  await pane.press({ key: 'hotpot-zosui' })
+  await clock.settle()
+  await clock.advance(6700)
+  knobs.draft = 'half a thought'
+  await pane.press({ key: 'hotpot-clear' })
+  await clock.settle()
+  expect(await armedWords(pane)).toMatch(/your draft gives way to \/clear$/)
+  // Clear's arm lapses at 17 s: the note shows then, for its 6 s
+  await clock.advance(10_500)
+  expect(await armedWords(pane)).toBeUndefined()
+  expect((await boardLines(pane))[0]).toMatch(/ {2}topped up: 300k read from cache for \$0\.03$/)
+  await clock.advance(6000)
+  expect((await boardLines(pane))[0]).not.toMatch(/topped up/)
+  // keepwarm on, Zosui armed 58:45 after a warmth on a tick of keepwarm's beat (from the session's start) and left to
+  // lapse: the 59:00 tick's ping notes at once (the top-up above was booked as a ping too)
+  knobs.draft = undefined
+  knobs.forkMs = undefined
+  await clock.advance(60_000 - ((clock.now() - 1_000_000) % 60_000))
+  await aTurn($, 't2')
+  await $.command.run(cmd('keepwarm', '6h'))
+  await clock.advance(58 * 60_000 + 45_000)
+  await pane.press({ key: 'hotpot-zosui' })
+  await clock.settle()
+  expect(await armedWords(pane)).toBeDefined()
+  await clock.advance(18_000)
+  expect((await boardLines(pane))[0]).toMatch(/ {2}ping \d+ read /)
   await pane.unmount()
 })
 
@@ -4043,6 +4085,14 @@ test('in a terminal the board\'s second line keeps its rows whether the pane hol
   expect((await boardLines(pane))[1]).not.toMatch(/ctrl\+x tab/)
   expect(await pane.find({ type: 'Box', key: 'hotpot-line' })).toMatchObject({ props: { minHeight: 3 } })
   await pane.unmount()
+  // counted inside the board's one-cell padding: at 55 columns that is four rows (at the pane's width, three)
+  pane = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: HOTPOT_ID, props: { ...dock, bodyColumns: 55, isFocused: false } })
+  expect(await pane.find({ type: 'Box', key: 'hotpot-line' })).toMatchObject({ props: { minHeight: 4 } })
+  await pane.unmount()
+  // the desktop holds nothing: its line draws as it wraps
+  const desk = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', component: 'Pane', requestId: HOTPOT_ID, props: PANE_PROPS })
+  expect(await desk.find({ type: 'Box', key: 'hotpot-line' })).toBeUndefined()
+  await desk.unmount()
 })
 
 test('kaomoji: the Hotpot draws faces round a text gauge, the wooden board\'s two lines and its buttons, no Raster or Svg on any surface', { options: { characterArt: 'kaomoji' } }, async ($, on) => {

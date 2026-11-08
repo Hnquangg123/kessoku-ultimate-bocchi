@@ -1028,8 +1028,8 @@ async function sendFork($: EngineInterface, kind: ForkKind): Promise<ForkSent> {
 
 /**
  * A press's outcome (or a ping's while the Hotpot is up), in place of the wooden board's first tail for its 6 s; one
- * that lands under an arm (a fork's outcome: a press lets an arm go first) starts its 6 s as the arm ends, which the
- * board waits for.
+ * that lands under an arm (a fork's outcome: a press lets an arm go first) starts its 6 s as the arm ends, or the arm
+ * that replaces it (secondPress), which the board waits for.
  */
 async function noteHotpot($: EngineInterface, text: string, always = true): Promise<void> {
   const now = await $.clock.now()
@@ -1970,7 +1970,8 @@ async function secondPress($: EngineInterface, action: 'reheat' | 'zosui' | 'cle
     await update($, hotpot, h => ({ ...h, armed: null }))
     return true
   }
-  await update($, hotpot, h => ({ ...h, armed: { action, at: now } }))
+  // a note waiting for the end of an arm this one replaces waits for this one's
+  await update($, hotpot, h => ({ ...h, armed: { action, at: now }, note: h.note !== null && h.note.until - NOTE_MS > now ? { ...h.note, until: now + ARM_MS + NOTE_MS } : h.note }))
   return false
 }
 

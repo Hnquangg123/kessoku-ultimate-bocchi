@@ -667,6 +667,12 @@ test('a terminal pane\'s board and buttons take their rows as they wrap, the bil
   const slip = { writeUsd: 1.34, warmUsd: 0.03, tokens: 168_000, ageMs: 0 }
   // a hold: its word and tail, its two lines of how to pay or start fresh (no dim reason comes there), its buttons on two
   expect(terminalRowsBelow(viewOf(74 * MIN, { isTerminal: true, slip }, {}, { held: true }), 74)).toBe(5)
+  // a warm pot with the fork gate shut, the TTL settled: Top up's reason the gate's, longer than a passing turn's, so the
+  // line is counted from none as well (seven rows at 79 columns)
+  expect(terminalRowsBelow(viewOf(9 * MIN, { isTerminal: true, ttl: { ms: HOUR, how: 'engine', sighting: 0 }, ledger: { ...INITIAL_LEDGER, prompt: 168_000, canFork: false, steps: 3 } }), 79)).toBe(7)
+  // a cold pot's open bill: the first re-heat's row (one that warms nothing still books it), no first ping's (a cold pot
+  // books none)
+  expect(terminalRowsBelow(viewOf(74 * MIN, { isTerminal: true, hotpot: { ...HOTPOT, isBillOpen: true } }), 74)).toBe(17)
   // the same rows wherever the tier is read (74 columns and wider) before and after: arming, a note, a turn, a fork out,
   // a compaction's start, the focus, keepwarm on (at its longest words, under a minute left) or at another length, a
   // top-up's warmth under the open bill (its top-up row goes for 5 minutes), Start fresh and keepwarm during a hold
@@ -698,15 +704,28 @@ test('a terminal pane\'s board and buttons take their rows as they wrap, the bil
   const settled: TtlInForce = { ms: HOUR, how: 'engine', sighting: 0 }
   for (const isBillOpen of [false, true])
     for (const keep of [0, NOW + 2 * HOUR])
-      for (const count of [0, 1, 9, 99]) {
-        const ledger = { ...INITIAL_LEDGER, prompt: 168_000, canFork: true, steps: 3, pings: { ...INITIAL_LEDGER.pings, count, usd: count * 0.03 } }
+      // the counts and the price just before each of their digits' boundaries too
+      for (const [count, usd] of [[0, 0], [1, 0.03], [8, 0.24], [9, 0.27], [98, 2.94], [99, 2.97], [5, 9.98]] as const) {
+        const ledger = { ...INITIAL_LEDGER, prompt: 168_000, canFork: true, steps: 3, pings: { ...INITIAL_LEDGER.pings, count, usd } }
         const booked = bookFork(ledger, { kind: 'topup', usage: { input: 30, output: 8, read: 168_000, write: 0 }, calledAt: NOW, gateOpen: true, model: OPUS }, { lastWarmAt: NOW - 9 * MIN, loadedAt: 0, ttlMs: HOUR, context: 168_000 })
         expect(booked.ledger.pings.count).toBe(count + 1)
         const before = viewOf(9 * MIN, { isTerminal: true, ttl: settled, hotpot: { ...HOTPOT, isBillOpen }, ledger }, { keepWarmUntil: keep })
         const after = viewOf(0, { isTerminal: true, ttl: settled, hotpot: { ...HOTPOT, isBillOpen }, ledger: booked.ledger }, { keepWarmUntil: keep })
-        const name = `booked top-up ${isBillOpen ? 'bill ' : ''}${keep > 0 ? 'keep on ' : ''}${count} pings`
+        const name = `booked top-up ${isBillOpen ? 'bill ' : ''}${keep > 0 ? 'keep on ' : ''}${count} pings ${usd}`
         for (let cols = 74; cols <= 200; cols += 1) expect(`${name} @${cols}: ${terminalRowsBelow(after, cols)}`).toBe(`${name} @${cols}: ${terminalRowsBelow(before, cols)}`)
       }
+  // a re-heat that warms nothing (a 429 that spent nothing), as the ledger books it: the pot stays cold, and the bill
+  // gains its first Re-heats row, counted before
+  for (const isBillOpen of [false, true]) {
+    const ledger = { ...INITIAL_LEDGER, prompt: 168_000, canFork: true, steps: 3 }
+    const booked = bookFork(ledger, { kind: 'reheat', usage: { input: 0, output: 0, read: 0, write: 0 }, calledAt: NOW, gateOpen: true, model: OPUS }, { lastWarmAt: NOW - 74 * MIN, loadedAt: 0, ttlMs: HOUR, context: 168_000 })
+    expect(booked.warmAt).toBeNull()
+    expect(booked.ledger.reheats.count).toBe(1)
+    const before = viewOf(74 * MIN, { isTerminal: true, ttl: settled, hotpot: { ...HOTPOT, isBillOpen }, ledger })
+    const after = viewOf(74 * MIN, { isTerminal: true, ttl: settled, hotpot: { ...HOTPOT, isBillOpen }, ledger: booked.ledger })
+    const name = `booked re-heat ${isBillOpen ? 'bill' : 'shut'}`
+    for (let cols = 74; cols <= 200; cols += 1) expect(`${name} @${cols}: ${terminalRowsBelow(after, cols)}`).toBe(`${name} @${cols}: ${terminalRowsBelow(before, cols)}`)
+  }
   // a chip's pick where its label takes a row more (30m a cell longer, or the option's 1h30m): with the TTL settled at
   // 88 to 90 columns, during a hold at 95 to 97
   const targeted: [HotpotView, number[]][] = [
@@ -749,8 +768,10 @@ test('in a terminal the board\'s second line holds its rows through the focus an
   // a dock of 47 to 72 cells, a mouse's first click armed (the pane may take the keys with it, and the keys hint goes)
   for (const [age, action] of [[9 * MIN, 'zosui'], [9 * MIN, 'clear'], [74 * MIN, 'reheat']] as const)
     for (const ttl of [ASSUMED, { ms: HOUR, how: 'engine', sighting: 0 } as TtlInForce])
+      for (const canFork of [true, false])
       for (let cells = 47; cells <= 72; cells += 1) {
-        const rest = viewOf(age, { isTerminal: true, isFocused: false, ttl })
+        // (the fork gate shut: Top up's reason the gate's, longer than a passing turn's)
+        const rest = viewOf(age, { isTerminal: true, isFocused: false, ttl, ledger: { ...INITIAL_LEDGER, prompt: 168_000, canFork, steps: 3 } })
         const armed: HotpotView = { ...rest, isFocused: true, hotpot: { ...rest.hotpot, armed: { action, at: NOW - 1000 } } }
         // the rows above the buttons as the drawing holds them (the second line at its own rows or more), and where the
         // armed button sits
@@ -760,7 +781,7 @@ test('in a terminal the board\'s second line holds its rows through the focus an
           const at = buttonLayout(hotpotButtons(x), cells).at.find(p => p.key === ARMED_KEY[action])
           return `${above} rows above, the button at ${at?.row},${at?.x}`
         }
-        const name = `${action} ${ttl.how} @${cells}`
+        const name = `${action} ${ttl.how}${canFork ? '' : ' gate shut'} @${cells}`
         for (const f of [{}, { working: true }, { forkOut: true }, { compacting: true }]) for (const x of [armed, { ...armed, isFocused: false }]) expect(`${name}: ${drawn({ ...x, flags: { ...x.flags, ...f } })}`).toBe(`${name}: ${drawn(rest)}`)
         // the line never draws more than it is held to
         expect(`${name}: ${wrappedRows(boardOf(rest).line, cells) <= boardLineRows(rest, cells)}`).toBe(`${name}: true`)
